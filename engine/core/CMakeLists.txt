@@ -3,6 +3,7 @@ add_library(nexus-core STATIC
     src/timer.cpp
     src/event_bus.cpp
     src/vfs.cpp
+    src/job_system.cpp
 )
 
 target_include_directories(nexus-core

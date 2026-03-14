@@ -1,4 +1,9 @@
-add_executable(nexus-test-scene test_ecs.cpp)
+add_executable(nexus-test-scene
+    test_ecs.cpp
+    test_hierarchy.cpp
+    test_scene_serializer.cpp
+    test_system_scheduler.cpp
+)
 
 target_link_libraries(nexus-test-scene
     PRIVATE

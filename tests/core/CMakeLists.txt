@@ -3,6 +3,7 @@ add_executable(nexus-test-core
     test_containers.cpp
     test_memory.cpp
     test_string_id.cpp
+    test_job_system.cpp
 )
 
 target_link_libraries(nexus-test-core

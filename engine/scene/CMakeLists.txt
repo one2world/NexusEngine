@@ -1,5 +1,8 @@
 add_library(nexus-scene STATIC
     src/scene.cpp
+    src/hierarchy.cpp
+    src/scene_serializer.cpp
+    src/system_scheduler.cpp
 )
 
 target_include_directories(nexus-scene

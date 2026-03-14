@@ -1,6 +1,8 @@
 add_library(nexus-renderer STATIC
     src/batch_renderer_2d.cpp
     src/forward_renderer_3d.cpp
+    src/material.cpp
+    src/debug_renderer.cpp
 )
 
 target_include_directories(nexus-renderer

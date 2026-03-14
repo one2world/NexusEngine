@@ -154,4 +154,27 @@ struct Collider3DComponent {
     u16   mask        = 0xFFFF;
 };
 
+// ---------------------------------------------------------------------------
+// AudioSourceComponent - an entity that emits sound
+// ---------------------------------------------------------------------------
+struct AudioSourceComponent {
+    u32   clip_id{0};          // AudioClipId
+    u32   voice_id{0};         // current VoiceId (0 = not playing)
+    float volume{1.0f};
+    float pitch{1.0f};
+    float min_distance{1.0f};
+    float max_distance{50.0f};
+    bool  looping{false};
+    bool  spatial{true};       // 3D positional audio
+    bool  play_on_start{false};
+    u32   bus{1};              // default: SFX
+};
+
+// ---------------------------------------------------------------------------
+// AudioListenerComponent - marks entity as the audio listener
+// ---------------------------------------------------------------------------
+struct AudioListenerComponent {
+    bool active{true};
+};
+
 } // namespace nexus

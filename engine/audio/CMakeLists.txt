@@ -1,4 +1,7 @@
-add_library(nexus-audio STATIC src/placeholder.cpp)
+add_library(nexus-audio STATIC
+    src/audio_buffer.cpp
+    src/audio_engine.cpp
+)
 
 target_include_directories(nexus-audio
     PUBLIC  include

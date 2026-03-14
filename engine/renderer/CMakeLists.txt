@@ -1,4 +1,7 @@
-add_library(nexus-renderer STATIC src/placeholder.cpp)
+add_library(nexus-renderer STATIC
+    src/batch_renderer_2d.cpp
+    src/forward_renderer_3d.cpp
+)
 
 target_include_directories(nexus-renderer
     PUBLIC  include

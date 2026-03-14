@@ -8,6 +8,8 @@ target_link_libraries(nexus-sandbox
     PRIVATE
         Nexus::Core
         Nexus::Platform
+        Nexus::RHI
+        Nexus::Renderer
 )
 
 nexus_set_compiler_flags(nexus-sandbox)

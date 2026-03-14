@@ -1,6 +1,6 @@
 add_library(nexus-rhi STATIC
-    src/placeholder.cpp
     src/gl_functions.cpp
+    src/gl_rhi.cpp
 )
 
 target_include_directories(nexus-rhi

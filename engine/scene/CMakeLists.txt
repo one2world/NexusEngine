@@ -1,4 +1,6 @@
-add_library(nexus-scene STATIC src/placeholder.cpp)
+add_library(nexus-scene STATIC
+    src/scene.cpp
+)
 
 target_include_directories(nexus-scene
     PUBLIC  include

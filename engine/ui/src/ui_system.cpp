@@ -1,0 +1,257 @@
+#include "nexus/ui/ui_system.h"
+#include "nexus/core/log.h"
+
+namespace nexus::ui {
+
+// ── FocusNavigator ──────────────────────────────────────────────────────────
+
+void FocusNavigator::rebuild() {
+    focusables_.clear();
+    if (root_) collect_focusables(root_);
+    // Maintain focus if possible
+    if (focus_index_ >= static_cast<i32>(focusables_.size())) {
+        focus_index_ = focusables_.empty() ? -1 : 0;
+    }
+}
+
+void FocusNavigator::collect_focusables(Widget* w) {
+    if (!w->visible || w->disabled) return;
+    if (w->focusable) {
+        focusables_.push_back(w);
+    }
+    for (auto& child : w->children()) {
+        collect_focusables(child.get());
+    }
+}
+
+void FocusNavigator::move_next() {
+    if (focusables_.empty()) return;
+    if (focus_index_ >= 0 && focus_index_ < static_cast<i32>(focusables_.size())) {
+        focusables_[static_cast<size_t>(focus_index_)]->focused = false;
+    }
+    focus_index_ = (focus_index_ + 1) % static_cast<i32>(focusables_.size());
+    focusables_[static_cast<size_t>(focus_index_)]->focused = true;
+}
+
+void FocusNavigator::move_prev() {
+    if (focusables_.empty()) return;
+    if (focus_index_ >= 0 && focus_index_ < static_cast<i32>(focusables_.size())) {
+        focusables_[static_cast<size_t>(focus_index_)]->focused = false;
+    }
+    focus_index_ = focus_index_ <= 0
+        ? static_cast<i32>(focusables_.size()) - 1
+        : focus_index_ - 1;
+    focusables_[static_cast<size_t>(focus_index_)]->focused = true;
+}
+
+Widget* FocusNavigator::current() const {
+    if (focus_index_ >= 0 && focus_index_ < static_cast<i32>(focusables_.size())) {
+        return focusables_[static_cast<size_t>(focus_index_)];
+    }
+    return nullptr;
+}
+
+void FocusNavigator::focus(Widget* widget) {
+    // Unfocus current
+    if (focus_index_ >= 0 && focus_index_ < static_cast<i32>(focusables_.size())) {
+        focusables_[static_cast<size_t>(focus_index_)]->focused = false;
+    }
+    // Find and focus new
+    for (size_t i = 0; i < focusables_.size(); ++i) {
+        if (focusables_[i] == widget) {
+            focus_index_ = static_cast<i32>(i);
+            widget->focused = true;
+            return;
+        }
+    }
+    focus_index_ = -1;
+}
+
+void FocusNavigator::clear() {
+    if (focus_index_ >= 0 && focus_index_ < static_cast<i32>(focusables_.size())) {
+        focusables_[static_cast<size_t>(focus_index_)]->focused = false;
+    }
+    focus_index_ = -1;
+}
+
+// ── UISystem ────────────────────────────────────────────────────────────────
+
+UISystem::UISystem() {
+    root_ = std::make_shared<Panel>();
+    root_->layout.width = SizeValue::pct(100);
+    root_->layout.height = SizeValue::pct(100);
+    focus_nav_.set_root(root_.get());
+}
+
+UISystem::~UISystem() = default;
+
+void UISystem::set_screen_size(float width, float height) {
+    screen_size_ = {width, height};
+}
+
+void UISystem::set_theme(const UITheme& theme) {
+    theme_ = theme;
+}
+
+void UISystem::process_mouse_move(Vec2 position) {
+    Vec2 delta = position - mouse_pos_;
+    mouse_pos_ = position;
+
+    Widget* new_hovered = hit_test(position);
+
+    // Mouse leave old widget
+    if (hovered_widget_ && hovered_widget_ != new_hovered) {
+        hovered_widget_->hovered = false;
+        UIEvent leave;
+        leave.type = UIEventType::MouseLeave;
+        leave.mouse_position = position;
+        hovered_widget_->dispatch_event(leave);
+    }
+
+    // Mouse enter new widget
+    if (new_hovered && new_hovered != hovered_widget_) {
+        new_hovered->hovered = true;
+        UIEvent enter;
+        enter.type = UIEventType::MouseEnter;
+        enter.mouse_position = position;
+        new_hovered->dispatch_event(enter);
+    }
+
+    hovered_widget_ = new_hovered;
+
+    // Drag
+    if (pressed_widget_) {
+        UIEvent drag;
+        drag.type = UIEventType::DragMove;
+        drag.mouse_position = position;
+        drag.mouse_delta = delta;
+        pressed_widget_->dispatch_event(drag);
+    }
+}
+
+void UISystem::process_mouse_button(bool down) {
+    if (down) {
+        Widget* target = hit_test(mouse_pos_);
+        pressed_widget_ = target;
+
+        if (target) {
+            target->pressed = true;
+            UIEvent event;
+            event.type = UIEventType::MouseDown;
+            event.mouse_position = mouse_pos_;
+            target->dispatch_event(event);
+
+            // Focus
+            if (target->focusable) {
+                focus_nav_.focus(target);
+            }
+        } else {
+            focus_nav_.clear();
+        }
+    } else {
+        if (pressed_widget_) {
+            pressed_widget_->pressed = false;
+
+            UIEvent up;
+            up.type = UIEventType::MouseUp;
+            up.mouse_position = mouse_pos_;
+            pressed_widget_->dispatch_event(up);
+
+            // Click if released on same widget
+            Widget* release_target = hit_test(mouse_pos_);
+            if (release_target == pressed_widget_) {
+                UIEvent click;
+                click.type = UIEventType::Click;
+                click.mouse_position = mouse_pos_;
+                pressed_widget_->dispatch_event(click);
+            }
+
+            pressed_widget_ = nullptr;
+        }
+    }
+}
+
+void UISystem::process_scroll(float delta) {
+    Widget* target = hit_test(mouse_pos_);
+    if (target) {
+        UIEvent event;
+        event.type = UIEventType::Scroll;
+        event.scroll_delta = delta;
+        event.mouse_position = mouse_pos_;
+        target->dispatch_event(event);
+    }
+}
+
+void UISystem::process_key(i32 key_code, bool down) {
+    Widget* focused = focus_nav_.current();
+    if (focused) {
+        UIEvent event;
+        event.type = down ? UIEventType::KeyDown : UIEventType::KeyUp;
+        event.key_code = key_code;
+        focused->dispatch_event(event);
+    }
+}
+
+void UISystem::process_text_input(u32 codepoint) {
+    Widget* focused = focus_nav_.current();
+    if (focused) {
+        UIEvent event;
+        event.type = UIEventType::TextInput;
+        event.character = codepoint;
+        focused->dispatch_event(event);
+    }
+}
+
+void UISystem::navigate_next() {
+    focus_nav_.move_next();
+}
+
+void UISystem::navigate_prev() {
+    focus_nav_.move_prev();
+}
+
+void UISystem::navigate_activate() {
+    Widget* focused = focus_nav_.current();
+    if (focused) {
+        UIEvent event;
+        event.type = UIEventType::Click;
+        focused->dispatch_event(event);
+    }
+}
+
+void UISystem::update() {
+    // Layout
+    Rect screen_rect = {{0.0f, 0.0f}, screen_size_};
+    root_->perform_layout(screen_rect);
+
+    // Rebuild focus list
+    focus_nav_.rebuild();
+
+    // Collect draw commands
+    draw_commands_.clear();
+    root_->collect_draw_commands(draw_commands_);
+}
+
+Widget* UISystem::hit_test(Vec2 pos) const {
+    return hit_test_recursive(root_.get(), pos);
+}
+
+Widget* UISystem::hit_test_recursive(Widget* w, Vec2 pos) const {
+    if (!w->visible || !w->interactive) return nullptr;
+
+    // Check children in reverse order (front-to-back in draw order = last child on top)
+    const auto& children = w->children();
+    for (auto it = children.rbegin(); it != children.rend(); ++it) {
+        Widget* hit = hit_test_recursive(it->get(), pos);
+        if (hit) return hit;
+    }
+
+    // Check self
+    if (w->computed_rect().contains(pos) && w != root_.get()) {
+        return w;
+    }
+
+    return nullptr;
+}
+
+} // namespace nexus::ui

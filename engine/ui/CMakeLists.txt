@@ -1,4 +1,8 @@
-add_library(nexus-ui STATIC src/placeholder.cpp)
+add_library(nexus-ui STATIC
+    src/ui_core.cpp
+    src/widgets.cpp
+    src/ui_system.cpp
+)
 
 target_include_directories(nexus-ui
     PUBLIC  include
@@ -6,7 +10,7 @@ target_include_directories(nexus-ui
 )
 
 target_link_libraries(nexus-ui
-    PUBLIC Nexus::Core Nexus::Renderer
+    PUBLIC Nexus::Core Nexus::RHI Nexus::Renderer
 )
 
 nexus_set_compiler_flags(nexus-ui)

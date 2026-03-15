@@ -2,6 +2,7 @@ add_executable(nexus-test-renderer
     test_camera.cpp
     test_mesh_generators.cpp
     test_material.cpp
+    test_advanced_rendering.cpp
 )
 
 target_link_libraries(nexus-test-renderer

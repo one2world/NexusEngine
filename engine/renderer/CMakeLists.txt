@@ -3,6 +3,12 @@ add_library(nexus-renderer STATIC
     src/forward_renderer_3d.cpp
     src/material.cpp
     src/debug_renderer.cpp
+    src/pbr_renderer.cpp
+    src/shadow_map.cpp
+    src/post_process.cpp
+    src/deferred_renderer.cpp
+    src/terrain.cpp
+    src/fog.cpp
 )
 
 target_include_directories(nexus-renderer

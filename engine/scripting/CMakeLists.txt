@@ -1,4 +1,9 @@
-add_library(nexus-scripting STATIC src/placeholder.cpp)
+add_library(nexus-scripting STATIC
+    src/script_value.cpp
+    src/script_engine.cpp
+    src/script_component.cpp
+    src/engine_bindings.cpp
+)
 
 target_include_directories(nexus-scripting
     PUBLIC  include

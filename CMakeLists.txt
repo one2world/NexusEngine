@@ -46,9 +46,12 @@ add_subdirectory(engine/network)
 # Runtime
 add_subdirectory(runtime)
 
-# Optional targets
+# Editor library (always built for tests)
+add_subdirectory(editor)
+
+# Editor executable (optional)
 if(NEXUS_BUILD_EDITOR)
-    add_subdirectory(editor)
+    add_subdirectory(editor/app)
 endif()
 
 if(NEXUS_BUILD_SANDBOX)

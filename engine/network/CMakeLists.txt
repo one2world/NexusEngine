@@ -1,4 +1,10 @@
-add_library(nexus-network STATIC src/placeholder.cpp)
+add_library(nexus-network STATIC
+    src/transport.cpp
+    src/serialization.cpp
+    src/replication.cpp
+    src/rpc.cpp
+    src/prediction.cpp
+)
 
 target_include_directories(nexus-network
     PUBLIC  include

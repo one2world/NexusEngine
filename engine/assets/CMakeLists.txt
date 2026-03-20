@@ -1,4 +1,9 @@
-add_library(nexus-assets STATIC src/placeholder.cpp)
+add_library(nexus-assets STATIC
+    src/asset_handle.cpp
+    src/asset_registry.cpp
+    src/asset_loader.cpp
+    src/asset_package.cpp
+)
 
 target_include_directories(nexus-assets
     PUBLIC  include

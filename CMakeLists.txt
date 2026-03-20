@@ -42,6 +42,7 @@ add_subdirectory(engine/ui)
 add_subdirectory(engine/scripting)
 add_subdirectory(engine/assets)
 add_subdirectory(engine/network)
+add_subdirectory(engine/perf)
 
 # Runtime
 add_subdirectory(runtime)

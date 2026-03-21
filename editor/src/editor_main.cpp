@@ -16,6 +16,7 @@
 
 #include <string>
 #include <vector>
+#include <stdexcept>
 
 // Forward declare GLFW proc address getter
 struct GLFWwindow;
@@ -51,95 +52,105 @@ static int run(int argc, char* argv[]) {
     Log::init();
     NX_INFO("NexusEngine Editor starting...");
 
-    WindowConfig window_config;
-    window_config.title  = "NexusEngine Editor";
-    window_config.width  = 1600;
-    window_config.height = 900;
-    window_config.vsync  = true;
+    try {
+        WindowConfig window_config;
+        window_config.title  = "NexusEngine Editor";
+        window_config.width  = 1600;
+        window_config.height = 900;
+        window_config.vsync  = true;
 
-    Window window(window_config);
-    NX_INFO("Window created: {}x{}", window_config.width, window_config.height);
+        Window window(window_config);
+        NX_INFO("Window created: {}x{}", window_config.width, window_config.height);
 
-    Input::init(window.native_handle());
+        Input::init(window.native_handle());
 
-    // Load OpenGL functions
-    if (!rhi::gl::load(reinterpret_cast<rhi::gl::GLLoadProc>(glfwGetProcAddress))) {
-        NX_ERROR("Failed to load OpenGL functions");
-        return 1;
-    }
+        // Load OpenGL functions
+        if (!rhi::gl::load(reinterpret_cast<rhi::gl::GLLoadProc>(glfwGetProcAddress))) {
+            NX_ERROR("Failed to load OpenGL functions");
+            Log::shutdown();
+            return 1;
+        }
 
-    // ── Create RHI ──────────────────────────────────────────────────────
-    auto rhi = rhi::RHI::create();
-    if (!rhi || !rhi->init()) {
-        NX_ERROR("Failed to initialize RHI");
-        return 1;
-    }
+        // ── Create RHI ──────────────────────────────────────────────────
+        auto rhi = rhi::RHI::create();
+        if (!rhi || !rhi->init()) {
+            NX_ERROR("Failed to initialize RHI");
+            Log::shutdown();
+            return 1;
+        }
 
-    // ── Create scene ────────────────────────────────────────────────────
-    Registry registry;
+        // ── Create scene ────────────────────────────────────────────────
+        Registry registry;
 
-    // ── Create editor state ─────────────────────────────────────────────
-    EditorState editor_state;
-    register_default_panels(editor_state);
-    editor_state.set_status("Ready");
+        // ── Create editor state ─────────────────────────────────────────
+        EditorState editor_state;
+        register_default_panels(editor_state);
+        editor_state.set_status("Ready");
 
-    NX_INFO("Editor initialized with {} panels", editor_state.panels().count());
+        NX_INFO("Editor initialized with {} panels", editor_state.panels().count());
 
-    // ── Main loop ───────────────────────────────────────────────────────
-    Timer timer;
+        // ── Main loop ───────────────────────────────────────────────────
+        Timer timer;
 
-    while (!window.should_close()) {
-        window.poll_events();
-        Input::update();
-        timer.tick();
+        while (!window.should_close()) {
+            window.poll_events();
+            Input::update();
+            timer.tick();
 
-        float dt = timer.delta_time();
-        editor_state.tick(dt);
+            float dt = timer.delta_time();
+            editor_state.tick(dt);
 
-        // Handle global shortcuts
-        if (Input::key_pressed(Key::Escape)) {
-            if (editor_state.is_playing()) {
-                editor_state.stop();
-                NX_INFO("Play mode stopped");
+            // Handle global shortcuts
+            if (Input::key_pressed(Key::Escape)) {
+                if (editor_state.is_playing()) {
+                    editor_state.stop();
+                    NX_INFO("Play mode stopped");
+                }
+            }
+
+            if (Input::key_down(Key::LeftControl) && Input::key_pressed(Key::Z)) {
+                editor_state.undo_redo().undo();
+            }
+            if (Input::key_down(Key::LeftControl) && Input::key_pressed(Key::Y)) {
+                editor_state.undo_redo().redo();
+            }
+
+            // ── Update logic ────────────────────────────────────────────
+            if (editor_state.is_playing() || editor_state.is_paused()) {
+                u32 steps = editor_state.consume_step_requests();
+                if (editor_state.is_playing() || steps > 0) {
+                    // In a full implementation, step the game systems here
+                }
+            }
+
+            // ── Render ──────────────────────────────────────────────────
+            rhi->begin_frame();
+            rhi->set_viewport(0, 0, window.width(), window.height());
+            rhi->clear(Vec4{0.12f, 0.12f, 0.14f, 1.0f});
+
+            // Update and render editor panels
+            editor_state.panels().update(dt);
+            editor_state.panels().render();
+
+            rhi->end_frame();
+            window.swap_buffers();
+
+            // Periodic status
+            if (timer.frame_count() % 300 == 0 && timer.frame_count() > 0) {
+                NX_TRACE("Editor FPS: {:.1f}", timer.fps());
             }
         }
 
-        if (Input::key_down(Key::LeftControl) && Input::key_pressed(Key::Z)) {
-            editor_state.undo_redo().undo();
-        }
-        if (Input::key_down(Key::LeftControl) && Input::key_pressed(Key::Y)) {
-            editor_state.undo_redo().redo();
-        }
+        // ── Shutdown (reverse init order) ───────────────────────────────
+        rhi->shutdown();
+        NX_INFO("NexusEngine Editor shutting down...");
 
-        // ── Update logic ────────────────────────────────────────────────
-        if (editor_state.is_playing() || editor_state.is_paused()) {
-            u32 steps = editor_state.consume_step_requests();
-            if (editor_state.is_playing() || steps > 0) {
-                // In a full implementation, step the game systems here
-            }
-        }
-
-        // ── Render ──────────────────────────────────────────────────────
-        rhi->begin_frame();
-        rhi->set_viewport(0, 0, window.width(), window.height());
-        rhi->clear(Vec4{0.12f, 0.12f, 0.14f, 1.0f});
-
-        // Update and render editor panels
-        editor_state.panels().update(dt);
-        editor_state.panels().render();
-
-        rhi->end_frame();
-        window.swap_buffers();
-
-        // Periodic status
-        if (timer.frame_count() % 300 == 0 && timer.frame_count() > 0) {
-            NX_TRACE("Editor FPS: {:.1f}", timer.fps());
-        }
+    } catch (const std::exception& e) {
+        NX_ERROR("Fatal error: {}", e.what());
+        Log::shutdown();
+        return 1;
     }
 
-    // ── Shutdown ────────────────────────────────────────────────────────
-    rhi->shutdown();
-    NX_INFO("NexusEngine Editor shutting down...");
     Log::shutdown();
     return 0;
 }

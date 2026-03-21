@@ -16,6 +16,11 @@ namespace nexus::rhi {
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 
 bool VulkanRHI::init() {
+    if (initialized_) {
+        NX_WARN("VulkanRHI::init() called on already-initialized backend");
+        return true;
+    }
+
     // Reserve slot 0 as invalid for each resource type.
     buffers_.push_back({});
     textures_.push_back({});
@@ -35,6 +40,7 @@ void VulkanRHI::shutdown() {
     pipelines_.clear();
     framebuffers_.clear();
     state_ = BoundState{};
+    in_frame_ = false;
     initialized_ = false;
     NX_INFO("Vulkan RHI shut down");
 }
@@ -60,6 +66,7 @@ void VulkanRHI::destroy_buffer(BufferHandle handle) {
     if (handle == INVALID_HANDLE || handle >= static_cast<u32>(buffers_.size())) return;
     buffers_[handle].alive = false;
     buffers_[handle].data.clear();
+    buffers_[handle].data.shrink_to_fit();
 }
 
 void VulkanRHI::update_buffer(BufferHandle handle,
@@ -67,8 +74,11 @@ void VulkanRHI::update_buffer(BufferHandle handle,
     if (handle == INVALID_HANDLE || handle >= static_cast<u32>(buffers_.size())) return;
     auto& buf = buffers_[handle];
     if (!buf.alive) return;
+    if (size == 0) return;
 
     if (offset + size > buf.data.size()) {
+        NX_WARN("VulkanRHI: update_buffer grows buffer from {} to {} bytes",
+                buf.data.size(), offset + size);
         buf.data.resize(offset + size);
     }
     if (data) {
@@ -85,19 +95,20 @@ TextureHandle VulkanRHI::create_texture(const TextureDesc& desc) {
     tex.height = desc.height;
     tex.format = desc.format;
 
-    // Compute pixel size based on format.
-    u32 bpp = 4; // default RGBA8
+    // Compute bytes per pixel based on format.
+    u32 bpp = 0;
     switch (desc.format) {
-        case TextureFormat::RGB8:   bpp = 3; break;
-        case TextureFormat::R8:     bpp = 1; break;
-        case TextureFormat::RGBA16F: bpp = 8; break;
-        case TextureFormat::RGBA32F: bpp = 16; break;
-        case TextureFormat::Depth32F: bpp = 4; break;
-        case TextureFormat::Depth24Stencil8: bpp = 4; break;
-        default: bpp = 4; break;
+        case TextureFormat::RGBA8:            bpp = 4;  break;
+        case TextureFormat::RGB8:             bpp = 3;  break;
+        case TextureFormat::R8:               bpp = 1;  break;
+        case TextureFormat::RGBA16F:          bpp = 8;  break;
+        case TextureFormat::RGBA32F:          bpp = 16; break;
+        case TextureFormat::Depth32F:         bpp = 4;  break;
+        case TextureFormat::Depth24Stencil8:  bpp = 4;  break;
     }
 
-    size_t total = static_cast<size_t>(desc.width) * desc.height * bpp;
+    size_t total = static_cast<size_t>(desc.width)
+                 * static_cast<size_t>(desc.height) * bpp;
     tex.pixels.resize(total);
     if (desc.data && total > 0) {
         std::memcpy(tex.pixels.data(), desc.data, total);
@@ -112,6 +123,7 @@ void VulkanRHI::destroy_texture(TextureHandle handle) {
     if (handle == INVALID_HANDLE || handle >= static_cast<u32>(textures_.size())) return;
     textures_[handle].alive = false;
     textures_[handle].pixels.clear();
+    textures_[handle].pixels.shrink_to_fit();
 }
 
 // ── Shaders ──────────────────────────────────────────────────────────────────
@@ -135,15 +147,16 @@ ShaderHandle VulkanRHI::create_shader(const std::string& vertex_src,
 
 void VulkanRHI::destroy_shader(ShaderHandle handle) {
     if (handle == INVALID_HANDLE || handle >= static_cast<u32>(shaders_.size())) return;
-    shaders_[handle].alive = false;
-    shaders_[handle].vertex_src.clear();
-    shaders_[handle].fragment_src.clear();
-    shaders_[handle].uniform_ints.clear();
-    shaders_[handle].uniform_floats.clear();
-    shaders_[handle].uniform_vec2s.clear();
-    shaders_[handle].uniform_vec3s.clear();
-    shaders_[handle].uniform_vec4s.clear();
-    shaders_[handle].uniform_mat4s.clear();
+    auto& s = shaders_[handle];
+    s.alive = false;
+    s.vertex_src.clear();
+    s.fragment_src.clear();
+    s.uniform_ints.clear();
+    s.uniform_floats.clear();
+    s.uniform_vec2s.clear();
+    s.uniform_vec3s.clear();
+    s.uniform_vec4s.clear();
+    s.uniform_mat4s.clear();
 }
 
 // ── Pipelines ────────────────────────────────────────────────────────────────
@@ -187,12 +200,18 @@ void VulkanRHI::destroy_framebuffer(FramebufferHandle handle) {
 // ── Frame ────────────────────────────────────────────────────────────────────
 
 void VulkanRHI::begin_frame() {
+    if (in_frame_) {
+        NX_WARN("VulkanRHI: begin_frame() called while already in frame");
+    }
     draw_call_count_    = 0;
     state_change_count_ = 0;
     in_frame_ = true;
 }
 
 void VulkanRHI::end_frame() {
+    if (!in_frame_) {
+        NX_WARN("VulkanRHI: end_frame() called without matching begin_frame()");
+    }
     in_frame_ = false;
 }
 
@@ -299,7 +318,8 @@ void VulkanRHI::set_uniform_int_array(ShaderHandle shader,
                                        const i32* values, u32 count) {
     if (shader == INVALID_HANDLE || shader >= static_cast<u32>(shaders_.size())) return;
     if (!shaders_[shader].alive || !values || count == 0) return;
-    // Store just the first value for simplicity.
+    // CPU simulation stores only the first element.  Full array storage is
+    // deferred to the native Vulkan backend.
     shaders_[shader].uniform_ints[name] = values[0];
 }
 

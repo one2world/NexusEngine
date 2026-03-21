@@ -17,6 +17,7 @@
 #include "nexus/scripting/engine_bindings.h"
 
 #include <string>
+#include <stdexcept>
 
 // Forward declare GLFW proc address getter
 struct GLFWwindow;
@@ -38,6 +39,7 @@ static void print_usage() {
 struct RuntimeConfig {
     std::string scene_path;
     nexus::WindowConfig window;
+    bool show_help{false};
 };
 
 static RuntimeConfig parse_args(int argc, char* argv[]) {
@@ -53,7 +55,7 @@ static RuntimeConfig parse_args(int argc, char* argv[]) {
         else if (arg == "--vsync")                    { cfg.window.vsync = true; }
         else if (arg == "--no-vsync")                 { cfg.window.vsync = false; }
         else if (arg == "--help" || arg == "-h") {
-            print_usage();
+            cfg.show_help = true;
         }
     }
     return cfg;
@@ -64,86 +66,110 @@ int main(int argc, char* argv[]) {
     nexus::Log::init();
     NX_APP_INFO("NexusEngine Runtime starting...");
 
-    RuntimeConfig cfg = parse_args(argc, argv);
-
-    nexus::Window window(cfg.window);
-    NX_APP_INFO("Window created: {}x{}", cfg.window.width, cfg.window.height);
-
-    nexus::Input::init(window.native_handle());
-
-    // Load OpenGL functions
-    if (!nexus::rhi::gl::load(
-            reinterpret_cast<nexus::rhi::gl::GLLoadProc>(glfwGetProcAddress))) {
-        NX_ERROR("Failed to load OpenGL functions");
+    RuntimeConfig cfg;
+    try {
+        cfg = parse_args(argc, argv);
+    } catch (const std::exception& e) {
+        NX_ERROR("Invalid command-line arguments: {}", e.what());
+        print_usage();
+        nexus::Log::shutdown();
         return 1;
     }
 
-    // ── Create RHI ──────────────────────────────────────────────────────
-    auto rhi = nexus::rhi::RHI::create();
-    if (!rhi || !rhi->init()) {
-        NX_ERROR("Failed to initialize RHI");
-        return 1;
+    if (cfg.show_help) {
+        print_usage();
+        nexus::Log::shutdown();
+        return 0;
     }
 
-    // ── Create scene & subsystems ───────────────────────────────────────
-    nexus::Registry registry;
-    nexus::physics::PhysicsSystem physics;
-    nexus::audio::AudioEngine audio;
+    try {
+        nexus::Window window(cfg.window);
+        NX_APP_INFO("Window created: {}x{}", cfg.window.width, cfg.window.height);
 
-    // ── Create scripting engine with live bindings ───────────────────────
-    nexus::scripting::ScriptEngine script_engine;
-    // Input is a static-only class; the reference is required by bind_all's
-    // signature for API consistency but only static methods are invoked.
-    nexus::Input input_handle;
-    nexus::scripting::bind_all(script_engine, registry, input_handle, audio, physics);
-    NX_APP_INFO("Scripting engine initialized with live bindings");
+        nexus::Input::init(window.native_handle());
 
-    // ── Load scene if provided ──────────────────────────────────────────
-    if (!cfg.scene_path.empty()) {
-        NX_APP_INFO("Loading scene: {}", cfg.scene_path);
-        // Scene loading would go here via SceneSerializer
-    }
-
-    // ── Fixed timestep for physics ──────────────────────────────────────
-    nexus::Timer timer;
-    nexus::FixedTimestep fixed_step(1.0f / 60.0f);
-
-    NX_APP_INFO("Entering main loop...");
-
-    while (!window.should_close()) {
-        window.poll_events();
-        nexus::Input::update();
-        timer.tick();
-
-        float dt = timer.delta_time();
-
-        // ── Fixed-rate physics update ───────────────────────────────────
-        fixed_step.accumulate(dt);
-        while (fixed_step.should_step()) {
-            physics.update(registry, fixed_step.step());
-            fixed_step.consume();
+        // Load OpenGL functions
+        if (!nexus::rhi::gl::load(
+                reinterpret_cast<nexus::rhi::gl::GLLoadProc>(glfwGetProcAddress))) {
+            NX_ERROR("Failed to load OpenGL functions");
+            nexus::Log::shutdown();
+            return 1;
         }
 
-        // ── Audio update ────────────────────────────────────────────────
-        audio.update();
+        // ── Create RHI ──────────────────────────────────────────────────
+        auto rhi = nexus::rhi::RHI::create();
+        if (!rhi || !rhi->init()) {
+            NX_ERROR("Failed to initialize RHI");
+            nexus::Log::shutdown();
+            return 1;
+        }
 
-        // ── Render ──────────────────────────────────────────────────────
-        rhi->begin_frame();
-        rhi->set_viewport(0, 0, window.width(), window.height());
-        rhi->clear(nexus::Vec4{0.0f, 0.0f, 0.0f, 1.0f});
+        // ── Create scene & subsystems ───────────────────────────────────
+        nexus::Registry registry;
+        nexus::physics::PhysicsSystem physics;
+        nexus::audio::AudioEngine audio;
 
-        // Rendering would go here (2D/3D renderers, scene traversal, etc.)
+        // ── Create scripting engine with live bindings ───────────────────
+        nexus::scripting::ScriptEngine script_engine;
+        // Input is a static-only class; the reference is required by bind_all's
+        // signature for API consistency but only static methods are invoked.
+        nexus::Input input_handle;
+        nexus::scripting::bind_all(script_engine, registry, input_handle, audio, physics);
+        NX_APP_INFO("Scripting engine initialized with live bindings");
 
-        rhi->end_frame();
-        window.swap_buffers();
+        // ── Load scene if provided ──────────────────────────────────────
+        if (!cfg.scene_path.empty()) {
+            NX_APP_INFO("Loading scene: {}", cfg.scene_path);
+            // Scene loading would go here via SceneSerializer
+        }
 
-        if (nexus::Input::key_pressed(nexus::Key::Escape)) break;
+        // ── Fixed timestep for physics ──────────────────────────────────
+        nexus::Timer timer;
+        nexus::FixedTimestep fixed_step(1.0f / 60.0f);
+
+        NX_APP_INFO("Entering main loop...");
+
+        while (!window.should_close()) {
+            window.poll_events();
+            nexus::Input::update();
+            timer.tick();
+
+            float dt = timer.delta_time();
+
+            // ── Fixed-rate physics update ───────────────────────────────
+            fixed_step.accumulate(dt);
+            while (fixed_step.should_step()) {
+                physics.update(registry, fixed_step.step());
+                fixed_step.consume();
+            }
+
+            // ── Audio update ────────────────────────────────────────────
+            audio.update();
+
+            // ── Render ──────────────────────────────────────────────────
+            rhi->begin_frame();
+            rhi->set_viewport(0, 0, window.width(), window.height());
+            rhi->clear(nexus::Vec4{0.0f, 0.0f, 0.0f, 1.0f});
+
+            // Rendering would go here (2D/3D renderers, scene traversal, etc.)
+
+            rhi->end_frame();
+            window.swap_buffers();
+
+            if (nexus::Input::key_pressed(nexus::Key::Escape)) break;
+        }
+
+        // ── Shutdown (reverse init order) ───────────────────────────────
+        audio.stop_all();
+        rhi->shutdown();
+        NX_APP_INFO("NexusEngine Runtime shutting down...");
+
+    } catch (const std::exception& e) {
+        NX_ERROR("Fatal error: {}", e.what());
+        nexus::Log::shutdown();
+        return 1;
     }
 
-    // ── Shutdown ────────────────────────────────────────────────────────
-    audio.stop_all();
-    rhi->shutdown();
-    NX_APP_INFO("NexusEngine Runtime shutting down...");
     nexus::Log::shutdown();
     return 0;
 }

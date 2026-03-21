@@ -20,6 +20,12 @@ namespace nexus::rhi {
 
 class VulkanRHI : public RHI {
 public:
+    VulkanRHI() = default;
+    ~VulkanRHI() override = default;
+
+    NEXUS_NON_COPYABLE(VulkanRHI)
+    NEXUS_NON_MOVABLE(VulkanRHI)
+
     bool init() override;
     void shutdown() override;
 

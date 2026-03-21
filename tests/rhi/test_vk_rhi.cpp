@@ -24,11 +24,40 @@ TEST(VulkanRHI, InitAndShutdown) {
     EXPECT_FALSE(rhi.is_initialized());
 }
 
-TEST(VulkanRHI, DoubleInit) {
+TEST(VulkanRHI, DoubleInitIsIdempotent) {
     VulkanRHI rhi;
     EXPECT_TRUE(rhi.init());
-    // Second init should still succeed (re-initialized)
     EXPECT_TRUE(rhi.init());
+
+    // Create a resource to verify handles are still valid after double init
+    BufferDesc desc{BufferType::Vertex, BufferUsage::Static, nullptr, 64};
+    auto h = rhi.create_buffer(desc);
+    EXPECT_NE(h, INVALID_HANDLE);
+    EXPECT_EQ(rhi.live_buffer_count(), 1u);
+
+    rhi.shutdown();
+}
+
+TEST(VulkanRHI, ShutdownWithoutInit) {
+    VulkanRHI rhi;
+    // Should not crash
+    rhi.shutdown();
+    EXPECT_FALSE(rhi.is_initialized());
+}
+
+TEST(VulkanRHI, ReinitAfterShutdown) {
+    VulkanRHI rhi;
+    rhi.init();
+    auto h = rhi.create_buffer({BufferType::Vertex, BufferUsage::Static, nullptr, 32});
+    EXPECT_NE(h, INVALID_HANDLE);
+    EXPECT_EQ(rhi.live_buffer_count(), 1u);
+
+    rhi.shutdown();
+    EXPECT_FALSE(rhi.is_initialized());
+
+    // Re-init should work cleanly
+    EXPECT_TRUE(rhi.init());
+    EXPECT_EQ(rhi.live_buffer_count(), 0u);
     rhi.shutdown();
 }
 
@@ -46,6 +75,11 @@ TEST(VulkanRHI, FactoryCreateVulkan) {
 TEST(VulkanRHI, FactoryCreateOpenGL) {
     // OpenGL backend also exists
     auto rhi = RHI::create(Backend::OpenGL);
+    ASSERT_NE(rhi, nullptr);
+}
+
+TEST(VulkanRHI, FactoryDefaultBackend) {
+    auto rhi = RHI::create();
     ASSERT_NE(rhi, nullptr);
 }
 
@@ -91,6 +125,18 @@ TEST(VulkanRHI, CreateBufferWithData) {
     rhi.shutdown();
 }
 
+TEST(VulkanRHI, CreateZeroSizeBuffer) {
+    VulkanRHI rhi;
+    rhi.init();
+
+    BufferDesc desc{BufferType::Vertex, BufferUsage::Static, nullptr, 0};
+    auto h = rhi.create_buffer(desc);
+    EXPECT_NE(h, INVALID_HANDLE);
+    EXPECT_EQ(rhi.live_buffer_count(), 1u);
+
+    rhi.shutdown();
+}
+
 TEST(VulkanRHI, UpdateBuffer) {
     VulkanRHI rhi;
     rhi.init();
@@ -109,12 +155,82 @@ TEST(VulkanRHI, UpdateBuffer) {
     rhi.shutdown();
 }
 
+TEST(VulkanRHI, UpdateBufferZeroSize) {
+    VulkanRHI rhi;
+    rhi.init();
+
+    auto h = rhi.create_buffer({BufferType::Vertex, BufferUsage::Dynamic, nullptr, 64});
+    // zero-size update should be a no-op
+    float data = 1.0f;
+    rhi.update_buffer(h, &data, 0, 0);
+    EXPECT_EQ(rhi.live_buffer_count(), 1u);
+
+    rhi.shutdown();
+}
+
+TEST(VulkanRHI, UpdateBufferNullData) {
+    VulkanRHI rhi;
+    rhi.init();
+
+    auto h = rhi.create_buffer({BufferType::Vertex, BufferUsage::Dynamic, nullptr, 64});
+    // null data with non-zero size should not crash (grows buffer but no copy)
+    rhi.update_buffer(h, nullptr, 32, 0);
+    EXPECT_EQ(rhi.live_buffer_count(), 1u);
+
+    rhi.shutdown();
+}
+
+TEST(VulkanRHI, UpdateBufferBeyondSize) {
+    VulkanRHI rhi;
+    rhi.init();
+
+    auto h = rhi.create_buffer({BufferType::Vertex, BufferUsage::Dynamic, nullptr, 16});
+    float data[] = {1.0f, 2.0f};
+    // offset=100 is beyond buffer size; should grow the buffer
+    rhi.update_buffer(h, data, sizeof(data), 100);
+    EXPECT_EQ(rhi.live_buffer_count(), 1u);
+
+    rhi.shutdown();
+}
+
 TEST(VulkanRHI, DestroyInvalidBuffer) {
     VulkanRHI rhi;
     rhi.init();
     // Should not crash
     rhi.destroy_buffer(INVALID_HANDLE);
     rhi.destroy_buffer(999);
+    rhi.shutdown();
+}
+
+TEST(VulkanRHI, DoubleDestroyBuffer) {
+    VulkanRHI rhi;
+    rhi.init();
+
+    auto h = rhi.create_buffer({BufferType::Vertex, BufferUsage::Static, nullptr, 64});
+    EXPECT_EQ(rhi.live_buffer_count(), 1u);
+
+    rhi.destroy_buffer(h);
+    EXPECT_EQ(rhi.live_buffer_count(), 0u);
+
+    // Double destroy should be idempotent
+    rhi.destroy_buffer(h);
+    EXPECT_EQ(rhi.live_buffer_count(), 0u);
+
+    rhi.shutdown();
+}
+
+TEST(VulkanRHI, UpdateDestroyedBuffer) {
+    VulkanRHI rhi;
+    rhi.init();
+
+    auto h = rhi.create_buffer({BufferType::Vertex, BufferUsage::Dynamic, nullptr, 64});
+    rhi.destroy_buffer(h);
+
+    // Should be a no-op (buffer is dead)
+    float data = 1.0f;
+    rhi.update_buffer(h, &data, sizeof(data), 0);
+    EXPECT_EQ(rhi.live_buffer_count(), 0u);
+
     rhi.shutdown();
 }
 
@@ -157,6 +273,37 @@ TEST(VulkanRHI, CreateDestroyTexture) {
     EXPECT_NE(h, INVALID_HANDLE);
     EXPECT_EQ(rhi.live_texture_count(), 1u);
 
+    rhi.destroy_texture(h);
+    EXPECT_EQ(rhi.live_texture_count(), 0u);
+
+    rhi.shutdown();
+}
+
+TEST(VulkanRHI, CreateZeroDimensionTexture) {
+    VulkanRHI rhi;
+    rhi.init();
+
+    TextureDesc desc;
+    desc.width = 0;
+    desc.height = 0;
+    desc.format = TextureFormat::RGBA8;
+
+    auto h = rhi.create_texture(desc);
+    // Zero-dimension texture should still create (handle valid)
+    EXPECT_NE(h, INVALID_HANDLE);
+
+    rhi.shutdown();
+}
+
+TEST(VulkanRHI, DoubleDestroyTexture) {
+    VulkanRHI rhi;
+    rhi.init();
+
+    auto h = rhi.create_texture({64, 64, TextureFormat::RGBA8});
+    rhi.destroy_texture(h);
+    EXPECT_EQ(rhi.live_texture_count(), 0u);
+
+    // Double destroy should be idempotent
     rhi.destroy_texture(h);
     EXPECT_EQ(rhi.live_texture_count(), 0u);
 
@@ -224,6 +371,20 @@ TEST(VulkanRHI, CreateShaderEmptySource) {
     rhi.shutdown();
 }
 
+TEST(VulkanRHI, DoubleDestroyShader) {
+    VulkanRHI rhi;
+    rhi.init();
+
+    auto h = rhi.create_shader("vs", "fs");
+    rhi.destroy_shader(h);
+    EXPECT_EQ(rhi.live_shader_count(), 0u);
+
+    rhi.destroy_shader(h);
+    EXPECT_EQ(rhi.live_shader_count(), 0u);
+
+    rhi.shutdown();
+}
+
 // =============================================================================
 // Pipelines
 // =============================================================================
@@ -241,6 +402,18 @@ TEST(VulkanRHI, CreateDestroyPipeline) {
     EXPECT_NE(h, INVALID_HANDLE);
     EXPECT_EQ(rhi.live_pipeline_count(), 1u);
 
+    rhi.destroy_pipeline(h);
+    EXPECT_EQ(rhi.live_pipeline_count(), 0u);
+
+    rhi.shutdown();
+}
+
+TEST(VulkanRHI, DoubleDestroyPipeline) {
+    VulkanRHI rhi;
+    rhi.init();
+
+    auto h = rhi.create_pipeline({});
+    rhi.destroy_pipeline(h);
     rhi.destroy_pipeline(h);
     EXPECT_EQ(rhi.live_pipeline_count(), 0u);
 
@@ -283,6 +456,23 @@ TEST(VulkanRHI, FramebufferMultipleColorAttachments) {
 
     FramebufferHandle h = rhi.create_framebuffer(desc);
     EXPECT_NE(h, INVALID_HANDLE);
+
+    rhi.shutdown();
+}
+
+TEST(VulkanRHI, DoubleDestroyFramebuffer) {
+    VulkanRHI rhi;
+    rhi.init();
+
+    FramebufferDesc desc;
+    desc.width = 128;
+    desc.height = 128;
+    desc.color_attachments = {TextureFormat::RGBA8};
+
+    auto h = rhi.create_framebuffer(desc);
+    rhi.destroy_framebuffer(h);
+    rhi.destroy_framebuffer(h);
+    EXPECT_EQ(rhi.live_framebuffer_count(), 0u);
 
     rhi.shutdown();
 }
@@ -423,6 +613,40 @@ TEST(VulkanRHI, SetUniformInvalidShader) {
     rhi.shutdown();
 }
 
+TEST(VulkanRHI, SetUniformOnDestroyedShader) {
+    VulkanRHI rhi;
+    rhi.init();
+
+    auto h = rhi.create_shader("vs", "fs");
+    rhi.destroy_shader(h);
+
+    // Should silently do nothing (shader is dead)
+    rhi.set_uniform_int(h, "u_int", 42);
+    rhi.set_uniform_float(h, "u_float", 3.14f);
+    rhi.set_uniform_vec2(h, "u_vec2", Vec2(1, 2));
+    rhi.set_uniform_vec3(h, "u_vec3", Vec3(1, 2, 3));
+    rhi.set_uniform_vec4(h, "u_vec4", Vec4(1, 2, 3, 4));
+    rhi.set_uniform_mat4(h, "u_mat4", Mat4(1.0f));
+
+    rhi.shutdown();
+}
+
+TEST(VulkanRHI, SetUniformIntArrayEdgeCases) {
+    VulkanRHI rhi;
+    rhi.init();
+
+    auto h = rhi.create_shader("vs", "fs");
+
+    // nullptr with count > 0 should be no-op
+    rhi.set_uniform_int_array(h, "u_arr", nullptr, 3);
+
+    // count = 0 should be no-op
+    i32 arr[] = {1, 2, 3};
+    rhi.set_uniform_int_array(h, "u_arr", arr, 0);
+
+    rhi.shutdown();
+}
+
 // =============================================================================
 // Blend & Depth
 // =============================================================================
@@ -486,6 +710,22 @@ TEST(VulkanRHI, BindDestroyedResources) {
     rhi.bind_shader(shader);
     rhi.bind_pipeline(pipe);
     rhi.bind_framebuffer(fb);
+    rhi.end_frame();
+
+    rhi.shutdown();
+}
+
+TEST(VulkanRHI, BindInvalidHandles) {
+    VulkanRHI rhi;
+    rhi.init();
+
+    rhi.begin_frame();
+    rhi.bind_vertex_buffer(INVALID_HANDLE);
+    rhi.bind_index_buffer(INVALID_HANDLE);
+    rhi.bind_shader(INVALID_HANDLE);
+    rhi.bind_pipeline(INVALID_HANDLE);
+    rhi.bind_framebuffer(INVALID_HANDLE);
+    rhi.bind_texture(INVALID_HANDLE, 0); // unbind is valid
     rhi.end_frame();
 
     rhi.shutdown();

@@ -213,11 +213,43 @@ TEST(InputBindings, IsKeyDown) {
     EXPECT_FALSE(r.as_bool());
 }
 
+TEST(InputBindings, IsKeyReleased) {
+    ScriptEngine engine;
+    bind_input_api(engine);
+
+    auto r = engine.call_function("Input.is_key_released", {ScriptValue(32)});
+    EXPECT_FALSE(r.as_bool());
+}
+
 TEST(InputBindings, GetMousePosition) {
     ScriptEngine engine;
     bind_input_api(engine);
 
     auto r = engine.call_function("Input.get_mouse_position");
+    EXPECT_TRUE(r.is_vec2());
+}
+
+TEST(InputBindings, GetMouseDelta) {
+    ScriptEngine engine;
+    bind_input_api(engine);
+
+    auto r = engine.call_function("Input.get_mouse_delta");
+    EXPECT_TRUE(r.is_vec2());
+}
+
+TEST(InputBindings, IsMouseButtonPressed) {
+    ScriptEngine engine;
+    bind_input_api(engine);
+
+    auto r = engine.call_function("Input.is_mouse_button_pressed", {ScriptValue(0)});
+    EXPECT_FALSE(r.as_bool());
+}
+
+TEST(InputBindings, GetScrollDelta) {
+    ScriptEngine engine;
+    bind_input_api(engine);
+
+    auto r = engine.call_function("Input.get_scroll_delta");
     EXPECT_TRUE(r.is_vec2());
 }
 
@@ -233,6 +265,23 @@ TEST(AudioBindings, Play) {
     EXPECT_TRUE(r.is_int());
 }
 
+TEST(AudioBindings, StubAPIParity) {
+    ScriptEngine engine;
+    bind_audio_api(engine);
+
+    // All functions that exist in the live API must also exist in stubs
+    EXPECT_NE(engine.find_function("Audio", "play"), nullptr);
+    EXPECT_NE(engine.find_function("Audio", "stop"), nullptr);
+    EXPECT_NE(engine.find_function("Audio", "pause"), nullptr);
+    EXPECT_NE(engine.find_function("Audio", "resume"), nullptr);
+    EXPECT_NE(engine.find_function("Audio", "set_volume"), nullptr);
+    EXPECT_NE(engine.find_function("Audio", "set_pitch"), nullptr);
+    EXPECT_NE(engine.find_function("Audio", "is_playing"), nullptr);
+    EXPECT_NE(engine.find_function("Audio", "play_event"), nullptr);
+    EXPECT_NE(engine.find_function("Audio", "set_master_volume"), nullptr);
+    EXPECT_NE(engine.find_function("Audio", "stop_all"), nullptr);
+}
+
 // =============================================================================
 // Physics API Tests (stubs)
 // =============================================================================
@@ -245,6 +294,20 @@ TEST(PhysicsBindings, Raycast) {
         {ScriptValue(Vec3(0, 0, 0)), ScriptValue(Vec3(0, -1, 0))});
     // Stub returns nil
     EXPECT_TRUE(r.is_nil());
+}
+
+TEST(PhysicsBindings, StubAPIParity) {
+    ScriptEngine engine;
+    bind_physics_api(engine);
+
+    // All functions that exist in the live API must also exist in stubs
+    EXPECT_NE(engine.find_function("Physics", "raycast"), nullptr);
+    EXPECT_NE(engine.find_function("Physics", "raycast_2d"), nullptr);
+    EXPECT_NE(engine.find_function("Physics", "overlap_sphere"), nullptr);
+    EXPECT_NE(engine.find_function("Physics", "set_velocity"), nullptr);
+    EXPECT_NE(engine.find_function("Physics", "apply_force"), nullptr);
+    EXPECT_NE(engine.find_function("Physics", "set_gravity"), nullptr);
+    EXPECT_NE(engine.find_function("Physics", "set_gravity_2d"), nullptr);
 }
 
 // =============================================================================

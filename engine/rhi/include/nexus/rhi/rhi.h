@@ -6,6 +6,11 @@
 
 namespace nexus::rhi {
 
+enum class Backend : u8 {
+    OpenGL,
+    Vulkan,
+};
+
 class RHI {
 public:
     virtual ~RHI() = default;
@@ -78,7 +83,11 @@ public:
     virtual void draw_indexed(u32 index_count, u32 first_index = 0) = 0;
 
     // ── Factory ───────────────────────────────────────────────────────
+    /// Create the default RHI backend (OpenGL).
     static std::unique_ptr<RHI> create();
+
+    /// Create a specific RHI backend.
+    static std::unique_ptr<RHI> create(Backend backend);
 };
 
 } // namespace nexus::rhi

@@ -1,6 +1,9 @@
 #include "nexus/scripting/engine_bindings.h"
 #include "nexus/scene/registry.h"
 #include "nexus/scene/components.h"
+#include "nexus/platform/input.h"
+#include "nexus/audio/audio_engine.h"
+#include "nexus/physics/physics_system.h"
 #include "nexus/core/log.h"
 #include <cmath>
 
@@ -214,6 +217,95 @@ void bind_input_api(ScriptEngine& engine) {
         }, 1, 1, "Get a named input axis value (-1 to 1)");
 }
 
+// ── Input Bindings (live) ────────────────────────────────────────────────────
+
+void bind_input_api(ScriptEngine& engine, Input& input) {
+    (void)input; // Input is accessed via static methods
+
+    engine.register_function("Input", "is_key_down",
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.empty() || !args[0].is_int()) return ScriptValue(false);
+            return ScriptValue(Input::key_down(static_cast<Key>(args[0].as_int())));
+        }, 1, 1, "Check if a key is currently held down");
+
+    engine.register_function("Input", "is_key_pressed",
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.empty() || !args[0].is_int()) return ScriptValue(false);
+            return ScriptValue(Input::key_pressed(static_cast<Key>(args[0].as_int())));
+        }, 1, 1, "Check if a key was just pressed this frame");
+
+    engine.register_function("Input", "is_key_released",
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.empty() || !args[0].is_int()) return ScriptValue(false);
+            return ScriptValue(Input::key_released(static_cast<Key>(args[0].as_int())));
+        }, 1, 1, "Check if a key was just released this frame");
+
+    engine.register_function("Input", "get_mouse_position",
+        [](const std::vector<ScriptValue>&) -> ScriptValue {
+            return ScriptValue(Input::mouse_position());
+        }, 0, 0, "Get current mouse position");
+
+    engine.register_function("Input", "get_mouse_delta",
+        [](const std::vector<ScriptValue>&) -> ScriptValue {
+            return ScriptValue(Input::mouse_delta());
+        }, 0, 0, "Get mouse movement since last frame");
+
+    engine.register_function("Input", "is_mouse_button_down",
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.empty() || !args[0].is_int()) return ScriptValue(false);
+            return ScriptValue(Input::mouse_down(static_cast<MouseButton>(args[0].as_int())));
+        }, 1, 1, "Check if a mouse button is held down");
+
+    engine.register_function("Input", "is_mouse_button_pressed",
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.empty() || !args[0].is_int()) return ScriptValue(false);
+            return ScriptValue(Input::mouse_pressed(static_cast<MouseButton>(args[0].as_int())));
+        }, 1, 1, "Check if a mouse button was just pressed");
+
+    engine.register_function("Input", "get_scroll_delta",
+        [](const std::vector<ScriptValue>&) -> ScriptValue {
+            return ScriptValue(Input::scroll_delta());
+        }, 0, 0, "Get mouse scroll wheel delta");
+
+    engine.register_function("Input", "get_axis",
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.empty() || !args[0].is_string()) return ScriptValue(0.0f);
+            const auto& axis = args[0].as_string();
+            // Map common axis names to key pairs
+            if (axis == "horizontal") {
+                float v = 0.0f;
+                if (Input::key_down(Key::D) || Input::key_down(Key::Right)) v += 1.0f;
+                if (Input::key_down(Key::A) || Input::key_down(Key::Left))  v -= 1.0f;
+                return ScriptValue(v);
+            }
+            if (axis == "vertical") {
+                float v = 0.0f;
+                if (Input::key_down(Key::W) || Input::key_down(Key::Up))   v += 1.0f;
+                if (Input::key_down(Key::S) || Input::key_down(Key::Down)) v -= 1.0f;
+                return ScriptValue(v);
+            }
+            return ScriptValue(0.0f);
+        }, 1, 1, "Get a named input axis value (-1 to 1)");
+
+    // Key code constants
+    engine.set_global("Input.KEY_SPACE",     ScriptValue(static_cast<i32>(Key::Space)));
+    engine.set_global("Input.KEY_ESCAPE",    ScriptValue(static_cast<i32>(Key::Escape)));
+    engine.set_global("Input.KEY_ENTER",     ScriptValue(static_cast<i32>(Key::Enter)));
+    engine.set_global("Input.KEY_W",         ScriptValue(static_cast<i32>(Key::W)));
+    engine.set_global("Input.KEY_A",         ScriptValue(static_cast<i32>(Key::A)));
+    engine.set_global("Input.KEY_S",         ScriptValue(static_cast<i32>(Key::S)));
+    engine.set_global("Input.KEY_D",         ScriptValue(static_cast<i32>(Key::D)));
+    engine.set_global("Input.KEY_UP",        ScriptValue(static_cast<i32>(Key::Up)));
+    engine.set_global("Input.KEY_DOWN",      ScriptValue(static_cast<i32>(Key::Down)));
+    engine.set_global("Input.KEY_LEFT",      ScriptValue(static_cast<i32>(Key::Left)));
+    engine.set_global("Input.KEY_RIGHT",     ScriptValue(static_cast<i32>(Key::Right)));
+    engine.set_global("Input.KEY_SHIFT",     ScriptValue(static_cast<i32>(Key::LeftShift)));
+    engine.set_global("Input.KEY_CTRL",      ScriptValue(static_cast<i32>(Key::LeftControl)));
+    engine.set_global("Input.MOUSE_LEFT",    ScriptValue(static_cast<i32>(MouseButton::Left)));
+    engine.set_global("Input.MOUSE_RIGHT",   ScriptValue(static_cast<i32>(MouseButton::Right)));
+    engine.set_global("Input.MOUSE_MIDDLE",  ScriptValue(static_cast<i32>(MouseButton::Middle)));
+}
+
 // ── Audio Bindings (stubs) ──────────────────────────────────────────────────
 
 void bind_audio_api(ScriptEngine& engine) {
@@ -236,6 +328,95 @@ void bind_audio_api(ScriptEngine& engine) {
         [](const std::vector<ScriptValue>&) -> ScriptValue {
             return ScriptValue(static_cast<i32>(-1));
         }, 1, 1, "Trigger a named audio event");
+}
+
+// ── Audio Bindings (live) ────────────────────────────────────────────────────
+
+void bind_audio_api(ScriptEngine& engine, audio::AudioEngine& audio) {
+    engine.register_function("Audio", "play",
+        [&audio](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.empty() || !args[0].is_string()) return ScriptValue(static_cast<i32>(-1));
+            const auto& name = args[0].as_string();
+            const auto* clip = audio.get_clip_by_name(name);
+            if (!clip) return ScriptValue(static_cast<i32>(-1));
+
+            float volume = (args.size() >= 2 && args[1].is_number()) ? args[1].as_float() : 1.0f;
+            bool  looping = (args.size() >= 3 && args[2].is_bool()) ? args[2].as_bool() : false;
+            auto voice = audio.play(clip->id, volume, 1.0f, looping);
+            return ScriptValue(static_cast<i32>(voice));
+        }, 1, 3, "Play a sound (name, [volume], [loop])");
+
+    engine.register_function("Audio", "stop",
+        [&audio](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (!args.empty() && args[0].is_int()) {
+                audio.stop(static_cast<audio::VoiceId>(args[0].as_int()));
+            }
+            return ScriptValue::nil();
+        }, 1, 1, "Stop a playing sound by handle");
+
+    engine.register_function("Audio", "pause",
+        [&audio](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (!args.empty() && args[0].is_int()) {
+                audio.pause(static_cast<audio::VoiceId>(args[0].as_int()));
+            }
+            return ScriptValue::nil();
+        }, 1, 1, "Pause a playing sound by handle");
+
+    engine.register_function("Audio", "resume",
+        [&audio](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (!args.empty() && args[0].is_int()) {
+                audio.resume(static_cast<audio::VoiceId>(args[0].as_int()));
+            }
+            return ScriptValue::nil();
+        }, 1, 1, "Resume a paused sound by handle");
+
+    engine.register_function("Audio", "set_volume",
+        [&audio](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.size() >= 2 && args[0].is_int() && args[1].is_number()) {
+                audio.set_volume(static_cast<audio::VoiceId>(args[0].as_int()),
+                                 args[1].as_float());
+            }
+            return ScriptValue::nil();
+        }, 2, 2, "Set volume of a voice (handle, volume)");
+
+    engine.register_function("Audio", "set_pitch",
+        [&audio](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.size() >= 2 && args[0].is_int() && args[1].is_number()) {
+                audio.set_pitch(static_cast<audio::VoiceId>(args[0].as_int()),
+                                args[1].as_float());
+            }
+            return ScriptValue::nil();
+        }, 2, 2, "Set pitch of a voice (handle, pitch)");
+
+    engine.register_function("Audio", "is_playing",
+        [&audio](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (!args.empty() && args[0].is_int()) {
+                return ScriptValue(audio.is_playing(
+                    static_cast<audio::VoiceId>(args[0].as_int())));
+            }
+            return ScriptValue(false);
+        }, 1, 1, "Check if a voice is still playing");
+
+    engine.register_function("Audio", "play_event",
+        [&audio](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.empty() || !args[0].is_string()) return ScriptValue(static_cast<i32>(-1));
+            auto voice = audio.fire_event(args[0].as_string());
+            return ScriptValue(static_cast<i32>(voice));
+        }, 1, 1, "Trigger a named audio event");
+
+    engine.register_function("Audio", "set_master_volume",
+        [&audio](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (!args.empty() && args[0].is_number()) {
+                audio.set_master_volume(args[0].as_float());
+            }
+            return ScriptValue::nil();
+        }, 1, 1, "Set master volume (0.0 - 1.0)");
+
+    engine.register_function("Audio", "stop_all",
+        [&audio](const std::vector<ScriptValue>&) -> ScriptValue {
+            audio.stop_all();
+            return ScriptValue::nil();
+        }, 0, 0, "Stop all playing sounds");
 }
 
 // ── Physics Bindings (stubs) ────────────────────────────────────────────────
@@ -262,6 +443,90 @@ void bind_physics_api(ScriptEngine& engine) {
         }, 2, 2, "Apply force to a physics body (entity, force_vec3)");
 }
 
+// ── Physics Bindings (live) ──────────────────────────────────────────────────
+
+void bind_physics_api(ScriptEngine& engine, physics::PhysicsSystem& physics) {
+    engine.register_function("Physics", "raycast",
+        [&physics](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.size() < 2 || !args[0].is_vec3() || !args[1].is_vec3())
+                return ScriptValue::nil();
+
+            Vec3 origin = args[0].as_vec3();
+            Vec3 direction = args[1].as_vec3();
+            float max_dist = (args.size() >= 3 && args[2].is_number())
+                             ? args[2].as_float() : 1000.0f;
+
+            physics::RayHit hit;
+            if (physics.raycast_3d(origin, direction, max_dist, hit)) {
+                auto result = ScriptValue::table();
+                auto tbl = result.as_table();
+                (*tbl)["entity"]   = ScriptValue::entity(hit.entity);
+                (*tbl)["point"]    = ScriptValue(hit.point);
+                (*tbl)["normal"]   = ScriptValue(hit.normal);
+                (*tbl)["distance"] = ScriptValue(hit.distance);
+                return result;
+            }
+            return ScriptValue::nil();
+        }, 2, 3, "Cast a ray (origin_vec3, direction_vec3, [max_distance])");
+
+    engine.register_function("Physics", "raycast_2d",
+        [&physics](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.size() < 2 || !args[0].is_vec2() || !args[1].is_vec2())
+                return ScriptValue::nil();
+
+            Vec2 origin = args[0].as_vec2();
+            Vec2 direction = args[1].as_vec2();
+            float max_dist = (args.size() >= 3 && args[2].is_number())
+                             ? args[2].as_float() : 1000.0f;
+
+            physics::RayHit hit;
+            if (physics.raycast_2d(origin, direction, max_dist, hit)) {
+                auto result = ScriptValue::table();
+                auto tbl = result.as_table();
+                (*tbl)["entity"]   = ScriptValue::entity(hit.entity);
+                (*tbl)["point"]    = ScriptValue(hit.point);
+                (*tbl)["normal"]   = ScriptValue(hit.normal);
+                (*tbl)["distance"] = ScriptValue(hit.distance);
+                return result;
+            }
+            return ScriptValue::nil();
+        }, 2, 3, "Cast a 2D ray (origin_vec2, direction_vec2, [max_distance])");
+
+    engine.register_function("Physics", "overlap_sphere",
+        [](const std::vector<ScriptValue>&) -> ScriptValue {
+            NX_WARN("[Script] Physics.overlap_sphere: not yet implemented");
+            return ScriptValue::nil();
+        }, 2, 2, "Find entities overlapping a sphere (center_vec3, radius)");
+
+    engine.register_function("Physics", "set_velocity",
+        [](const std::vector<ScriptValue>&) -> ScriptValue {
+            NX_WARN("[Script] Physics.set_velocity: not yet implemented");
+            return ScriptValue::nil();
+        }, 2, 2, "Set velocity of a physics body (entity, velocity_vec3)");
+
+    engine.register_function("Physics", "apply_force",
+        [](const std::vector<ScriptValue>&) -> ScriptValue {
+            NX_WARN("[Script] Physics.apply_force: not yet implemented");
+            return ScriptValue::nil();
+        }, 2, 2, "Apply force to a physics body (entity, force_vec3)");
+
+    engine.register_function("Physics", "set_gravity",
+        [&physics](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (!args.empty() && args[0].is_vec3()) {
+                physics.set_gravity_3d(args[0].as_vec3());
+            }
+            return ScriptValue::nil();
+        }, 1, 1, "Set 3D gravity vector");
+
+    engine.register_function("Physics", "set_gravity_2d",
+        [&physics](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (!args.empty() && args[0].is_vec2()) {
+                physics.set_gravity_2d(args[0].as_vec2());
+            }
+            return ScriptValue::nil();
+        }, 1, 1, "Set 2D gravity vector");
+}
+
 // ── Bind All ────────────────────────────────────────────────────────────────
 
 void bind_all(ScriptEngine& engine, Registry& registry) {
@@ -270,6 +535,51 @@ void bind_all(ScriptEngine& engine, Registry& registry) {
     bind_input_api(engine);
     bind_audio_api(engine);
     bind_physics_api(engine);
+
+    // Utility: print
+    engine.register_function("", "print",
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            std::string msg;
+            for (size_t i = 0; i < args.size(); ++i) {
+                if (i > 0) msg += " ";
+                msg += args[i].to_string();
+            }
+            NX_INFO("[Script] {}", msg);
+            return ScriptValue::nil();
+        }, 0, 255, "Print values to the console");
+
+    // Utility: type(value) -> string
+    engine.register_function("", "type",
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.empty()) return ScriptValue("nil");
+            switch (args[0].type()) {
+                case ScriptValue::Type::Nil:      return ScriptValue("nil");
+                case ScriptValue::Type::Bool:     return ScriptValue("bool");
+                case ScriptValue::Type::Int:      return ScriptValue("int");
+                case ScriptValue::Type::Float:    return ScriptValue("float");
+                case ScriptValue::Type::String:   return ScriptValue("string");
+                case ScriptValue::Type::Vec2:     return ScriptValue("vec2");
+                case ScriptValue::Type::Vec3:     return ScriptValue("vec3");
+                case ScriptValue::Type::Vec4:     return ScriptValue("vec4");
+                case ScriptValue::Type::Entity:   return ScriptValue("entity");
+                case ScriptValue::Type::Function: return ScriptValue("function");
+                case ScriptValue::Type::Table:    return ScriptValue("table");
+            }
+            return ScriptValue("unknown");
+        }, 1, 1, "Get the type name of a value");
+}
+
+// ── Bind All (live subsystems) ───────────────────────────────────────────────
+
+void bind_all(ScriptEngine& engine, Registry& registry,
+              Input& input,
+              audio::AudioEngine& audio,
+              physics::PhysicsSystem& physics) {
+    bind_entity_api(engine, registry);
+    bind_math_api(engine);
+    bind_input_api(engine, input);
+    bind_audio_api(engine, audio);
+    bind_physics_api(engine, physics);
 
     // Utility: print
     engine.register_function("", "print",

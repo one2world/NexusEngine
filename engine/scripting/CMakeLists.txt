@@ -12,6 +12,7 @@ target_include_directories(nexus-scripting
 
 target_link_libraries(nexus-scripting
     PUBLIC Nexus::Core Nexus::Scene
+    PRIVATE Nexus::Platform Nexus::Audio Nexus::Physics
 )
 
 nexus_set_compiler_flags(nexus-scripting)

@@ -21,6 +21,11 @@ struct Transform2DComponent {
     Vec2  position{0.0f, 0.0f};
     float rotation{0.0f}; // radians
     Vec2  scale{1.0f, 1.0f};
+
+    // World-space transform computed by Hierarchy::propagate_transforms_2d.
+    Vec2  world_position{0.0f, 0.0f};
+    float world_rotation{0.0f};
+    Vec2  world_scale{1.0f, 1.0f};
 };
 
 // ---------------------------------------------------------------------------
@@ -30,6 +35,9 @@ struct Transform3DComponent {
     Vec3 position{0.0f};
     Quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
     Vec3 scale{1.0f, 1.0f, 1.0f};
+
+    // World-space matrix computed by Hierarchy::propagate_transforms_3d.
+    Mat4 world_matrix{1.0f};
 
     [[nodiscard]] Mat4 to_matrix() const {
         Mat4 m(1.0f);

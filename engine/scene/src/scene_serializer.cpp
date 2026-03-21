@@ -105,6 +105,86 @@ static json serialize_entity(const Registry& reg, Entity e) {
         };
     }
 
+    if (reg.has_component<RigidBody2DComponent>(e)) {
+        auto& rb = reg.get_component<RigidBody2DComponent>(e);
+        entity_json["rigidbody2d"] = {
+            {"type", static_cast<u8>(rb.type)},
+            {"density", rb.density},
+            {"friction", rb.friction},
+            {"restitution", rb.restitution},
+            {"linear_damping", rb.linear_damping},
+            {"angular_damping", rb.angular_damping},
+            {"gravity_scale", rb.gravity_scale},
+            {"fixed_rotation", rb.fixed_rotation},
+            {"velocity", vec2_to_json(rb.velocity)},
+            {"angular_velocity", rb.angular_velocity}
+        };
+    }
+
+    if (reg.has_component<Collider2DComponent>(e)) {
+        auto& c = reg.get_component<Collider2DComponent>(e);
+        entity_json["collider2d"] = {
+            {"shape", static_cast<u8>(c.shape)},
+            {"offset", vec2_to_json(c.offset)},
+            {"half_size", vec2_to_json(c.half_size)},
+            {"radius", c.radius},
+            {"is_trigger", c.is_trigger},
+            {"layer", c.layer},
+            {"mask", c.mask}
+        };
+    }
+
+    if (reg.has_component<RigidBody3DComponent>(e)) {
+        auto& rb = reg.get_component<RigidBody3DComponent>(e);
+        entity_json["rigidbody3d"] = {
+            {"type", static_cast<u8>(rb.type)},
+            {"mass", rb.mass},
+            {"friction", rb.friction},
+            {"restitution", rb.restitution},
+            {"linear_damping", rb.linear_damping},
+            {"angular_damping", rb.angular_damping},
+            {"gravity_scale", rb.gravity_scale},
+            {"velocity", vec3_to_json(rb.velocity)},
+            {"angular_velocity", vec3_to_json(rb.angular_velocity)}
+        };
+    }
+
+    if (reg.has_component<Collider3DComponent>(e)) {
+        auto& c = reg.get_component<Collider3DComponent>(e);
+        entity_json["collider3d"] = {
+            {"shape", static_cast<u8>(c.shape)},
+            {"offset", vec3_to_json(c.offset)},
+            {"half_extents", vec3_to_json(c.half_extents)},
+            {"radius", c.radius},
+            {"height", c.height},
+            {"is_trigger", c.is_trigger},
+            {"layer", c.layer},
+            {"mask", c.mask}
+        };
+    }
+
+    if (reg.has_component<AudioSourceComponent>(e)) {
+        auto& a = reg.get_component<AudioSourceComponent>(e);
+        entity_json["audio_source"] = {
+            {"clip_id", a.clip_id},
+            {"volume", a.volume},
+            {"pitch", a.pitch},
+            {"min_distance", a.min_distance},
+            {"max_distance", a.max_distance},
+            {"looping", a.looping},
+            {"spatial", a.spatial},
+            {"play_on_start", a.play_on_start},
+            {"bus", a.bus}
+        };
+    }
+
+    if (reg.has_component<AudioListenerComponent>(e)) {
+        auto& a = reg.get_component<AudioListenerComponent>(e);
+        entity_json["audio_listener"] = {
+            {"active", a.active}
+        };
+    }
+
     if (reg.has_component<HierarchyComponent>(e)) {
         auto& h = reg.get_component<HierarchyComponent>(e);
         if (h.parent != INVALID_ENTITY) {
@@ -191,6 +271,86 @@ static Entity deserialize_entity(Registry& reg, const json& j,
         comp.intensity = l["intensity"].get<float>();
         comp.radius = l["radius"].get<float>();
         reg.add_component<PointLightComponent>(e, comp);
+    }
+
+    if (j.contains("rigidbody2d")) {
+        auto& r = j["rigidbody2d"];
+        RigidBody2DComponent comp;
+        comp.type = static_cast<RigidBody2DComponent::Type>(r["type"].get<u8>());
+        comp.density = r["density"].get<float>();
+        comp.friction = r["friction"].get<float>();
+        comp.restitution = r["restitution"].get<float>();
+        comp.linear_damping = r["linear_damping"].get<float>();
+        comp.angular_damping = r["angular_damping"].get<float>();
+        comp.gravity_scale = r["gravity_scale"].get<float>();
+        comp.fixed_rotation = r["fixed_rotation"].get<bool>();
+        comp.velocity = json_to_vec2(r["velocity"]);
+        comp.angular_velocity = r["angular_velocity"].get<float>();
+        reg.add_component<RigidBody2DComponent>(e, comp);
+    }
+
+    if (j.contains("collider2d")) {
+        auto& c = j["collider2d"];
+        Collider2DComponent comp;
+        comp.shape = static_cast<Collider2DComponent::Shape>(c["shape"].get<u8>());
+        comp.offset = json_to_vec2(c["offset"]);
+        comp.half_size = json_to_vec2(c["half_size"]);
+        comp.radius = c["radius"].get<float>();
+        comp.is_trigger = c["is_trigger"].get<bool>();
+        comp.layer = c["layer"].get<u16>();
+        comp.mask = c["mask"].get<u16>();
+        reg.add_component<Collider2DComponent>(e, comp);
+    }
+
+    if (j.contains("rigidbody3d")) {
+        auto& r = j["rigidbody3d"];
+        RigidBody3DComponent comp;
+        comp.type = static_cast<RigidBody3DComponent::Type>(r["type"].get<u8>());
+        comp.mass = r["mass"].get<float>();
+        comp.friction = r["friction"].get<float>();
+        comp.restitution = r["restitution"].get<float>();
+        comp.linear_damping = r["linear_damping"].get<float>();
+        comp.angular_damping = r["angular_damping"].get<float>();
+        comp.gravity_scale = r["gravity_scale"].get<float>();
+        comp.velocity = json_to_vec3(r["velocity"]);
+        comp.angular_velocity = json_to_vec3(r["angular_velocity"]);
+        reg.add_component<RigidBody3DComponent>(e, comp);
+    }
+
+    if (j.contains("collider3d")) {
+        auto& c = j["collider3d"];
+        Collider3DComponent comp;
+        comp.shape = static_cast<Collider3DComponent::Shape>(c["shape"].get<u8>());
+        comp.offset = json_to_vec3(c["offset"]);
+        comp.half_extents = json_to_vec3(c["half_extents"]);
+        comp.radius = c["radius"].get<float>();
+        comp.height = c["height"].get<float>();
+        comp.is_trigger = c["is_trigger"].get<bool>();
+        comp.layer = c["layer"].get<u16>();
+        comp.mask = c["mask"].get<u16>();
+        reg.add_component<Collider3DComponent>(e, comp);
+    }
+
+    if (j.contains("audio_source")) {
+        auto& a = j["audio_source"];
+        AudioSourceComponent comp;
+        comp.clip_id = a["clip_id"].get<u32>();
+        comp.volume = a["volume"].get<float>();
+        comp.pitch = a["pitch"].get<float>();
+        comp.min_distance = a["min_distance"].get<float>();
+        comp.max_distance = a["max_distance"].get<float>();
+        comp.looping = a["looping"].get<bool>();
+        comp.spatial = a["spatial"].get<bool>();
+        comp.play_on_start = a["play_on_start"].get<bool>();
+        comp.bus = a["bus"].get<u32>();
+        reg.add_component<AudioSourceComponent>(e, comp);
+    }
+
+    if (j.contains("audio_listener")) {
+        auto& a = j["audio_listener"];
+        AudioListenerComponent comp;
+        comp.active = a["active"].get<bool>();
+        reg.add_component<AudioListenerComponent>(e, comp);
     }
 
     return e;

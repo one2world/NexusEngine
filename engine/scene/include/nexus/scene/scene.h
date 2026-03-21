@@ -4,6 +4,7 @@
 #include "nexus/scene/entity.h"
 #include "nexus/scene/registry.h"
 #include "nexus/scene/components.h"
+#include "nexus/scene/system_scheduler.h"
 
 #include <string>
 
@@ -21,6 +22,10 @@ public:
     Registry& registry() { return registry_; }
     const Registry& registry() const { return registry_; }
 
+    /// Access the system scheduler.
+    SystemScheduler& scheduler() { return scheduler_; }
+    const SystemScheduler& scheduler() const { return scheduler_; }
+
     /// Create a bare entity with a TagComponent.
     Entity create_entity(const std::string& name = "Entity");
 
@@ -33,7 +38,7 @@ public:
     /// Destroy an entity and all its components.
     void destroy_entity(Entity e);
 
-    /// Tick the scene (placeholder for system execution).
+    /// Tick the scene: propagate transforms and execute all registered systems.
     void update(float dt);
 
     /// Remove all entities from the scene.
@@ -41,6 +46,7 @@ public:
 
 private:
     Registry registry_;
+    SystemScheduler scheduler_;
 };
 
 } // namespace nexus

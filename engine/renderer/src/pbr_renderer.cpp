@@ -58,7 +58,15 @@ uniform float u_Exposure;
 uniform int   u_HasAlbedoMap;
 uniform sampler2D u_AlbedoMap;
 
+// IBL
+uniform int         u_HasIBL;
+uniform samplerCube u_IrradianceMap;
+uniform samplerCube u_PrefilteredMap;
+uniform sampler2D   u_BrdfLUT;
+uniform float       u_IBLIntensity;
+
 const float PI = 3.14159265359;
+const float MAX_REFLECTION_LOD = 4.0;
 
 // GGX/Trowbridge-Reitz NDF
 float DistributionGGX(vec3 N, vec3 H, float roughness) {
@@ -88,6 +96,12 @@ float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
 // Fresnel-Schlick
 vec3 fresnelSchlick(float cosTheta, vec3 F0) {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+// Fresnel-Schlick with roughness for IBL
+vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness) {
+    return F0 + (max(vec3(1.0 - roughness), F0) - F0) *
+           pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
 void main() {
@@ -120,8 +134,29 @@ void main() {
 
     vec3 Lo = (kD * albedo.rgb / PI + specular) * u_SunColor * u_SunIntensity * NdotL;
 
-    // Ambient (simple constant, replaced by IBL when available)
-    vec3 ambient = vec3(0.03) * albedo.rgb * u_AO;
+    // Ambient — use IBL when available, otherwise constant
+    vec3 ambient;
+    if (u_HasIBL > 0) {
+        float NdotV_ibl = max(dot(N, V), 0.0);
+        vec3 F_ibl = fresnelSchlickRoughness(NdotV_ibl, F0, u_Roughness);
+        vec3 kS_ibl = F_ibl;
+        vec3 kD_ibl = (1.0 - kS_ibl) * (1.0 - u_Metallic);
+
+        // Diffuse IBL from irradiance map
+        vec3 irradiance = texture(u_IrradianceMap, N).rgb;
+        vec3 diffuse_ibl = irradiance * albedo.rgb;
+
+        // Specular IBL from prefiltered environment map
+        vec3 R = reflect(-V, N);
+        vec3 prefilteredColor = textureLod(u_PrefilteredMap, R,
+                                           u_Roughness * MAX_REFLECTION_LOD).rgb;
+        vec2 brdf = texture(u_BrdfLUT, vec2(NdotV_ibl, u_Roughness)).rg;
+        vec3 specular_ibl = prefilteredColor * (F_ibl * brdf.x + brdf.y);
+
+        ambient = (kD_ibl * diffuse_ibl + specular_ibl) * u_AO * u_IBLIntensity;
+    } else {
+        ambient = vec3(0.03) * albedo.rgb * u_AO;
+    }
 
     // Emissive
     vec3 emissive = u_Emissive * u_EmissiveStrength;
@@ -232,6 +267,21 @@ void PBRRenderer::draw(rhi::BufferHandle vbo, rhi::BufferHandle ibo,
     rhi_->set_uniform_float(shader_, "u_SunIntensity", sun_intensity_);
     rhi_->set_uniform_vec3(shader_, "u_CameraPos", camera_position_);
     rhi_->set_uniform_float(shader_, "u_Exposure", exposure_);
+
+    // IBL environment
+    bool has_ibl = (ibl_.irradiance_map != rhi::INVALID_HANDLE &&
+                    ibl_.prefiltered_map != rhi::INVALID_HANDLE &&
+                    ibl_.brdf_lut != rhi::INVALID_HANDLE);
+    rhi_->set_uniform_int(shader_, "u_HasIBL", has_ibl ? 1 : 0);
+    if (has_ibl) {
+        rhi_->bind_texture(ibl_.irradiance_map, 4);
+        rhi_->set_uniform_int(shader_, "u_IrradianceMap", 4);
+        rhi_->bind_texture(ibl_.prefiltered_map, 5);
+        rhi_->set_uniform_int(shader_, "u_PrefilteredMap", 5);
+        rhi_->bind_texture(ibl_.brdf_lut, 6);
+        rhi_->set_uniform_int(shader_, "u_BrdfLUT", 6);
+        rhi_->set_uniform_float(shader_, "u_IBLIntensity", ibl_.intensity);
+    }
 
     // Draw
     rhi_->bind_vertex_buffer(vbo);

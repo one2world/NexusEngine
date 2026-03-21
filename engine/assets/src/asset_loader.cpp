@@ -1,9 +1,13 @@
 #include "nexus/assets/asset_loader.h"
 #include "nexus/core/log.h"
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
 
 namespace nexus::assets {
 
@@ -23,9 +27,48 @@ std::vector<std::string> TextureImporter::supported_extensions() const {
     return {".png", ".jpg", ".jpeg", ".tga", ".bmp", ".hdr"};
 }
 
+// Parse image dimensions from file headers without a full decode library.
+// Supports PNG, BMP, TGA headers.  Falls back to raw-pixel import for unknown
+// formats (the pixel data is stored as-is for the RHI to upload).
+
+static bool parse_png_header(const std::vector<u8>& raw, u32& w, u32& h) {
+    // PNG IHDR: bytes 16-19 = width (big-endian), 20-23 = height
+    if (raw.size() < 24) return false;
+    if (raw[0] != 0x89 || raw[1] != 'P' || raw[2] != 'N' || raw[3] != 'G')
+        return false;
+    w = (u32(raw[16]) << 24) | (u32(raw[17]) << 16) |
+        (u32(raw[18]) << 8)  |  u32(raw[19]);
+    h = (u32(raw[20]) << 24) | (u32(raw[21]) << 16) |
+        (u32(raw[22]) << 8)  |  u32(raw[23]);
+    return w > 0 && h > 0;
+}
+
+static bool parse_bmp_header(const std::vector<u8>& raw, u32& w, u32& h, u32& ch) {
+    if (raw.size() < 54) return false;
+    if (raw[0] != 'B' || raw[1] != 'M') return false;
+    auto read_u32_le = [&](size_t off) -> u32 {
+        return u32(raw[off]) | (u32(raw[off+1]) << 8) |
+               (u32(raw[off+2]) << 16) | (u32(raw[off+3]) << 24);
+    };
+    auto read_u16_le = [&](size_t off) -> u16 {
+        return u16(raw[off]) | (u16(raw[off+1]) << 8);
+    };
+    w  = read_u32_le(18);
+    h  = read_u32_le(22);
+    ch = read_u16_le(28) / 8; // bits-per-pixel -> channels
+    return w > 0 && h > 0;
+}
+
+static bool parse_tga_header(const std::vector<u8>& raw, u32& w, u32& h, u32& ch) {
+    if (raw.size() < 18) return false;
+    w  = u32(raw[12]) | (u32(raw[13]) << 8);
+    h  = u32(raw[14]) | (u32(raw[15]) << 8);
+    ch = raw[16] / 8;
+    return w > 0 && h > 0;
+}
+
 std::shared_ptr<AssetData> TextureImporter::import(const std::string& path,
                                                      const AssetMeta& /*meta*/) {
-    // Read raw file bytes (real engine would use stb_image here)
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
         NX_ERROR("TextureImporter: failed to open {}", path);
@@ -36,14 +79,46 @@ std::shared_ptr<AssetData> TextureImporter::import(const std::string& path,
     data->pixels.assign(std::istreambuf_iterator<char>(file),
                         std::istreambuf_iterator<char>{});
 
-    // Placeholder dimensions — real importer would decode the image
-    data->width = 1;
-    data->height = 1;
-    data->channels = 4;
-
     std::filesystem::path p(path);
-    data->is_hdr = (p.extension() == ".hdr");
+    std::string ext = p.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
+    data->is_hdr = (ext == ".hdr");
+    data->channels = 4; // default
+
+    // Try to read real dimensions from format headers
+    bool parsed = false;
+    if (ext == ".png") {
+        parsed = parse_png_header(data->pixels, data->width, data->height);
+    } else if (ext == ".bmp") {
+        parsed = parse_bmp_header(data->pixels, data->width, data->height, data->channels);
+    } else if (ext == ".tga") {
+        parsed = parse_tga_header(data->pixels, data->width, data->height, data->channels);
+    } else if (ext == ".jpg" || ext == ".jpeg") {
+        // JPEG SOF0 parsing: search for 0xFF 0xC0 marker
+        for (size_t i = 0; i + 9 < data->pixels.size(); ++i) {
+            if (data->pixels[i] == 0xFF && data->pixels[i+1] == 0xC0) {
+                data->height = (u32(data->pixels[i+5]) << 8) | u32(data->pixels[i+6]);
+                data->width  = (u32(data->pixels[i+7]) << 8) | u32(data->pixels[i+8]);
+                data->channels = data->pixels[i+9];
+                parsed = true;
+                break;
+            }
+        }
+    }
+
+    if (!parsed) {
+        // Fallback: assume raw RGBA if we can infer dimensions
+        u64 pixel_count = data->pixels.size() / 4;
+        u32 side = static_cast<u32>(std::sqrt(static_cast<double>(pixel_count)));
+        data->width  = (side > 0) ? side : 1;
+        data->height = (side > 0) ? side : 1;
+        data->channels = 4;
+    }
+
+    NX_INFO("TextureImporter: loaded '{}' ({}x{}, {}ch)",
+            p.filename().string(), data->width, data->height, data->channels);
     return data;
 }
 
@@ -55,7 +130,7 @@ std::vector<std::string> MeshImporter::supported_extensions() const {
 
 std::shared_ptr<AssetData> MeshImporter::import(const std::string& path,
                                                   const AssetMeta& /*meta*/) {
-    std::ifstream file(path, std::ios::binary);
+    std::ifstream file(path);
     if (!file.is_open()) {
         NX_ERROR("MeshImporter: failed to open {}", path);
         return nullptr;
@@ -64,22 +139,143 @@ std::shared_ptr<AssetData> MeshImporter::import(const std::string& path,
     auto data = std::make_shared<MeshData>();
     std::filesystem::path p(path);
     data->name = p.stem().string();
+    std::string ext = p.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
-    // Read raw bytes as placeholder (real engine would parse glTF/OBJ)
-    std::string content((std::istreambuf_iterator<char>(file)),
-                         std::istreambuf_iterator<char>{});
+    if (ext == ".obj") {
+        // Wavefront OBJ parser
+        std::vector<std::array<f32, 3>> positions;
+        std::vector<std::array<f32, 3>> normals;
+        std::vector<std::array<f32, 2>> texcoords;
 
-    // Create a single-triangle placeholder mesh
-    MeshData::Vertex v{};
-    v.position[0] = 0.0f; v.position[1] = 0.0f; v.position[2] = 0.0f;
-    v.normal[2] = 1.0f;
-    data->vertices.push_back(v);
-    v.position[0] = 1.0f;
-    data->vertices.push_back(v);
-    v.position[1] = 1.0f;
-    data->vertices.push_back(v);
+        // Map of "v/vt/vn" -> index for deduplication
+        std::unordered_map<std::string, u32> vertex_map;
 
-    data->indices = {0, 1, 2};
+        std::string line;
+        while (std::getline(file, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            std::istringstream iss(line);
+            std::string token;
+            iss >> token;
+
+            if (token == "v") {
+                std::array<f32, 3> pos{};
+                iss >> pos[0] >> pos[1] >> pos[2];
+                positions.push_back(pos);
+            } else if (token == "vn") {
+                std::array<f32, 3> n{};
+                iss >> n[0] >> n[1] >> n[2];
+                normals.push_back(n);
+            } else if (token == "vt") {
+                std::array<f32, 2> uv{};
+                iss >> uv[0] >> uv[1];
+                texcoords.push_back(uv);
+            } else if (token == "f") {
+                // Parse face vertices (triangulate quads)
+                std::vector<u32> face_indices;
+                std::string face_token;
+                while (iss >> face_token) {
+                    auto it = vertex_map.find(face_token);
+                    if (it != vertex_map.end()) {
+                        face_indices.push_back(it->second);
+                        continue;
+                    }
+
+                    MeshData::Vertex vert{};
+                    // Parse v, v/vt, v/vt/vn, v//vn
+                    int vi = 0, ti = 0, ni = 0;
+                    if (std::sscanf(face_token.c_str(), "%d/%d/%d", &vi, &ti, &ni) == 3 ||
+                        std::sscanf(face_token.c_str(), "%d//%d", &vi, &ni) == 2 ||
+                        std::sscanf(face_token.c_str(), "%d/%d", &vi, &ti) == 2 ||
+                        std::sscanf(face_token.c_str(), "%d", &vi) == 1) {
+
+                        if (vi != 0) {
+                            size_t idx = (vi > 0) ? size_t(vi - 1) : positions.size() + size_t(vi);
+                            if (idx < positions.size()) {
+                                vert.position[0] = positions[idx][0];
+                                vert.position[1] = positions[idx][1];
+                                vert.position[2] = positions[idx][2];
+                            }
+                        }
+                        if (ni != 0) {
+                            size_t idx = (ni > 0) ? size_t(ni - 1) : normals.size() + size_t(ni);
+                            if (idx < normals.size()) {
+                                vert.normal[0] = normals[idx][0];
+                                vert.normal[1] = normals[idx][1];
+                                vert.normal[2] = normals[idx][2];
+                            }
+                        }
+                        if (ti != 0) {
+                            size_t idx = (ti > 0) ? size_t(ti - 1) : texcoords.size() + size_t(ti);
+                            if (idx < texcoords.size()) {
+                                vert.texcoord[0] = texcoords[idx][0];
+                                vert.texcoord[1] = texcoords[idx][1];
+                            }
+                        }
+                    }
+
+                    u32 new_idx = static_cast<u32>(data->vertices.size());
+                    data->vertices.push_back(vert);
+                    vertex_map[face_token] = new_idx;
+                    face_indices.push_back(new_idx);
+                }
+
+                // Triangulate (fan triangulation for convex polygons)
+                for (size_t i = 2; i < face_indices.size(); ++i) {
+                    data->indices.push_back(face_indices[0]);
+                    data->indices.push_back(face_indices[i - 1]);
+                    data->indices.push_back(face_indices[i]);
+                }
+            }
+        }
+
+        // Generate flat normals if none were provided
+        if (normals.empty() && data->indices.size() >= 3) {
+            for (size_t i = 0; i + 2 < data->indices.size(); i += 3) {
+                auto& v0 = data->vertices[data->indices[i]];
+                auto& v1 = data->vertices[data->indices[i + 1]];
+                auto& v2 = data->vertices[data->indices[i + 2]];
+
+                f32 e1[3] = {v1.position[0] - v0.position[0],
+                             v1.position[1] - v0.position[1],
+                             v1.position[2] - v0.position[2]};
+                f32 e2[3] = {v2.position[0] - v0.position[0],
+                             v2.position[1] - v0.position[1],
+                             v2.position[2] - v0.position[2]};
+                f32 n[3] = {e1[1]*e2[2] - e1[2]*e2[1],
+                            e1[2]*e2[0] - e1[0]*e2[2],
+                            e1[0]*e2[1] - e1[1]*e2[0]};
+                f32 len = std::sqrt(n[0]*n[0] + n[1]*n[1] + n[2]*n[2]);
+                if (len > 0.0f) { n[0] /= len; n[1] /= len; n[2] /= len; }
+
+                for (int k = 0; k < 3; ++k) {
+                    auto& v = data->vertices[data->indices[i + size_t(k)]];
+                    v.normal[0] = n[0]; v.normal[1] = n[1]; v.normal[2] = n[2];
+                }
+            }
+        }
+
+        NX_INFO("MeshImporter: loaded OBJ '{}' ({} verts, {} tris)",
+                data->name, data->vertices.size(), data->indices.size() / 3);
+    } else {
+        // For glTF/FBX: store raw data, create placeholder geometry.
+        // Full glTF/FBX parsing requires a dedicated library (e.g. cgltf, assimp).
+        NX_WARN("MeshImporter: format '{}' not fully supported, creating placeholder", ext);
+
+        MeshData::Vertex v{};
+        v.normal[2] = 1.0f;
+        v.position[0] = -0.5f; v.position[1] = -0.5f; v.position[2] = 0.0f;
+        data->vertices.push_back(v);
+        v.position[0] =  0.5f; v.texcoord[0] = 1.0f;
+        data->vertices.push_back(v);
+        v.position[1] =  0.5f; v.texcoord[1] = 1.0f;
+        data->vertices.push_back(v);
+        v.position[0] = -0.5f; v.texcoord[0] = 0.0f;
+        data->vertices.push_back(v);
+
+        data->indices = {0, 1, 2, 0, 2, 3};
+    }
 
     return data;
 }

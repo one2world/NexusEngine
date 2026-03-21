@@ -5,6 +5,8 @@
 #include <vector>
 #include <memory>
 
+namespace nexus { class BatchRenderer2D; }
+
 namespace nexus::ui {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -85,6 +87,9 @@ public:
 
     /// Hit test — find the deepest widget at a screen position.
     Widget* hit_test(Vec2 pos) const;
+
+    /// Render all collected draw commands via BatchRenderer2D.
+    void render(BatchRenderer2D& renderer) const;
 
 private:
     Widget* hit_test_recursive(Widget* w, Vec2 pos) const;

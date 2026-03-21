@@ -1,4 +1,5 @@
 #include "nexus/ui/ui_system.h"
+#include "nexus/renderer/batch_renderer_2d.h"
 #include "nexus/core/log.h"
 
 namespace nexus::ui {
@@ -252,6 +253,49 @@ Widget* UISystem::hit_test_recursive(Widget* w, Vec2 pos) const {
     }
 
     return nullptr;
+}
+
+void UISystem::render(BatchRenderer2D& renderer) const {
+    for (const auto& cmd : draw_commands_) {
+        Vec2 pos = {cmd.rect.position.x + cmd.rect.size.x * 0.5f,
+                    cmd.rect.position.y + cmd.rect.size.y * 0.5f};
+        Vec2 size = cmd.rect.size;
+
+        switch (cmd.type) {
+        case Widget::DrawCommand::Type::Rect:
+            renderer.draw_quad(pos, size, cmd.color);
+            // Draw border if present
+            if (cmd.border_width > 0.0f) {
+                renderer.draw_rect(cmd.rect.position, size,
+                                   cmd.border_color, cmd.border_width);
+            }
+            break;
+
+        case Widget::DrawCommand::Type::Image:
+            if (cmd.texture != UI_INVALID_HANDLE) {
+                renderer.draw_quad(pos, size, cmd.texture, cmd.color);
+            } else {
+                renderer.draw_quad(pos, size, cmd.color);
+            }
+            break;
+
+        case Widget::DrawCommand::Type::NineSlice:
+            if (cmd.nine_slice.texture != UI_INVALID_HANDLE) {
+                renderer.draw_quad(pos, size, cmd.nine_slice.texture, cmd.color);
+            } else {
+                renderer.draw_quad(pos, size, cmd.color);
+            }
+            break;
+
+        case Widget::DrawCommand::Type::Text:
+            // Text rendering requires a font system; draw a placeholder tinted quad
+            // so the layout is visible. Real text rendering integrates with a
+            // font atlas / glyph rasterizer which is not yet implemented.
+            renderer.draw_quad(pos, size, Vec4{cmd.color.r, cmd.color.g,
+                                               cmd.color.b, cmd.color.a * 0.15f});
+            break;
+        }
+    }
 }
 
 } // namespace nexus::ui

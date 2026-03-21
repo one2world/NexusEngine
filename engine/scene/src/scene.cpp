@@ -1,4 +1,5 @@
 #include "nexus/scene/scene.h"
+#include "nexus/scene/hierarchy.h"
 
 namespace nexus {
 
@@ -26,8 +27,13 @@ void Scene::destroy_entity(Entity e) {
     registry_.destroy(e);
 }
 
-void Scene::update(float /*dt*/) {
-    // Placeholder: systems will be executed here in future iterations.
+void Scene::update(float dt) {
+    // Propagate parent-child transforms before systems run.
+    Hierarchy::propagate_transforms_3d(registry_);
+    Hierarchy::propagate_transforms_2d(registry_);
+
+    // Execute all registered systems in dependency order.
+    scheduler_.execute(registry_, dt);
 }
 
 void Scene::clear() {

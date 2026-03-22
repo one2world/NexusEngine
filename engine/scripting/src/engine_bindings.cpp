@@ -597,22 +597,77 @@ void bind_physics_api(ScriptEngine& engine, physics::PhysicsSystem& physics) {
         }, 2, 3, "Cast a 2D ray (origin_vec2, direction_vec2, [max_distance])");
 
     engine.register_function("Physics", "overlap_sphere",
-        [](const std::vector<ScriptValue>&) -> ScriptValue {
-            NX_WARN("[Script] Physics.overlap_sphere: not yet implemented");
-            return ScriptValue::nil();
+        [&physics](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.size() < 2 || !args[0].is_vec3() || !args[1].is_number())
+                return ScriptValue::nil();
+            Vec3 center = args[0].as_vec3();
+            float radius = args[1].as_float();
+            auto body_ids = physics.world_3d().overlap_sphere(center, radius);
+            auto result = ScriptValue::table();
+            auto tbl = result.as_table();
+            i32 idx = 1;
+            for (u32 bid : body_ids) {
+                const auto* body = physics.world_3d().get_body(bid);
+                if (body) {
+                    (*tbl)[std::to_string(idx++)] = ScriptValue::entity(body->entity);
+                }
+            }
+            return result;
         }, 2, 2, "Find entities overlapping a sphere (center_vec3, radius)");
 
     engine.register_function("Physics", "set_velocity",
-        [](const std::vector<ScriptValue>&) -> ScriptValue {
-            NX_WARN("[Script] Physics.set_velocity: not yet implemented");
+        [&physics](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.size() < 2 || !args[0].is_entity()) return ScriptValue::nil();
+            u32 entity = args[0].as_entity();
+
+            if (args[1].is_vec3()) {
+                Vec3 vel = args[1].as_vec3();
+                // Search 3D bodies for matching entity
+                for (auto& body : physics.world_3d().bodies()) {
+                    if (body.entity == entity) {
+                        auto* b = physics.world_3d().get_body(body.id);
+                        if (b) b->velocity = vel;
+                        return ScriptValue::nil();
+                    }
+                }
+            } else if (args[1].is_vec2()) {
+                Vec2 vel = args[1].as_vec2();
+                // Search 2D bodies for matching entity
+                for (auto& body : physics.world_2d().bodies()) {
+                    if (body.entity == entity) {
+                        auto* b = physics.world_2d().get_body(body.id);
+                        if (b) b->velocity = vel;
+                        return ScriptValue::nil();
+                    }
+                }
+            }
             return ScriptValue::nil();
-        }, 2, 2, "Set velocity of a physics body (entity, velocity_vec3)");
+        }, 2, 2, "Set velocity of a physics body (entity, velocity_vec3 or velocity_vec2)");
 
     engine.register_function("Physics", "apply_force",
-        [](const std::vector<ScriptValue>&) -> ScriptValue {
-            NX_WARN("[Script] Physics.apply_force: not yet implemented");
+        [&physics](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.size() < 2 || !args[0].is_entity()) return ScriptValue::nil();
+            u32 entity = args[0].as_entity();
+
+            if (args[1].is_vec3()) {
+                Vec3 force = args[1].as_vec3();
+                for (auto& body : physics.world_3d().bodies()) {
+                    if (body.entity == entity) {
+                        physics.world_3d().apply_force(body.id, force);
+                        return ScriptValue::nil();
+                    }
+                }
+            } else if (args[1].is_vec2()) {
+                Vec2 force = args[1].as_vec2();
+                for (auto& body : physics.world_2d().bodies()) {
+                    if (body.entity == entity) {
+                        physics.world_2d().apply_force(body.id, force);
+                        return ScriptValue::nil();
+                    }
+                }
+            }
             return ScriptValue::nil();
-        }, 2, 2, "Apply force to a physics body (entity, force_vec3)");
+        }, 2, 2, "Apply force to a physics body (entity, force_vec3 or force_vec2)");
 
     engine.register_function("Physics", "set_gravity",
         [&physics](const std::vector<ScriptValue>& args) -> ScriptValue {

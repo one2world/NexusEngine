@@ -75,4 +75,17 @@ struct AudioClip {
 bool load_wav(const std::string& filepath, AudioBuffer& out_buffer);
 bool load_wav_from_memory(const u8* data, size_t size, AudioBuffer& out_buffer);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// OGG Vorbis loader (minimal decoder)
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool load_ogg(const std::string& filepath, AudioBuffer& out_buffer);
+bool load_ogg_from_memory(const u8* data, size_t size, AudioBuffer& out_buffer);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Generic audio loader (auto-detects format by extension)
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool load_audio(const std::string& filepath, AudioBuffer& out_buffer);
+
 } // namespace nexus::audio

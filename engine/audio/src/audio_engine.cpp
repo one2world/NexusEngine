@@ -18,7 +18,7 @@ AudioEngine::AudioEngine() {
 
 AudioClipId AudioEngine::load_clip(const std::string& name, const std::string& filepath) {
     AudioBuffer buffer;
-    if (!load_wav(filepath, buffer)) return INVALID_CLIP_ID;
+    if (!load_audio(filepath, buffer)) return INVALID_CLIP_ID;
     return load_clip_from_buffer(name, std::move(buffer));
 }
 

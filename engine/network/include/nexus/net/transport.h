@@ -196,4 +196,99 @@ private:
     std::mt19937 rng_;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// UDPSocket — cross-platform UDP socket abstraction
+// ─────────────────────────────────────────────────────────────────────────────
+
+class UDPSocket {
+public:
+    UDPSocket();
+    ~UDPSocket();
+
+    // Non-copyable
+    UDPSocket(const UDPSocket&) = delete;
+    UDPSocket& operator=(const UDPSocket&) = delete;
+    UDPSocket(UDPSocket&& other) noexcept;
+    UDPSocket& operator=(UDPSocket&& other) noexcept;
+
+    /// Open the socket.
+    bool open();
+
+    /// Bind to a local address/port.
+    bool bind(const Address& local);
+
+    /// Close the socket.
+    void close();
+
+    /// Send data to a remote address. Returns bytes sent or -1 on error.
+    i32 send_to(const Address& dest, const void* data, u32 size);
+
+    /// Receive data. Returns bytes received or -1 on error/no data.
+    /// Fills sender address. Non-blocking.
+    i32 recv_from(Address& sender, void* buffer, u32 buffer_size);
+
+    /// Check if the socket is valid/open.
+    bool is_open() const { return socket_fd_ >= 0; }
+
+    /// Set non-blocking mode.
+    bool set_non_blocking(bool enabled);
+
+    /// Set send/receive buffer sizes.
+    bool set_send_buffer_size(u32 size);
+    bool set_recv_buffer_size(u32 size);
+
+    /// Get the bound local port (useful when binding to port 0).
+    u16 local_port() const;
+
+private:
+    int socket_fd_{-1};
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TCPSocket — cross-platform TCP socket abstraction
+// ─────────────────────────────────────────────────────────────────────────────
+
+class TCPSocket {
+public:
+    TCPSocket();
+    explicit TCPSocket(int fd);
+    ~TCPSocket();
+
+    TCPSocket(const TCPSocket&) = delete;
+    TCPSocket& operator=(const TCPSocket&) = delete;
+    TCPSocket(TCPSocket&& other) noexcept;
+    TCPSocket& operator=(TCPSocket&& other) noexcept;
+
+    /// Create a new TCP socket.
+    bool open();
+
+    /// Bind to a local address.
+    bool bind(const Address& local);
+
+    /// Start listening for connections.
+    bool listen(i32 backlog = 16);
+
+    /// Accept an incoming connection. Returns a new socket.
+    TCPSocket accept(Address& remote);
+
+    /// Connect to a remote address.
+    bool connect(const Address& remote);
+
+    /// Send data. Returns bytes sent or -1 on error.
+    i32 send(const void* data, u32 size);
+
+    /// Receive data. Returns bytes received, 0 on disconnect, -1 on error.
+    i32 recv(void* buffer, u32 buffer_size);
+
+    /// Close the socket.
+    void close();
+
+    bool is_open() const { return socket_fd_ >= 0; }
+    bool set_non_blocking(bool enabled);
+    bool set_no_delay(bool enabled);
+
+private:
+    int socket_fd_{-1};
+};
+
 } // namespace nexus::net

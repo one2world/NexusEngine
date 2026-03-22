@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -258,9 +259,258 @@ std::shared_ptr<AssetData> MeshImporter::import(const std::string& path,
 
         NX_INFO("MeshImporter: loaded OBJ '{}' ({} verts, {} tris)",
                 data->name, data->vertices.size(), data->indices.size() / 3);
+    } else if (ext == ".gltf" || ext == ".glb") {
+        // Minimal glTF 2.0 JSON parser for mesh data
+        // Reads the first mesh/primitive from a .gltf file (JSON-based)
+        std::string json_str;
+        u32 bin_offset = 0;
+        std::vector<u8> glb_bin;
+
+        if (ext == ".glb") {
+            // GLB format: 12-byte header + JSON chunk + BIN chunk
+            file.seekg(0, std::ios::end);
+            size_t file_size = static_cast<size_t>(file.tellg());
+            file.seekg(0);
+            if (file_size < 20) {
+                NX_ERROR("MeshImporter: GLB file too small");
+                return nullptr;
+            }
+            u32 magic, version, length;
+            file.read(reinterpret_cast<char*>(&magic), 4);
+            file.read(reinterpret_cast<char*>(&version), 4);
+            file.read(reinterpret_cast<char*>(&length), 4);
+            if (magic != 0x46546C67) { // 'glTF'
+                NX_ERROR("MeshImporter: invalid GLB magic");
+                return nullptr;
+            }
+            // JSON chunk
+            u32 json_len, json_type;
+            file.read(reinterpret_cast<char*>(&json_len), 4);
+            file.read(reinterpret_cast<char*>(&json_type), 4);
+            json_str.resize(json_len);
+            file.read(json_str.data(), json_len);
+            // BIN chunk
+            if (static_cast<size_t>(file.tellg()) + 8 <= file_size) {
+                u32 bin_len, bin_type;
+                file.read(reinterpret_cast<char*>(&bin_len), 4);
+                file.read(reinterpret_cast<char*>(&bin_type), 4);
+                glb_bin.resize(bin_len);
+                file.read(reinterpret_cast<char*>(glb_bin.data()), bin_len);
+            }
+        } else {
+            // Plain .gltf JSON
+            std::ostringstream oss;
+            oss << file.rdbuf();
+            json_str = oss.str();
+        }
+
+        // Minimal JSON value extraction helpers
+        auto find_array = [&](const std::string& json, const std::string& key) -> std::string {
+            size_t pos = json.find("\"" + key + "\"");
+            if (pos == std::string::npos) return "";
+            pos = json.find('[', pos);
+            if (pos == std::string::npos) return "";
+            int depth = 0;
+            size_t start = pos;
+            for (size_t i = pos; i < json.size(); ++i) {
+                if (json[i] == '[') depth++;
+                else if (json[i] == ']') { depth--; if (depth == 0) return json.substr(start, i - start + 1); }
+            }
+            return "";
+        };
+
+        auto find_int = [&](const std::string& json, const std::string& key) -> i64 {
+            size_t pos = json.find("\"" + key + "\"");
+            if (pos == std::string::npos) return -1;
+            pos = json.find(':', pos);
+            if (pos == std::string::npos) return -1;
+            pos++;
+            while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
+            return std::stoll(json.substr(pos));
+        };
+
+        auto find_object_at = [&](const std::string& arr, size_t start) -> std::pair<std::string, size_t> {
+            size_t pos = arr.find('{', start);
+            if (pos == std::string::npos) return {"", std::string::npos};
+            int depth = 0;
+            size_t s = pos;
+            for (size_t i = pos; i < arr.size(); ++i) {
+                if (arr[i] == '{') depth++;
+                else if (arr[i] == '}') { depth--; if (depth == 0) return {arr.substr(s, i - s + 1), i + 1}; }
+            }
+            return {"", std::string::npos};
+        };
+
+        // Parse accessors, bufferViews
+        std::string accessors_arr = find_array(json_str, "accessors");
+        std::string views_arr = find_array(json_str, "bufferViews");
+        std::string meshes_arr = find_array(json_str, "meshes");
+
+        struct AccessorInfo { i64 view; i64 count; i64 comp_type; std::string type; i64 byte_offset; };
+        struct BufferViewInfo { i64 buffer; i64 offset; i64 length; i64 stride; };
+
+        std::vector<AccessorInfo> accessors;
+        std::vector<BufferViewInfo> buffer_views;
+
+        // Parse buffer views
+        {
+            size_t pos = 0;
+            while (true) {
+                auto [obj, next] = find_object_at(views_arr, pos);
+                if (next == std::string::npos) break;
+                BufferViewInfo bv{};
+                bv.buffer = find_int(obj, "buffer");
+                bv.offset = find_int(obj, "byteOffset");
+                if (bv.offset < 0) bv.offset = 0;
+                bv.length = find_int(obj, "byteLength");
+                bv.stride = find_int(obj, "byteStride");
+                if (bv.stride < 0) bv.stride = 0;
+                buffer_views.push_back(bv);
+                pos = next;
+            }
+        }
+
+        // Parse accessors
+        {
+            size_t pos = 0;
+            while (true) {
+                auto [obj, next] = find_object_at(accessors_arr, pos);
+                if (next == std::string::npos) break;
+                AccessorInfo acc{};
+                acc.view = find_int(obj, "bufferView");
+                acc.count = find_int(obj, "count");
+                acc.comp_type = find_int(obj, "componentType");
+                acc.byte_offset = find_int(obj, "byteOffset");
+                if (acc.byte_offset < 0) acc.byte_offset = 0;
+                // Determine type
+                size_t tp = obj.find("\"type\"");
+                if (tp != std::string::npos) {
+                    size_t q1 = obj.find('"', tp + 6);
+                    if (q1 != std::string::npos) {
+                        size_t q2 = obj.find('"', q1 + 1);
+                        if (q2 != std::string::npos) acc.type = obj.substr(q1 + 1, q2 - q1 - 1);
+                    }
+                }
+                accessors.push_back(acc);
+                pos = next;
+            }
+        }
+
+        // Parse first mesh/primitive
+        auto [mesh_obj, _m] = find_object_at(meshes_arr, 0);
+        std::string prims_arr = find_array(mesh_obj, "primitives");
+        auto [prim_obj, _p] = find_object_at(prims_arr, 0);
+
+        i64 idx_accessor = find_int(prim_obj, "indices");
+        // Find POSITION, NORMAL, TEXCOORD_0 in attributes
+        std::string attrs_str;
+        size_t attr_pos = prim_obj.find("\"attributes\"");
+        if (attr_pos != std::string::npos) {
+            auto [attr_obj, _a] = find_object_at(prim_obj, attr_pos);
+            attrs_str = attr_obj;
+        }
+        i64 pos_accessor = find_int(attrs_str, "POSITION");
+        i64 norm_accessor = find_int(attrs_str, "NORMAL");
+        i64 uv_accessor = find_int(attrs_str, "TEXCOORD_0");
+
+        // Helper to read float data from buffer
+        auto read_floats = [&](i64 acc_idx, u32 components) -> std::vector<f32> {
+            std::vector<f32> result;
+            if (acc_idx < 0 || acc_idx >= static_cast<i64>(accessors.size())) return result;
+            const auto& acc = accessors[acc_idx];
+            if (acc.view < 0 || acc.view >= static_cast<i64>(buffer_views.size())) return result;
+            const auto& bv = buffer_views[acc.view];
+
+            const u8* buf_data = glb_bin.data();
+            size_t buf_size = glb_bin.size();
+            if (!buf_data || buf_size == 0) return result;
+
+            size_t offset = static_cast<size_t>(bv.offset + acc.byte_offset);
+            size_t stride = bv.stride > 0 ? static_cast<size_t>(bv.stride) : (components * sizeof(f32));
+
+            result.reserve(static_cast<size_t>(acc.count) * components);
+            for (i64 i = 0; i < acc.count; ++i) {
+                size_t base = offset + static_cast<size_t>(i) * stride;
+                for (u32 c = 0; c < components; ++c) {
+                    f32 val = 0.0f;
+                    if (base + (c + 1) * sizeof(f32) <= buf_size) {
+                        std::memcpy(&val, buf_data + base + c * sizeof(f32), sizeof(f32));
+                    }
+                    result.push_back(val);
+                }
+            }
+            return result;
+        };
+
+        auto read_indices = [&](i64 acc_idx) -> std::vector<u32> {
+            std::vector<u32> result;
+            if (acc_idx < 0 || acc_idx >= static_cast<i64>(accessors.size())) return result;
+            const auto& acc = accessors[acc_idx];
+            if (acc.view < 0 || acc.view >= static_cast<i64>(buffer_views.size())) return result;
+            const auto& bv = buffer_views[acc.view];
+
+            const u8* buf_data = glb_bin.data();
+            size_t buf_size = glb_bin.size();
+            if (!buf_data || buf_size == 0) return result;
+
+            size_t offset = static_cast<size_t>(bv.offset + acc.byte_offset);
+            result.reserve(static_cast<size_t>(acc.count));
+
+            for (i64 i = 0; i < acc.count; ++i) {
+                u32 idx = 0;
+                if (acc.comp_type == 5123) { // UNSIGNED_SHORT
+                    u16 v = 0;
+                    size_t o = offset + static_cast<size_t>(i) * sizeof(u16);
+                    if (o + sizeof(u16) <= buf_size) std::memcpy(&v, buf_data + o, sizeof(u16));
+                    idx = v;
+                } else if (acc.comp_type == 5125) { // UNSIGNED_INT
+                    size_t o = offset + static_cast<size_t>(i) * sizeof(u32);
+                    if (o + sizeof(u32) <= buf_size) std::memcpy(&idx, buf_data + o, sizeof(u32));
+                } else if (acc.comp_type == 5121) { // UNSIGNED_BYTE
+                    size_t o = offset + static_cast<size_t>(i);
+                    if (o < buf_size) idx = buf_data[o];
+                }
+                result.push_back(idx);
+            }
+            return result;
+        };
+
+        // Read vertex data
+        auto positions = read_floats(pos_accessor, 3);
+        auto norms = read_floats(norm_accessor, 3);
+        auto uvs = read_floats(uv_accessor, 2);
+        auto indices = read_indices(idx_accessor);
+
+        u32 vert_count = static_cast<u32>(positions.size() / 3);
+        data->vertices.reserve(vert_count);
+        for (u32 i = 0; i < vert_count; ++i) {
+            MeshData::Vertex v{};
+            v.position[0] = positions[i * 3];
+            v.position[1] = positions[i * 3 + 1];
+            v.position[2] = positions[i * 3 + 2];
+            if (i * 3 + 2 < norms.size()) {
+                v.normal[0] = norms[i * 3];
+                v.normal[1] = norms[i * 3 + 1];
+                v.normal[2] = norms[i * 3 + 2];
+            }
+            if (i * 2 + 1 < uvs.size()) {
+                v.texcoord[0] = uvs[i * 2];
+                v.texcoord[1] = uvs[i * 2 + 1];
+            }
+            data->vertices.push_back(v);
+        }
+
+        if (!indices.empty()) {
+            data->indices = std::move(indices);
+        } else {
+            data->indices.resize(vert_count);
+            for (u32 i = 0; i < vert_count; ++i) data->indices[i] = i;
+        }
+
+        NX_INFO("MeshImporter: loaded glTF '{}' ({} verts, {} tris)",
+                data->name, data->vertices.size(), data->indices.size() / 3);
     } else {
-        // For glTF/FBX: store raw data, create placeholder geometry.
-        // Full glTF/FBX parsing requires a dedicated library (e.g. cgltf, assimp).
+        // FBX: placeholder - full FBX requires a dedicated library
         NX_WARN("MeshImporter: format '{}' not fully supported, creating placeholder", ext);
 
         MeshData::Vertex v{};

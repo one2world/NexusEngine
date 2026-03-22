@@ -6,6 +6,11 @@
 
 namespace nexus {
 class Registry;
+class Scene;
+}
+namespace nexus::renderer {
+class ForwardRenderer3D;
+class BatchRenderer2D;
 }
 
 namespace nexus::editor {
@@ -30,8 +35,13 @@ class ViewportPanel : public Panel {
 public:
     ViewportPanel() : Panel("Viewport") {}
 
-    void on_render() override {}
+    void on_render() override;
     const char* type_id() const override { return "ViewportPanel"; }
+
+    /// Bind scene and renderers for viewport rendering.
+    void bind_scene(Scene* scene) { scene_ = scene; }
+    void bind_renderer_3d(renderer::ForwardRenderer3D* r) { renderer_3d_ = r; }
+    void bind_renderer_2d(renderer::BatchRenderer2D* r) { renderer_2d_ = r; }
 
     GizmoMode gizmo_mode() const { return gizmo_mode_; }
     void set_gizmo_mode(GizmoMode mode) { gizmo_mode_ = mode; }
@@ -60,6 +70,9 @@ private:
     bool gizmo_active_{false};
     u32 width_{800};
     u32 height_{600};
+    Scene* scene_{nullptr};
+    renderer::ForwardRenderer3D* renderer_3d_{nullptr};
+    renderer::BatchRenderer2D* renderer_2d_{nullptr};
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 #include "nexus/physics/physics_world_2d.h"
 #include "nexus/core/log.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 
@@ -235,21 +236,73 @@ bool PhysicsWorld2D::circle_vs_circle(const Body2D& a, const Body2D& b, Contact2
 }
 
 bool PhysicsWorld2D::box_vs_box(const Body2D& a, const Body2D& b, Contact2D& c) const {
-    // SAT for axis-aligned boxes (simplified: ignoring rotation for now)
+    // OBB vs OBB using Separating Axis Theorem with rotation support
+    float cos_a = std::cos(a.rotation), sin_a = std::sin(a.rotation);
+    float cos_b = std::cos(b.rotation), sin_b = std::sin(b.rotation);
+
+    // Build local axes for each OBB
+    Vec2 axes[4] = {
+        {cos_a, sin_a}, {-sin_a, cos_a},   // A's local X and Y axes
+        {cos_b, sin_b}, {-sin_b, cos_b}    // B's local X and Y axes
+    };
+
     Vec2 diff = b.position - a.position;
-    float overlap_x = a.half_size.x + b.half_size.x - std::abs(diff.x);
-    float overlap_y = a.half_size.y + b.half_size.y - std::abs(diff.y);
+    float min_overlap = std::numeric_limits<float>::max();
+    Vec2 min_axis{0.0f, 0.0f};
 
-    if (overlap_x <= 0.0f || overlap_y <= 0.0f) return false;
+    // Get corner vertices of each OBB
+    auto get_corners = [](Vec2 pos, Vec2 half, float cs, float sn) {
+        Vec2 ax{cs, sn};
+        Vec2 ay{-sn, cs};
+        Vec2 ex = ax * half.x;
+        Vec2 ey = ay * half.y;
+        return std::array<Vec2, 4>{{
+            pos - ex - ey, pos + ex - ey,
+            pos + ex + ey, pos - ex + ey
+        }};
+    };
 
-    if (overlap_x < overlap_y) {
-        c.normal = {(diff.x < 0.0f) ? -1.0f : 1.0f, 0.0f};
-        c.depth = overlap_x;
-    } else {
-        c.normal = {0.0f, (diff.y < 0.0f) ? -1.0f : 1.0f};
-        c.depth = overlap_y;
+    auto corners_a = get_corners(a.position, a.half_size, cos_a, sin_a);
+    auto corners_b = get_corners(b.position, b.half_size, cos_b, sin_b);
+
+    // Test all 4 separating axes
+    for (int i = 0; i < 4; ++i) {
+        Vec2 axis = axes[i];
+
+        // Project both OBBs onto this axis
+        float min_a_proj =  std::numeric_limits<float>::max();
+        float max_a_proj = -std::numeric_limits<float>::max();
+        float min_b_proj =  std::numeric_limits<float>::max();
+        float max_b_proj = -std::numeric_limits<float>::max();
+
+        for (int j = 0; j < 4; ++j) {
+            float pa = glm::dot(corners_a[j], axis);
+            float pb = glm::dot(corners_b[j], axis);
+            min_a_proj = std::min(min_a_proj, pa);
+            max_a_proj = std::max(max_a_proj, pa);
+            min_b_proj = std::min(min_b_proj, pb);
+            max_b_proj = std::max(max_b_proj, pb);
+        }
+
+        // Check for separation
+        float overlap = std::min(max_a_proj, max_b_proj) - std::max(min_a_proj, min_b_proj);
+        if (overlap <= 0.0f) return false; // Separating axis found
+
+        if (overlap < min_overlap) {
+            min_overlap = overlap;
+            min_axis = axis;
+        }
     }
-    c.point = a.position + c.normal * a.half_size;
+
+    // Ensure normal points from A to B
+    if (glm::dot(min_axis, diff) < 0.0f) {
+        min_axis = -min_axis;
+    }
+
+    c.normal = min_axis;
+    c.depth = min_overlap;
+    c.point = a.position + c.normal * glm::dot(a.half_size, Vec2(std::abs(glm::dot(axes[0], min_axis)),
+                                                                    std::abs(glm::dot(axes[1], min_axis))));
     return true;
 }
 

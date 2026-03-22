@@ -1,7 +1,101 @@
 #include "nexus/editor/editor_panels.h"
+#include "nexus/scene/scene.h"
+#include "nexus/scene/components.h"
+#include "nexus/scene/registry.h"
+#include "nexus/renderer/forward_renderer_3d.h"
+#include "nexus/renderer/batch_renderer_2d.h"
+#include "nexus/core/log.h"
 #include <algorithm>
+#include <cmath>
 
 namespace nexus::editor {
+
+// ── ViewportPanel ──────────────────────────────────────────────────────────
+
+void ViewportPanel::on_render() {
+    if (!scene_) return;
+
+    auto& registry = scene_->registry();
+
+    // ── 3D rendering pass ──────────────────────────────────────────────
+    if (renderer_3d_) {
+        // Find camera
+        Camera3D cam;
+        bool found_camera = false;
+        registry.each_with<CameraComponent, Transform3DComponent>(
+            [&](u32 /*entity*/, const CameraComponent& cc, const Transform3DComponent& tc) {
+                if (found_camera) return;
+                cam.fov = cc.fov;
+                cam.near_clip = cc.near_clip;
+                cam.far_clip = cc.far_clip;
+                // Convert quaternion to yaw/pitch
+                Quat q = cc.orientation;
+                float sinp = 2.0f * (q.w * q.x - q.z * q.y);
+                cam.pitch = std::abs(sinp) >= 1.0f
+                    ? std::copysign(90.0f, sinp)
+                    : static_cast<float>(std::asin(sinp) * 180.0 / 3.14159265358979);
+                cam.yaw = static_cast<float>(std::atan2(
+                    2.0f * (q.w * q.y + q.x * q.z),
+                    1.0f - 2.0f * (q.x * q.x + q.y * q.y)) * 180.0 / 3.14159265358979);
+                cam.position = tc.world_matrix[3];
+                float aspect = (height_ > 0) ? static_cast<float>(width_) / static_cast<float>(height_) : 16.0f / 9.0f;
+                cam.set_perspective(aspect);
+                found_camera = true;
+            });
+
+        if (found_camera) {
+            renderer_3d_->begin_frame(cam);
+
+            // Set directional lights
+            registry.each_with<DirectionalLightComponent>(
+                [&](u32 /*entity*/, const DirectionalLightComponent& dl) {
+                    renderer::DirectionalLight light;
+                    light.direction = dl.direction;
+                    light.color = dl.color;
+                    light.intensity = dl.intensity;
+                    renderer_3d_->set_directional_light(light);
+                });
+
+            // Add point lights
+            registry.each_with<PointLightComponent, Transform3DComponent>(
+                [&](u32 /*entity*/, const PointLightComponent& pl, const Transform3DComponent& tc) {
+                    renderer::PointLight light;
+                    light.position = Vec3(tc.world_matrix[3]);
+                    light.color = pl.color;
+                    light.intensity = pl.intensity;
+                    light.radius = pl.radius;
+                    renderer_3d_->add_point_light(light);
+                });
+
+            // Draw meshes
+            registry.each_with<MeshRendererComponent, Transform3DComponent>(
+                [&](u32 /*entity*/, const MeshRendererComponent& mr, const Transform3DComponent& tc) {
+                    if (mr.mesh_id != 0) {
+                        // Mesh rendering would use the cached meshes
+                        (void)tc;
+                    }
+                });
+
+            renderer_3d_->end_frame();
+        }
+    }
+
+    // ── 2D rendering pass ──────────────────────────────────────────────
+    if (renderer_2d_) {
+        renderer_2d_->begin_batch();
+        registry.each_with<SpriteRendererComponent, Transform2DComponent>(
+            [&](u32 /*entity*/, const SpriteRendererComponent& sr, const Transform2DComponent& tc) {
+                renderer_2d_->draw_quad(
+                    {tc.world_position.x, tc.world_position.y},
+                    {tc.world_scale.x * sr.size.x, tc.world_scale.y * sr.size.y},
+                    tc.world_rotation,
+                    sr.color,
+                    sr.texture_id
+                );
+            });
+        renderer_2d_->end_batch();
+    }
+}
 
 // ── HierarchyPanel ─────────────────────────────────────────────────────────
 

@@ -169,4 +169,234 @@ void NetworkSimulation::reset() {
     delayed_.clear();
 }
 
+// ── UDPSocket ───────────────────────────────────────────────────────────────
+
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #pragma comment(lib, "ws2_32.lib")
+    #define CLOSE_SOCKET(s) closesocket(s)
+    #define SOCKET_ERROR_CODE WSAGetLastError()
+    using socklen_t = int;
+    static bool s_winsock_initialized = false;
+    static void init_winsock() {
+        if (!s_winsock_initialized) {
+            WSADATA wsa;
+            WSAStartup(MAKEWORD(2, 2), &wsa);
+            s_winsock_initialized = true;
+        }
+    }
+#else
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <netinet/tcp.h>
+    #include <arpa/inet.h>
+    #include <unistd.h>
+    #include <fcntl.h>
+    #include <errno.h>
+    #define CLOSE_SOCKET(s) ::close(s)
+    #define SOCKET_ERROR_CODE errno
+    static void init_winsock() {}
+#endif
+
+static struct sockaddr_in to_sockaddr(const nexus::net::Address& addr) {
+    struct sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons(addr.port);
+    inet_pton(AF_INET, addr.host.c_str(), &sa.sin_addr);
+    return sa;
+}
+
+static nexus::net::Address from_sockaddr(const struct sockaddr_in& sa) {
+    char buf[INET_ADDRSTRLEN]{};
+    inet_ntop(AF_INET, &sa.sin_addr, buf, sizeof(buf));
+    return nexus::net::Address(buf, ntohs(sa.sin_port));
+}
+
+UDPSocket::UDPSocket() { init_winsock(); }
+
+UDPSocket::~UDPSocket() { close(); }
+
+UDPSocket::UDPSocket(UDPSocket&& other) noexcept : socket_fd_(other.socket_fd_) {
+    other.socket_fd_ = -1;
+}
+
+UDPSocket& UDPSocket::operator=(UDPSocket&& other) noexcept {
+    if (this != &other) {
+        close();
+        socket_fd_ = other.socket_fd_;
+        other.socket_fd_ = -1;
+    }
+    return *this;
+}
+
+bool UDPSocket::open() {
+    close();
+    socket_fd_ = static_cast<int>(socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP));
+    return socket_fd_ >= 0;
+}
+
+bool UDPSocket::bind(const Address& local) {
+    if (socket_fd_ < 0) return false;
+    auto sa = to_sockaddr(local);
+    return ::bind(socket_fd_, reinterpret_cast<struct sockaddr*>(&sa), sizeof(sa)) == 0;
+}
+
+void UDPSocket::close() {
+    if (socket_fd_ >= 0) {
+        CLOSE_SOCKET(socket_fd_);
+        socket_fd_ = -1;
+    }
+}
+
+i32 UDPSocket::send_to(const Address& dest, const void* data, u32 size) {
+    if (socket_fd_ < 0) return -1;
+    auto sa = to_sockaddr(dest);
+    auto result = ::sendto(socket_fd_, static_cast<const char*>(data), size, 0,
+                           reinterpret_cast<struct sockaddr*>(&sa), sizeof(sa));
+    return static_cast<i32>(result);
+}
+
+i32 UDPSocket::recv_from(Address& sender, void* buffer, u32 buffer_size) {
+    if (socket_fd_ < 0) return -1;
+    struct sockaddr_in sa{};
+    socklen_t sa_len = sizeof(sa);
+    auto result = ::recvfrom(socket_fd_, static_cast<char*>(buffer), buffer_size, 0,
+                              reinterpret_cast<struct sockaddr*>(&sa), &sa_len);
+    if (result >= 0) {
+        sender = from_sockaddr(sa);
+    }
+    return static_cast<i32>(result);
+}
+
+bool UDPSocket::set_non_blocking(bool enabled) {
+    if (socket_fd_ < 0) return false;
+#ifdef _WIN32
+    u_long mode = enabled ? 1 : 0;
+    return ioctlsocket(socket_fd_, FIONBIO, &mode) == 0;
+#else
+    int flags = fcntl(socket_fd_, F_GETFL, 0);
+    if (flags < 0) return false;
+    flags = enabled ? (flags | O_NONBLOCK) : (flags & ~O_NONBLOCK);
+    return fcntl(socket_fd_, F_SETFL, flags) == 0;
+#endif
+}
+
+bool UDPSocket::set_send_buffer_size(u32 size) {
+    if (socket_fd_ < 0) return false;
+    int sz = static_cast<int>(size);
+    return setsockopt(socket_fd_, SOL_SOCKET, SO_SNDBUF,
+                      reinterpret_cast<const char*>(&sz), sizeof(sz)) == 0;
+}
+
+bool UDPSocket::set_recv_buffer_size(u32 size) {
+    if (socket_fd_ < 0) return false;
+    int sz = static_cast<int>(size);
+    return setsockopt(socket_fd_, SOL_SOCKET, SO_RCVBUF,
+                      reinterpret_cast<const char*>(&sz), sizeof(sz)) == 0;
+}
+
+u16 UDPSocket::local_port() const {
+    if (socket_fd_ < 0) return 0;
+    struct sockaddr_in sa{};
+    socklen_t sa_len = sizeof(sa);
+    if (getsockname(socket_fd_, reinterpret_cast<struct sockaddr*>(&sa), &sa_len) == 0) {
+        return ntohs(sa.sin_port);
+    }
+    return 0;
+}
+
+// ── TCPSocket ───────────────────────────────────────────────────────────────
+
+TCPSocket::TCPSocket() { init_winsock(); }
+TCPSocket::TCPSocket(int fd) : socket_fd_(fd) {}
+TCPSocket::~TCPSocket() { close(); }
+
+TCPSocket::TCPSocket(TCPSocket&& other) noexcept : socket_fd_(other.socket_fd_) {
+    other.socket_fd_ = -1;
+}
+
+TCPSocket& TCPSocket::operator=(TCPSocket&& other) noexcept {
+    if (this != &other) {
+        close();
+        socket_fd_ = other.socket_fd_;
+        other.socket_fd_ = -1;
+    }
+    return *this;
+}
+
+bool TCPSocket::open() {
+    close();
+    socket_fd_ = static_cast<int>(socket(AF_INET, SOCK_STREAM, IPPROTO_TCP));
+    return socket_fd_ >= 0;
+}
+
+bool TCPSocket::bind(const Address& local) {
+    if (socket_fd_ < 0) return false;
+    int opt = 1;
+    setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR,
+               reinterpret_cast<const char*>(&opt), sizeof(opt));
+    auto sa = to_sockaddr(local);
+    return ::bind(socket_fd_, reinterpret_cast<struct sockaddr*>(&sa), sizeof(sa)) == 0;
+}
+
+bool TCPSocket::listen(i32 backlog) {
+    if (socket_fd_ < 0) return false;
+    return ::listen(socket_fd_, backlog) == 0;
+}
+
+TCPSocket TCPSocket::accept(Address& remote) {
+    struct sockaddr_in sa{};
+    socklen_t sa_len = sizeof(sa);
+    int new_fd = static_cast<int>(::accept(socket_fd_,
+                                            reinterpret_cast<struct sockaddr*>(&sa), &sa_len));
+    if (new_fd >= 0) {
+        remote = from_sockaddr(sa);
+    }
+    return TCPSocket(new_fd);
+}
+
+bool TCPSocket::connect(const Address& remote) {
+    if (socket_fd_ < 0) return false;
+    auto sa = to_sockaddr(remote);
+    return ::connect(socket_fd_, reinterpret_cast<struct sockaddr*>(&sa), sizeof(sa)) == 0;
+}
+
+i32 TCPSocket::send(const void* data, u32 size) {
+    if (socket_fd_ < 0) return -1;
+    return static_cast<i32>(::send(socket_fd_, static_cast<const char*>(data), size, 0));
+}
+
+i32 TCPSocket::recv(void* buffer, u32 buffer_size) {
+    if (socket_fd_ < 0) return -1;
+    return static_cast<i32>(::recv(socket_fd_, static_cast<char*>(buffer), buffer_size, 0));
+}
+
+void TCPSocket::close() {
+    if (socket_fd_ >= 0) {
+        CLOSE_SOCKET(socket_fd_);
+        socket_fd_ = -1;
+    }
+}
+
+bool TCPSocket::set_non_blocking(bool enabled) {
+    if (socket_fd_ < 0) return false;
+#ifdef _WIN32
+    u_long mode = enabled ? 1 : 0;
+    return ioctlsocket(socket_fd_, FIONBIO, &mode) == 0;
+#else
+    int flags = fcntl(socket_fd_, F_GETFL, 0);
+    if (flags < 0) return false;
+    flags = enabled ? (flags | O_NONBLOCK) : (flags & ~O_NONBLOCK);
+    return fcntl(socket_fd_, F_SETFL, flags) == 0;
+#endif
+}
+
+bool TCPSocket::set_no_delay(bool enabled) {
+    if (socket_fd_ < 0) return false;
+    int flag = enabled ? 1 : 0;
+    return setsockopt(socket_fd_, IPPROTO_TCP, TCP_NODELAY,
+                      reinterpret_cast<const char*>(&flag), sizeof(flag)) == 0;
+}
+
 } // namespace nexus::net

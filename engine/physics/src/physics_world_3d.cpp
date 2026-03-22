@@ -2,6 +2,7 @@
 #include "nexus/core/log.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace nexus::physics {
 
@@ -221,23 +222,110 @@ bool PhysicsWorld3D::sphere_vs_sphere(const Body3D& a, const Body3D& b, Contact3
 }
 
 bool PhysicsWorld3D::box_vs_box(const Body3D& a, const Body3D& b, Contact3D& c) const {
-    // AABB vs AABB (ignoring rotation for simplicity)
+    // OBB vs OBB using Separating Axis Theorem (15 axes)
+    // Build rotation matrices from quaternions
+    Mat3 rot_a = glm::mat3_cast(a.rotation);
+    Mat3 rot_b = glm::mat3_cast(b.rotation);
+
+    Vec3 axes_a[3] = { rot_a[0], rot_a[1], rot_a[2] };
+    Vec3 axes_b[3] = { rot_b[0], rot_b[1], rot_b[2] };
+
     Vec3 diff = b.position - a.position;
-    Vec3 overlap;
+
+    // Compute rotation matrix expressing B in A's coordinate frame
+    float R[3][3], absR[3][3];
     for (int i = 0; i < 3; ++i) {
-        overlap[i] = a.half_extents[i] + b.half_extents[i] - std::abs(diff[i]);
-        if (overlap[i] <= 0.0f) return false;
+        for (int j = 0; j < 3; ++j) {
+            R[i][j] = glm::dot(axes_a[i], axes_b[j]);
+            absR[i][j] = std::abs(R[i][j]) + math::EPSILON; // Add epsilon to handle parallel edges
+        }
     }
 
-    // Find minimum overlap axis
-    int min_axis = 0;
-    if (overlap[1] < overlap[min_axis]) min_axis = 1;
-    if (overlap[2] < overlap[min_axis]) min_axis = 2;
+    float t[3] = { glm::dot(diff, axes_a[0]), glm::dot(diff, axes_a[1]), glm::dot(diff, axes_a[2]) };
 
-    c.normal = Vec3(0.0f);
-    c.normal[min_axis] = (diff[min_axis] < 0.0f) ? -1.0f : 1.0f;
-    c.depth = overlap[min_axis];
-    c.point = a.position + c.normal * a.half_extents;
+    float min_overlap = std::numeric_limits<float>::max();
+    Vec3 min_axis{0.0f};
+    int min_axis_id = -1;
+
+    // Test 15 separating axes
+    auto test_axis = [&](float ra, float rb, float sep, Vec3 axis, int id) -> bool {
+        float overlap = ra + rb - std::abs(sep);
+        if (overlap <= 0.0f) return false;
+        float len = glm::length(axis);
+        if (len < math::EPSILON) return true; // Degenerate axis, skip
+        overlap /= len;
+        if (overlap < min_overlap) {
+            min_overlap = overlap;
+            min_axis = axis / len;
+            min_axis_id = id;
+        }
+        return true;
+    };
+
+    // A's face normals (3 axes)
+    if (!test_axis(a.half_extents[0],
+                   b.half_extents[0]*absR[0][0] + b.half_extents[1]*absR[0][1] + b.half_extents[2]*absR[0][2],
+                   t[0], axes_a[0], 0)) return false;
+    if (!test_axis(a.half_extents[1],
+                   b.half_extents[0]*absR[1][0] + b.half_extents[1]*absR[1][1] + b.half_extents[2]*absR[1][2],
+                   t[1], axes_a[1], 1)) return false;
+    if (!test_axis(a.half_extents[2],
+                   b.half_extents[0]*absR[2][0] + b.half_extents[1]*absR[2][1] + b.half_extents[2]*absR[2][2],
+                   t[2], axes_a[2], 2)) return false;
+
+    // B's face normals (3 axes)
+    if (!test_axis(a.half_extents[0]*absR[0][0] + a.half_extents[1]*absR[1][0] + a.half_extents[2]*absR[2][0],
+                   b.half_extents[0],
+                   t[0]*R[0][0] + t[1]*R[1][0] + t[2]*R[2][0], axes_b[0], 3)) return false;
+    if (!test_axis(a.half_extents[0]*absR[0][1] + a.half_extents[1]*absR[1][1] + a.half_extents[2]*absR[2][1],
+                   b.half_extents[1],
+                   t[0]*R[0][1] + t[1]*R[1][1] + t[2]*R[2][1], axes_b[1], 4)) return false;
+    if (!test_axis(a.half_extents[0]*absR[0][2] + a.half_extents[1]*absR[1][2] + a.half_extents[2]*absR[2][2],
+                   b.half_extents[2],
+                   t[0]*R[0][2] + t[1]*R[1][2] + t[2]*R[2][2], axes_b[2], 5)) return false;
+
+    // 9 edge-edge cross products (Ax x Bx, Ax x By, Ax x Bz, Ay x Bx, ...)
+    if (!test_axis(a.half_extents[1]*absR[2][0] + a.half_extents[2]*absR[1][0],
+                   b.half_extents[1]*absR[0][2] + b.half_extents[2]*absR[0][1],
+                   t[2]*R[1][0] - t[1]*R[2][0], glm::cross(axes_a[0], axes_b[0]), 6)) return false;
+    if (!test_axis(a.half_extents[1]*absR[2][1] + a.half_extents[2]*absR[1][1],
+                   b.half_extents[0]*absR[0][2] + b.half_extents[2]*absR[0][0],
+                   t[2]*R[1][1] - t[1]*R[2][1], glm::cross(axes_a[0], axes_b[1]), 7)) return false;
+    if (!test_axis(a.half_extents[1]*absR[2][2] + a.half_extents[2]*absR[1][2],
+                   b.half_extents[0]*absR[0][1] + b.half_extents[1]*absR[0][0],
+                   t[2]*R[1][2] - t[1]*R[2][2], glm::cross(axes_a[0], axes_b[2]), 8)) return false;
+
+    if (!test_axis(a.half_extents[0]*absR[2][0] + a.half_extents[2]*absR[0][0],
+                   b.half_extents[1]*absR[1][2] + b.half_extents[2]*absR[1][1],
+                   t[0]*R[2][0] - t[2]*R[0][0], glm::cross(axes_a[1], axes_b[0]), 9)) return false;
+    if (!test_axis(a.half_extents[0]*absR[2][1] + a.half_extents[2]*absR[0][1],
+                   b.half_extents[0]*absR[1][2] + b.half_extents[2]*absR[1][0],
+                   t[0]*R[2][1] - t[2]*R[0][1], glm::cross(axes_a[1], axes_b[1]), 10)) return false;
+    if (!test_axis(a.half_extents[0]*absR[2][2] + a.half_extents[2]*absR[0][2],
+                   b.half_extents[0]*absR[1][1] + b.half_extents[1]*absR[1][0],
+                   t[0]*R[2][2] - t[2]*R[0][2], glm::cross(axes_a[1], axes_b[2]), 11)) return false;
+
+    if (!test_axis(a.half_extents[0]*absR[1][0] + a.half_extents[1]*absR[0][0],
+                   b.half_extents[1]*absR[2][2] + b.half_extents[2]*absR[2][1],
+                   t[1]*R[0][0] - t[0]*R[1][0], glm::cross(axes_a[2], axes_b[0]), 12)) return false;
+    if (!test_axis(a.half_extents[0]*absR[1][1] + a.half_extents[1]*absR[0][1],
+                   b.half_extents[0]*absR[2][2] + b.half_extents[2]*absR[2][0],
+                   t[1]*R[0][1] - t[0]*R[1][1], glm::cross(axes_a[2], axes_b[1]), 13)) return false;
+    if (!test_axis(a.half_extents[0]*absR[1][2] + a.half_extents[1]*absR[0][2],
+                   b.half_extents[0]*absR[2][1] + b.half_extents[1]*absR[2][0],
+                   t[1]*R[0][2] - t[0]*R[1][2], glm::cross(axes_a[2], axes_b[2]), 14)) return false;
+
+    // Ensure normal points from A to B
+    if (glm::dot(min_axis, diff) < 0.0f) {
+        min_axis = -min_axis;
+    }
+
+    c.normal = min_axis;
+    c.depth = min_overlap;
+    c.point = a.position + min_axis * glm::dot(a.half_extents, Vec3(
+        std::abs(glm::dot(axes_a[0], min_axis)),
+        std::abs(glm::dot(axes_a[1], min_axis)),
+        std::abs(glm::dot(axes_a[2], min_axis))));
     return true;
 }
 

@@ -11,6 +11,8 @@
 #include "nexus/rhi/gl_functions.h"
 #include "nexus/scene/registry.h"
 #include "nexus/scene/scene.h"
+#include "nexus/renderer/forward_renderer_3d.h"
+#include "nexus/renderer/batch_renderer_2d.h"
 #include "nexus/editor/editor_state.h"
 #include "nexus/editor/editor_panels.h"
 
@@ -81,11 +83,23 @@ static int run(int argc, char* argv[]) {
 
         // ── Create scene ────────────────────────────────────────────────
         Registry registry;
+        Scene scene(registry);
+
+        // ── Create renderers ───────────────────────────────────────────
+        renderer::ForwardRenderer3D renderer_3d;
+        renderer::BatchRenderer2D renderer_2d;
 
         // ── Create editor state ─────────────────────────────────────────
         EditorState editor_state;
         register_default_panels(editor_state);
         editor_state.set_status("Ready");
+
+        // Wire viewport panel to scene and renderers
+        if (auto* vp = editor_state.panels().find_typed<ViewportPanel>("Viewport")) {
+            vp->bind_scene(&scene);
+            vp->bind_renderer_3d(&renderer_3d);
+            vp->bind_renderer_2d(&renderer_2d);
+        }
 
         NX_INFO("Editor initialized with {} panels", editor_state.panels().count());
 
@@ -119,7 +133,7 @@ static int run(int argc, char* argv[]) {
             if (editor_state.is_playing() || editor_state.is_paused()) {
                 u32 steps = editor_state.consume_step_requests();
                 if (editor_state.is_playing() || steps > 0) {
-                    // In a full implementation, step the game systems here
+                    scene.update(dt);
                 }
             }
 

@@ -199,6 +199,35 @@ static const float QUAD_VERTICES[] = {
 
 // ── DeferredRenderer ────────────────────────────────────────────────────────
 
+DeferredRenderer::DeferredRenderer(DeferredRenderer&& other) noexcept
+    : rhi_(other.rhi_), gbuffer_(other.gbuffer_),
+      geom_shader_(other.geom_shader_), geom_pipeline_(other.geom_pipeline_),
+      light_shader_(other.light_shader_), light_pipeline_(other.light_pipeline_),
+      quad_vbo_(other.quad_vbo_),
+      view_projection_(other.view_projection_), camera_position_(other.camera_position_) {
+    other.rhi_ = nullptr;
+    other.geom_shader_ = rhi::INVALID_HANDLE; other.geom_pipeline_ = rhi::INVALID_HANDLE;
+    other.light_shader_ = rhi::INVALID_HANDLE; other.light_pipeline_ = rhi::INVALID_HANDLE;
+    other.quad_vbo_ = rhi::INVALID_HANDLE;
+    other.gbuffer_ = {};
+}
+
+DeferredRenderer& DeferredRenderer::operator=(DeferredRenderer&& other) noexcept {
+    if (this != &other) {
+        shutdown();
+        rhi_ = other.rhi_; gbuffer_ = other.gbuffer_;
+        geom_shader_ = other.geom_shader_; geom_pipeline_ = other.geom_pipeline_;
+        light_shader_ = other.light_shader_; light_pipeline_ = other.light_pipeline_;
+        quad_vbo_ = other.quad_vbo_;
+        view_projection_ = other.view_projection_; camera_position_ = other.camera_position_;
+        other.rhi_ = nullptr;
+        other.geom_shader_ = rhi::INVALID_HANDLE; other.geom_pipeline_ = rhi::INVALID_HANDLE;
+        other.light_shader_ = rhi::INVALID_HANDLE; other.light_pipeline_ = rhi::INVALID_HANDLE;
+        other.quad_vbo_ = rhi::INVALID_HANDLE; other.gbuffer_ = {};
+    }
+    return *this;
+}
+
 void DeferredRenderer::create_gbuffer(u32 width, u32 height) {
     gbuffer_.width = width;
     gbuffer_.height = height;
@@ -295,11 +324,14 @@ void DeferredRenderer::init(rhi::RHI* rhi, u32 width, u32 height) {
 void DeferredRenderer::shutdown() {
     if (!rhi_) return;
     destroy_gbuffer();
-    rhi_->destroy_pipeline(geom_pipeline_);
-    rhi_->destroy_shader(geom_shader_);
-    rhi_->destroy_pipeline(light_pipeline_);
-    rhi_->destroy_shader(light_shader_);
-    rhi_->destroy_buffer(quad_vbo_);
+    if (geom_pipeline_ != rhi::INVALID_HANDLE) rhi_->destroy_pipeline(geom_pipeline_);
+    if (geom_shader_ != rhi::INVALID_HANDLE) rhi_->destroy_shader(geom_shader_);
+    if (light_pipeline_ != rhi::INVALID_HANDLE) rhi_->destroy_pipeline(light_pipeline_);
+    if (light_shader_ != rhi::INVALID_HANDLE) rhi_->destroy_shader(light_shader_);
+    if (quad_vbo_ != rhi::INVALID_HANDLE) rhi_->destroy_buffer(quad_vbo_);
+    geom_pipeline_ = rhi::INVALID_HANDLE; geom_shader_ = rhi::INVALID_HANDLE;
+    light_pipeline_ = rhi::INVALID_HANDLE; light_shader_ = rhi::INVALID_HANDLE;
+    quad_vbo_ = rhi::INVALID_HANDLE;
     rhi_ = nullptr;
 }
 

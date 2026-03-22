@@ -278,24 +278,42 @@ void AudioEngine::mix(float* output, u32 frames) {
 
         const auto& buf = clip->buffer;
         double pitch_rate = static_cast<double>(voice.pitch) *
-                           static_cast<double>(buf.format.sample_rate) / 44100.0;
+                           static_cast<double>(buf.format.sample_rate) /
+                           static_cast<double>(output_sample_rate_);
 
         for (u32 f = 0; f < frames; ++f) {
             u32 src_frame = static_cast<u32>(voice.cursor);
+            double frac = voice.cursor - static_cast<double>(src_frame);
 
             if (src_frame >= buf.frame_count) {
                 if (voice.looping) {
-                    voice.cursor = 0.0;
-                    src_frame = 0;
+                    voice.cursor = std::fmod(voice.cursor, static_cast<double>(buf.frame_count));
+                    src_frame = static_cast<u32>(voice.cursor);
+                    frac = voice.cursor - static_cast<double>(src_frame);
                 } else {
                     voice.finished = true;
                     break;
                 }
             }
 
-            float sample_l = buf.read_sample(src_frame, 0);
-            float sample_r = (buf.format.channels >= 2)
-                             ? buf.read_sample(src_frame, 1) : sample_l;
+            // Linear interpolation between samples for pitch shifting
+            u32 next_frame = src_frame + 1;
+            if (next_frame >= buf.frame_count) {
+                next_frame = voice.looping ? 0 : src_frame;
+            }
+
+            float s0_l = buf.read_sample(src_frame, 0);
+            float s1_l = buf.read_sample(next_frame, 0);
+            float sample_l = s0_l + static_cast<float>(frac) * (s1_l - s0_l);
+
+            float sample_r;
+            if (buf.format.channels >= 2) {
+                float s0_r = buf.read_sample(src_frame, 1);
+                float s1_r = buf.read_sample(next_frame, 1);
+                sample_r = s0_r + static_cast<float>(frac) * (s1_r - s0_r);
+            } else {
+                sample_r = sample_l;
+            }
 
             output[f * 2 + 0] += sample_l * left_gain;
             output[f * 2 + 1] += sample_r * right_gain;
@@ -304,9 +322,11 @@ void AudioEngine::mix(float* output, u32 frames) {
         }
     }
 
-    // Clamp output
+    // Soft clipping using tanh for musical saturation instead of hard clipping
     for (u32 i = 0; i < frames * 2; ++i) {
-        output[i] = math::clamp(output[i], -1.0f, 1.0f);
+        if (output[i] > 1.0f || output[i] < -1.0f) {
+            output[i] = std::tanh(output[i]);
+        }
     }
 }
 

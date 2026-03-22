@@ -2,6 +2,7 @@
 #include "nexus/core/log.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace nexus {
 
@@ -84,8 +85,13 @@ Mat4 CascadedShadowMap::compute_light_matrix(Vec3 light_dir,
     }
     center /= static_cast<float>(frustum_corners.size());
 
-    Mat4 light_view = glm::lookAt(center - glm::normalize(light_dir),
-                                   center, Vec3(0, 1, 0));
+    Vec3 dir_norm = glm::normalize(light_dir);
+    // Choose an up vector that isn't parallel to the light direction
+    Vec3 up = Vec3(0, 1, 0);
+    if (std::abs(glm::dot(dir_norm, up)) > 0.99f) {
+        up = Vec3(0, 0, 1);
+    }
+    Mat4 light_view = glm::lookAt(center - dir_norm, center, up);
 
     float min_x = std::numeric_limits<float>::max();
     float max_x = std::numeric_limits<float>::lowest();
@@ -120,11 +126,16 @@ void CascadedShadowMap::update(const Camera3D& camera, Vec3 light_direction) {
     float far = std::min(camera.far_clip, config_.shadow_distance);
     compute_cascade_splits(near, far);
 
+    // Get actual camera aspect ratio for correct frustum corners
+    Mat4 cam_proj = camera.get_projection_matrix();
+    // Extract aspect from projection matrix: P[1][1] / P[0][0]
+    float aspect = (cam_proj[0][0] != 0.0f) ? cam_proj[1][1] / cam_proj[0][0] : 16.0f / 9.0f;
+
     for (u32 i = 0; i < config_.num_cascades; ++i) {
-        // Build sub-frustum projection for this cascade
+        // Build sub-frustum projection for this cascade with correct aspect
         Mat4 proj = glm::perspective(
             glm::radians(camera.fov),
-            1.0f, // aspect will be corrected by the frustum corners
+            aspect,
             splits_[i], splits_[i + 1]);
         Mat4 view = camera.get_view_matrix();
 

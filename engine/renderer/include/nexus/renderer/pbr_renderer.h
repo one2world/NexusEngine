@@ -69,6 +69,15 @@ extern const char* FRAGMENT_SHADER;
 
 class PBRRenderer {
 public:
+    PBRRenderer() = default;
+    ~PBRRenderer() { shutdown(); }
+
+    // Non-copyable, movable
+    PBRRenderer(const PBRRenderer&) = delete;
+    PBRRenderer& operator=(const PBRRenderer&) = delete;
+    PBRRenderer(PBRRenderer&& other) noexcept;
+    PBRRenderer& operator=(PBRRenderer&& other) noexcept;
+
     void init(rhi::RHI* rhi);
     void shutdown();
 

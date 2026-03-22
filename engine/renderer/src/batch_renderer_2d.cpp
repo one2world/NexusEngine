@@ -72,6 +72,35 @@ void main() {
 
 // ── Lifecycle ───────────────────────────────────────────────────────────────
 
+BatchRenderer2D::BatchRenderer2D(BatchRenderer2D&& other) noexcept
+    : rhi_(other.rhi_), shader_(other.shader_), pipeline_(other.pipeline_),
+      vbo_(other.vbo_), ibo_(other.ibo_), white_texture_(other.white_texture_),
+      vertices_(other.vertices_), vertex_count_(other.vertex_count_),
+      texture_slots_(other.texture_slots_), texture_slot_index_(other.texture_slot_index_),
+      stats_(other.stats_) {
+    other.rhi_ = nullptr;
+    other.shader_ = rhi::INVALID_HANDLE;
+    other.pipeline_ = rhi::INVALID_HANDLE;
+    other.vbo_ = rhi::INVALID_HANDLE;
+    other.ibo_ = rhi::INVALID_HANDLE;
+    other.white_texture_ = rhi::INVALID_HANDLE;
+}
+
+BatchRenderer2D& BatchRenderer2D::operator=(BatchRenderer2D&& other) noexcept {
+    if (this != &other) {
+        shutdown();
+        rhi_ = other.rhi_; shader_ = other.shader_; pipeline_ = other.pipeline_;
+        vbo_ = other.vbo_; ibo_ = other.ibo_; white_texture_ = other.white_texture_;
+        vertices_ = other.vertices_; vertex_count_ = other.vertex_count_;
+        texture_slots_ = other.texture_slots_; texture_slot_index_ = other.texture_slot_index_;
+        stats_ = other.stats_;
+        other.rhi_ = nullptr; other.shader_ = rhi::INVALID_HANDLE;
+        other.pipeline_ = rhi::INVALID_HANDLE; other.vbo_ = rhi::INVALID_HANDLE;
+        other.ibo_ = rhi::INVALID_HANDLE; other.white_texture_ = rhi::INVALID_HANDLE;
+    }
+    return *this;
+}
+
 void BatchRenderer2D::init(rhi::RHI* rhi) {
     rhi_ = rhi;
 
@@ -151,17 +180,23 @@ void BatchRenderer2D::init(rhi::RHI* rhi) {
 
 void BatchRenderer2D::shutdown() {
     if (!rhi_) return;
-    rhi_->destroy_pipeline(pipeline_);
-    rhi_->destroy_buffer(ibo_);
-    rhi_->destroy_buffer(vbo_);
-    rhi_->destroy_shader(shader_);
-    rhi_->destroy_texture(white_texture_);
+    if (pipeline_ != rhi::INVALID_HANDLE) rhi_->destroy_pipeline(pipeline_);
+    if (ibo_ != rhi::INVALID_HANDLE) rhi_->destroy_buffer(ibo_);
+    if (vbo_ != rhi::INVALID_HANDLE) rhi_->destroy_buffer(vbo_);
+    if (shader_ != rhi::INVALID_HANDLE) rhi_->destroy_shader(shader_);
+    if (white_texture_ != rhi::INVALID_HANDLE) rhi_->destroy_texture(white_texture_);
+    pipeline_ = rhi::INVALID_HANDLE;
+    ibo_ = rhi::INVALID_HANDLE;
+    vbo_ = rhi::INVALID_HANDLE;
+    shader_ = rhi::INVALID_HANDLE;
+    white_texture_ = rhi::INVALID_HANDLE;
     rhi_ = nullptr;
 }
 
 // ── Frame scope ─────────────────────────────────────────────────────────────
 
 void BatchRenderer2D::begin(const Camera2D& camera) {
+    if (!rhi_ || shader_ == rhi::INVALID_HANDLE) return;
     rhi_->bind_shader(shader_);
     rhi_->set_uniform_mat4(shader_, "u_ViewProjection", camera.get_view_projection());
     start_batch();

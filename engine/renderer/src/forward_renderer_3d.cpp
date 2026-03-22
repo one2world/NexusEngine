@@ -138,19 +138,80 @@ void ForwardRenderer3D::init(rhi::RHI* rhi) {
     NX_INFO("ForwardRenderer3D initialized");
 }
 
+ForwardRenderer3D::ForwardRenderer3D(ForwardRenderer3D&& other) noexcept
+    : rhi_(other.rhi_), shader_(other.shader_), white_texture_(other.white_texture_),
+      dir_light_(other.dir_light_), point_lights_(std::move(other.point_lights_)),
+      view_projection_(other.view_projection_), camera_position_(other.camera_position_) {
+    other.rhi_ = nullptr;
+    other.shader_ = rhi::INVALID_HANDLE;
+    other.white_texture_ = rhi::INVALID_HANDLE;
+}
+
+ForwardRenderer3D& ForwardRenderer3D::operator=(ForwardRenderer3D&& other) noexcept {
+    if (this != &other) {
+        shutdown();
+        rhi_ = other.rhi_; shader_ = other.shader_; white_texture_ = other.white_texture_;
+        dir_light_ = other.dir_light_; point_lights_ = std::move(other.point_lights_);
+        view_projection_ = other.view_projection_; camera_position_ = other.camera_position_;
+        other.rhi_ = nullptr; other.shader_ = rhi::INVALID_HANDLE; other.white_texture_ = rhi::INVALID_HANDLE;
+    }
+    return *this;
+}
+
 void ForwardRenderer3D::shutdown() {
     if (!rhi_) return;
-    rhi_->destroy_shader(shader_);
-    rhi_->destroy_texture(white_texture_);
+    if (shader_ != rhi::INVALID_HANDLE) rhi_->destroy_shader(shader_);
+    if (white_texture_ != rhi::INVALID_HANDLE) rhi_->destroy_texture(white_texture_);
+    shader_ = rhi::INVALID_HANDLE;
+    white_texture_ = rhi::INVALID_HANDLE;
     rhi_ = nullptr;
+    in_frame_ = false;
+}
+
+// ── Frustum culling ─────────────────────────────────────────────────────────
+
+void ForwardRenderer3D::extract_frustum_planes() {
+    // Gribb/Hartmann method: extract planes from view-projection matrix
+    const Mat4& m = view_projection_;
+    // Left
+    frustum_planes_[0] = Vec4(m[0][3]+m[0][0], m[1][3]+m[1][0], m[2][3]+m[2][0], m[3][3]+m[3][0]);
+    // Right
+    frustum_planes_[1] = Vec4(m[0][3]-m[0][0], m[1][3]-m[1][0], m[2][3]-m[2][0], m[3][3]-m[3][0]);
+    // Bottom
+    frustum_planes_[2] = Vec4(m[0][3]+m[0][1], m[1][3]+m[1][1], m[2][3]+m[2][1], m[3][3]+m[3][1]);
+    // Top
+    frustum_planes_[3] = Vec4(m[0][3]-m[0][1], m[1][3]-m[1][1], m[2][3]-m[2][1], m[3][3]-m[3][1]);
+    // Near
+    frustum_planes_[4] = Vec4(m[0][3]+m[0][2], m[1][3]+m[1][2], m[2][3]+m[2][2], m[3][3]+m[3][2]);
+    // Far
+    frustum_planes_[5] = Vec4(m[0][3]-m[0][2], m[1][3]-m[1][2], m[2][3]-m[2][2], m[3][3]-m[3][2]);
+
+    // Normalize planes
+    for (auto& plane : frustum_planes_) {
+        float len = glm::length(Vec3(plane));
+        if (len > 0.0f) plane /= len;
+    }
+}
+
+bool ForwardRenderer3D::is_visible(Vec3 center, float radius) const {
+    for (const auto& plane : frustum_planes_) {
+        float dist = glm::dot(Vec3(plane), center) + plane.w;
+        if (dist < -radius) return false;
+    }
+    return true;
 }
 
 // ── Frame scope ─────────────────────────────────────────────────────────────
 
-void ForwardRenderer3D::begin(const Camera3D& camera) {
+void ForwardRenderer3D::begin_frame(const Camera3D& camera) {
+    if (!rhi_ || shader_ == rhi::INVALID_HANDLE) return;
+
     view_projection_ = camera.get_view_projection();
     camera_position_ = camera.position;
     point_lights_.clear();
+    in_frame_ = true;
+
+    extract_frustum_planes();
 
     rhi_->set_depth_test(true);
     rhi_->bind_shader(shader_);
@@ -158,8 +219,8 @@ void ForwardRenderer3D::begin(const Camera3D& camera) {
     rhi_->set_uniform_vec3(shader_, "u_CameraPos", camera_position_);
 }
 
-void ForwardRenderer3D::end() {
-    // Nothing to flush
+void ForwardRenderer3D::end_frame() {
+    in_frame_ = false;
 }
 
 void ForwardRenderer3D::set_directional_light(const DirectionalLight& light) {
@@ -228,9 +289,10 @@ void ForwardRenderer3D::upload_mesh(Mesh& mesh) {
 }
 
 void ForwardRenderer3D::destroy_mesh(Mesh& mesh) {
-    rhi_->destroy_pipeline(mesh.pipeline);
-    rhi_->destroy_buffer(mesh.ibo);
-    rhi_->destroy_buffer(mesh.vbo);
+    if (!rhi_) return;
+    if (mesh.pipeline != rhi::INVALID_HANDLE) rhi_->destroy_pipeline(mesh.pipeline);
+    if (mesh.ibo != rhi::INVALID_HANDLE) rhi_->destroy_buffer(mesh.ibo);
+    if (mesh.vbo != rhi::INVALID_HANDLE) rhi_->destroy_buffer(mesh.vbo);
     mesh.pipeline = rhi::INVALID_HANDLE;
     mesh.ibo = rhi::INVALID_HANDLE;
     mesh.vbo = rhi::INVALID_HANDLE;
@@ -238,6 +300,17 @@ void ForwardRenderer3D::destroy_mesh(Mesh& mesh) {
 
 void ForwardRenderer3D::draw_mesh(const Mesh& mesh, const Mat4& transform,
                                   Vec4 color, rhi::TextureHandle texture) {
+    if (!in_frame_) return;
+
+    // Frustum culling — compute bounding sphere from mesh transform
+    Vec3 center = Vec3(transform[3]); // translation column
+    float scale_max = std::max({glm::length(Vec3(transform[0])),
+                                glm::length(Vec3(transform[1])),
+                                glm::length(Vec3(transform[2]))});
+    // Conservative radius estimate (unit cube diagonal ~0.866)
+    float radius = scale_max * 0.866f;
+    if (!is_visible(center, radius)) return;
+
     rhi_->bind_shader(shader_);
     rhi_->set_uniform_mat4(shader_, "u_Model", transform);
 

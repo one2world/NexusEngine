@@ -12,9 +12,43 @@ void Body3D::compute_mass() {
     if (type == Static) {
         mass = 0.0f;
         inv_mass = 0.0f;
+        inertia_tensor = Mat3(0.0f);
+        inv_inertia_tensor = Mat3(0.0f);
         return;
     }
     inv_mass = (mass > 0.0f) ? 1.0f / mass : 0.0f;
+
+    // Compute inertia tensor based on shape
+    Vec3 I(0.0f);
+    if (shape == Box) {
+        float w2 = 4.0f * half_extents.x * half_extents.x;
+        float h2 = 4.0f * half_extents.y * half_extents.y;
+        float d2 = 4.0f * half_extents.z * half_extents.z;
+        I.x = mass * (h2 + d2) / 12.0f;
+        I.y = mass * (w2 + d2) / 12.0f;
+        I.z = mass * (w2 + h2) / 12.0f;
+    } else if (shape == Sphere) {
+        float Isphere = 0.4f * mass * radius * radius;
+        I = Vec3(Isphere);
+    } else { // Capsule — cylinder + two hemispheres
+        float r2 = radius * radius;
+        float h = height;
+        float cyl_mass = mass * h / (h + (4.0f / 3.0f) * radius);
+        float cap_mass = mass - cyl_mass;
+        float Iy = cyl_mass * r2 * 0.5f + cap_mass * 0.4f * r2;
+        float Ixz = cyl_mass * (3.0f * r2 + h * h) / 12.0f
+                   + cap_mass * (0.4f * r2 + 0.25f * h * h + 0.375f * h * radius);
+        I = Vec3(Ixz, Iy, Ixz);
+    }
+    inertia_tensor = Mat3(0.0f);
+    inertia_tensor[0][0] = I.x;
+    inertia_tensor[1][1] = I.y;
+    inertia_tensor[2][2] = I.z;
+
+    inv_inertia_tensor = Mat3(0.0f);
+    if (I.x > 0.0f) inv_inertia_tensor[0][0] = 1.0f / I.x;
+    if (I.y > 0.0f) inv_inertia_tensor[1][1] = 1.0f / I.y;
+    if (I.z > 0.0f) inv_inertia_tensor[2][2] = 1.0f / I.z;
 }
 
 // ── PhysicsWorld3D ──────────────────────────────────────────────────────────
@@ -96,7 +130,11 @@ void PhysicsWorld3D::integrate(float dt) {
         if (b.type == Body3D::Dynamic) {
             Vec3 accel = gravity_ * b.gravity_scale + b.force * b.inv_mass;
             b.velocity += accel * dt;
-            b.angular_velocity += b.torque_accum * dt; // simplified
+
+            // Torque integration: world-space inverse inertia tensor
+            Mat3 rot_mat = glm::mat3_cast(b.rotation);
+            Mat3 inv_I_world = rot_mat * b.inv_inertia_tensor * glm::transpose(rot_mat);
+            b.angular_velocity += inv_I_world * b.torque_accum * dt;
 
             b.velocity *= 1.0f / (1.0f + b.linear_damping * dt);
             b.angular_velocity *= 1.0f / (1.0f + b.angular_damping * dt);
@@ -372,7 +410,7 @@ void PhysicsWorld3D::resolve_collision(Body3D& a, Body3D& b, const Contact3D& co
     float inv_mass_sum = a.inv_mass + b.inv_mass;
     if (inv_mass_sum <= 0.0f) return;
 
-    // Positional correction
+    // Positional correction (Baumgarte stabilization)
     const float percent = 0.8f;
     const float slop = 0.01f;
     Vec3 correction = contact.normal *
@@ -381,25 +419,53 @@ void PhysicsWorld3D::resolve_collision(Body3D& a, Body3D& b, const Contact3D& co
     a.position -= correction * a.inv_mass;
     b.position += correction * b.inv_mass;
 
-    // Impulse resolution
-    Vec3 rel_vel = b.velocity - a.velocity;
+    // Contact-relative vectors
+    Vec3 ra = contact.point - a.position;
+    Vec3 rb = contact.point - b.position;
+
+    // World-space inverse inertia tensors
+    Mat3 rot_a = glm::mat3_cast(a.rotation);
+    Mat3 rot_b = glm::mat3_cast(b.rotation);
+    Mat3 inv_I_a = rot_a * a.inv_inertia_tensor * glm::transpose(rot_a);
+    Mat3 inv_I_b = rot_b * b.inv_inertia_tensor * glm::transpose(rot_b);
+
+    // Relative velocity at contact point (includes angular)
+    Vec3 rel_vel = (b.velocity + glm::cross(b.angular_velocity, rb))
+                 - (a.velocity + glm::cross(a.angular_velocity, ra));
     float vel_along_normal = glm::dot(rel_vel, contact.normal);
 
     if (vel_along_normal > 0.0f) return;
 
-    float e = std::min(a.restitution, b.restitution);
-    float j = -(1.0f + e) * vel_along_normal / inv_mass_sum;
+    // Geometric mean restitution (physically correct)
+    float e = std::sqrt(a.restitution * b.restitution);
+
+    // Effective mass including rotational terms
+    Vec3 ra_cross_n = glm::cross(ra, contact.normal);
+    Vec3 rb_cross_n = glm::cross(rb, contact.normal);
+    float angular_factor = glm::dot(contact.normal,
+        glm::cross(inv_I_a * ra_cross_n, ra) +
+        glm::cross(inv_I_b * rb_cross_n, rb));
+
+    float j = -(1.0f + e) * vel_along_normal / (inv_mass_sum + angular_factor);
 
     Vec3 impulse = j * contact.normal;
     a.velocity -= impulse * a.inv_mass;
     b.velocity += impulse * b.inv_mass;
+    a.angular_velocity -= inv_I_a * glm::cross(ra, impulse);
+    b.angular_velocity += inv_I_b * glm::cross(rb, impulse);
 
-    // Friction
+    // Friction with angular contribution
     Vec3 tangent = rel_vel - contact.normal * vel_along_normal;
     float tangent_len = glm::length(tangent);
     if (tangent_len > math::EPSILON) {
         tangent /= tangent_len;
-        float jt = -glm::dot(rel_vel, tangent) / inv_mass_sum;
+        Vec3 ra_cross_t = glm::cross(ra, tangent);
+        Vec3 rb_cross_t = glm::cross(rb, tangent);
+        float angular_factor_t = glm::dot(tangent,
+            glm::cross(inv_I_a * ra_cross_t, ra) +
+            glm::cross(inv_I_b * rb_cross_t, rb));
+
+        float jt = -glm::dot(rel_vel, tangent) / (inv_mass_sum + angular_factor_t);
         float mu = std::sqrt(a.friction * b.friction);
 
         Vec3 friction_impulse;
@@ -411,6 +477,8 @@ void PhysicsWorld3D::resolve_collision(Body3D& a, Body3D& b, const Contact3D& co
 
         a.velocity -= friction_impulse * a.inv_mass;
         b.velocity += friction_impulse * b.inv_mass;
+        a.angular_velocity -= inv_I_a * glm::cross(ra, friction_impulse);
+        b.angular_velocity += inv_I_b * glm::cross(rb, friction_impulse);
     }
 }
 

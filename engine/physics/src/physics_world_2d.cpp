@@ -348,7 +348,7 @@ void PhysicsWorld2D::resolve_collision(Body2D& a, Body2D& b, const Contact2D& co
     float inv_mass_sum = a.inv_mass + b.inv_mass;
     if (inv_mass_sum <= 0.0f) return;
 
-    // Positional correction (prevent sinking)
+    // Positional correction (Baumgarte stabilization)
     const float percent = 0.8f;
     const float slop = 0.01f;
     Vec2 correction = contact.normal *
@@ -357,29 +357,51 @@ void PhysicsWorld2D::resolve_collision(Body2D& a, Body2D& b, const Contact2D& co
     a.position -= correction * a.inv_mass;
     b.position += correction * b.inv_mass;
 
-    // Relative velocity
-    Vec2 rel_vel = b.velocity - a.velocity;
+    // Contact-relative vectors
+    Vec2 ra = contact.point - a.position;
+    Vec2 rb = contact.point - b.position;
+
+    // 2D cross product helper: cross(v, n) = v.x*n.y - v.y*n.x
+    auto cross2d = [](Vec2 v, Vec2 n) { return v.x * n.y - v.y * n.x; };
+    // Perpendicular of scalar cross with vector: s × v = (-s*v.y, s*v.x)
+    auto cross_sv = [](float s, Vec2 v) { return Vec2(-s * v.y, s * v.x); };
+
+    // Relative velocity at contact point (includes angular)
+    Vec2 rel_vel = (b.velocity + cross_sv(b.angular_velocity, rb))
+                 - (a.velocity + cross_sv(a.angular_velocity, ra));
     float vel_along_normal = glm::dot(rel_vel, contact.normal);
 
     // Don't resolve if separating
     if (vel_along_normal > 0.0f) return;
 
-    // Restitution
-    float e = std::min(a.restitution, b.restitution);
+    // Geometric mean restitution (physically correct)
+    float e = std::sqrt(a.restitution * b.restitution);
 
-    // Impulse magnitude
-    float j = -(1.0f + e) * vel_along_normal / inv_mass_sum;
+    // Effective mass including rotational terms
+    float ra_cross_n = cross2d(ra, contact.normal);
+    float rb_cross_n = cross2d(rb, contact.normal);
+    float angular_factor = ra_cross_n * ra_cross_n * a.inv_inertia
+                         + rb_cross_n * rb_cross_n * b.inv_inertia;
+
+    float j = -(1.0f + e) * vel_along_normal / (inv_mass_sum + angular_factor);
 
     Vec2 impulse = j * contact.normal;
     a.velocity -= impulse * a.inv_mass;
     b.velocity += impulse * b.inv_mass;
+    a.angular_velocity -= a.inv_inertia * cross2d(ra, impulse);
+    b.angular_velocity += b.inv_inertia * cross2d(rb, impulse);
 
-    // Friction
+    // Friction with angular contribution
     Vec2 tangent = rel_vel - contact.normal * vel_along_normal;
     float tangent_len = glm::length(tangent);
     if (tangent_len > math::EPSILON) {
         tangent /= tangent_len;
-        float jt = -glm::dot(rel_vel, tangent) / inv_mass_sum;
+        float ra_cross_t = cross2d(ra, tangent);
+        float rb_cross_t = cross2d(rb, tangent);
+        float angular_factor_t = ra_cross_t * ra_cross_t * a.inv_inertia
+                               + rb_cross_t * rb_cross_t * b.inv_inertia;
+
+        float jt = -glm::dot(rel_vel, tangent) / (inv_mass_sum + angular_factor_t);
         float mu = std::sqrt(a.friction * b.friction);
 
         Vec2 friction_impulse;
@@ -391,6 +413,8 @@ void PhysicsWorld2D::resolve_collision(Body2D& a, Body2D& b, const Contact2D& co
 
         a.velocity -= friction_impulse * a.inv_mass;
         b.velocity += friction_impulse * b.inv_mass;
+        a.angular_velocity -= a.inv_inertia * cross2d(ra, friction_impulse);
+        b.angular_velocity += b.inv_inertia * cross2d(rb, friction_impulse);
     }
 }
 

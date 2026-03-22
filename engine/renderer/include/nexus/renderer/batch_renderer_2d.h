@@ -35,6 +35,15 @@ public:
     };
 
     // ── Lifecycle ───────────────────────────────────────────────────────
+    BatchRenderer2D() = default;
+    ~BatchRenderer2D() { shutdown(); }
+
+    // Non-copyable, movable
+    BatchRenderer2D(const BatchRenderer2D&) = delete;
+    BatchRenderer2D& operator=(const BatchRenderer2D&) = delete;
+    BatchRenderer2D(BatchRenderer2D&& other) noexcept;
+    BatchRenderer2D& operator=(BatchRenderer2D&& other) noexcept;
+
     void init(rhi::RHI* rhi);
     void shutdown();
 

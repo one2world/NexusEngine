@@ -37,13 +37,9 @@ void Scene::update(float dt) {
 }
 
 void Scene::clear() {
-    // Collect all alive entities and destroy them.
-    // We cannot iterate alive_ directly while modifying it,
-    // so gather IDs first via a view over TagComponent (every entity has one).
-    auto entities = registry_.view<TagComponent>();
-    for (Entity e : entities) {
-        registry_.destroy(e);
-    }
+    // Destroy all alive entities. Use registry's clear_all() which
+    // safely handles iteration during destruction.
+    registry_.clear_all();
 }
 
 } // namespace nexus

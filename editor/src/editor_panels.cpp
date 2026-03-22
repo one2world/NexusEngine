@@ -4,6 +4,7 @@
 #include "nexus/scene/registry.h"
 #include "nexus/renderer/forward_renderer_3d.h"
 #include "nexus/renderer/batch_renderer_2d.h"
+#include "nexus/renderer/camera.h"
 #include "nexus/core/log.h"
 #include <algorithm>
 #include <cmath>
@@ -22,8 +23,8 @@ void ViewportPanel::on_render() {
         // Find camera
         Camera3D cam;
         bool found_camera = false;
-        registry.each_with<CameraComponent, Transform3DComponent>(
-            [&](u32 /*entity*/, const CameraComponent& cc, const Transform3DComponent& tc) {
+        registry.each<CameraComponent, Transform3DComponent>(
+            [&](u32 /*entity*/, CameraComponent& cc, Transform3DComponent& tc) {
                 if (found_camera) return;
                 cam.fov = cc.fov;
                 cam.near_clip = cc.near_clip;
@@ -47,9 +48,9 @@ void ViewportPanel::on_render() {
             renderer_3d_->begin_frame(cam);
 
             // Set directional lights
-            registry.each_with<DirectionalLightComponent>(
-                [&](u32 /*entity*/, const DirectionalLightComponent& dl) {
-                    renderer::DirectionalLight light;
+            registry.each<DirectionalLightComponent>(
+                [&](u32 /*entity*/, DirectionalLightComponent& dl) {
+                    DirectionalLight light;
                     light.direction = dl.direction;
                     light.color = dl.color;
                     light.intensity = dl.intensity;
@@ -57,9 +58,9 @@ void ViewportPanel::on_render() {
                 });
 
             // Add point lights
-            registry.each_with<PointLightComponent, Transform3DComponent>(
-                [&](u32 /*entity*/, const PointLightComponent& pl, const Transform3DComponent& tc) {
-                    renderer::PointLight light;
+            registry.each<PointLightComponent, Transform3DComponent>(
+                [&](u32 /*entity*/, PointLightComponent& pl, Transform3DComponent& tc) {
+                    PointLight light;
                     light.position = Vec3(tc.world_matrix[3]);
                     light.color = pl.color;
                     light.intensity = pl.intensity;
@@ -68,8 +69,8 @@ void ViewportPanel::on_render() {
                 });
 
             // Draw meshes
-            registry.each_with<MeshRendererComponent, Transform3DComponent>(
-                [&](u32 /*entity*/, const MeshRendererComponent& mr, const Transform3DComponent& tc) {
+            registry.each<MeshRendererComponent, Transform3DComponent>(
+                [&](u32 /*entity*/, MeshRendererComponent& mr, Transform3DComponent& tc) {
                     if (mr.mesh_id != 0) {
                         // Mesh rendering would use the cached meshes
                         (void)tc;
@@ -82,18 +83,19 @@ void ViewportPanel::on_render() {
 
     // ── 2D rendering pass ──────────────────────────────────────────────
     if (renderer_2d_) {
-        renderer_2d_->begin_batch();
-        registry.each_with<SpriteRendererComponent, Transform2DComponent>(
-            [&](u32 /*entity*/, const SpriteRendererComponent& sr, const Transform2DComponent& tc) {
+        Camera2D cam2d;
+        cam2d.set_projection(static_cast<float>(width_), static_cast<float>(height_));
+        renderer_2d_->begin(cam2d);
+        registry.each<SpriteRendererComponent, Transform2DComponent>(
+            [&](u32 /*entity*/, SpriteRendererComponent& sr, Transform2DComponent& tc) {
                 renderer_2d_->draw_quad(
                     {tc.world_position.x, tc.world_position.y},
                     {tc.world_scale.x * sr.size.x, tc.world_scale.y * sr.size.y},
                     tc.world_rotation,
-                    sr.color,
-                    sr.texture_id
+                    sr.color
                 );
             });
-        renderer_2d_->end_batch();
+        renderer_2d_->end();
     }
 }
 

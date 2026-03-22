@@ -55,6 +55,15 @@ public:
     /// Total number of alive entities.
     std::size_t size() const { return alive_.size(); }
 
+    /// Destroy all entities (safe: copies the alive set first).
+    void clear_all() {
+        // Copy alive set to avoid modifying while iterating
+        std::vector<Entity> all(alive_.begin(), alive_.end());
+        for (Entity e : all) {
+            destroy(e);
+        }
+    }
+
     // -- Component access ----------------------------------------------------
 
     /// Add a component to an entity. Returns a reference to the stored component.

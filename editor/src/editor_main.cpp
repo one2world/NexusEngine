@@ -9,7 +9,6 @@
 #include "nexus/platform/input.h"
 #include "nexus/rhi/rhi.h"
 #include "nexus/rhi/gl_functions.h"
-#include "nexus/scene/registry.h"
 #include "nexus/scene/scene.h"
 #include "nexus/renderer/forward_renderer_3d.h"
 #include "nexus/renderer/batch_renderer_2d.h"
@@ -82,12 +81,13 @@ static int run(int argc, char* argv[]) {
         }
 
         // ── Create scene ────────────────────────────────────────────────
-        Registry registry;
-        Scene scene(registry);
+        Scene scene;
 
         // ── Create renderers ───────────────────────────────────────────
-        renderer::ForwardRenderer3D renderer_3d;
-        renderer::BatchRenderer2D renderer_2d;
+        ForwardRenderer3D renderer_3d;
+        renderer_3d.init(rhi.get());
+        BatchRenderer2D renderer_2d;
+        renderer_2d.init(rhi.get());
 
         // ── Create editor state ─────────────────────────────────────────
         EditorState editor_state;

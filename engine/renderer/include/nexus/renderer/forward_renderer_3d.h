@@ -60,11 +60,24 @@ class ForwardRenderer3D {
 public:
     static constexpr u32 MAX_POINT_LIGHTS = 8;
 
+    ForwardRenderer3D() = default;
+    ~ForwardRenderer3D() { shutdown(); }
+
+    // Non-copyable, movable
+    ForwardRenderer3D(const ForwardRenderer3D&) = delete;
+    ForwardRenderer3D& operator=(const ForwardRenderer3D&) = delete;
+    ForwardRenderer3D(ForwardRenderer3D&& other) noexcept;
+    ForwardRenderer3D& operator=(ForwardRenderer3D&& other) noexcept;
+
     void init(rhi::RHI* rhi);
     void shutdown();
 
-    void begin(const Camera3D& camera);
-    void end();
+    void begin_frame(const Camera3D& camera);
+    void end_frame();
+
+    // Aliases for backward compatibility
+    void begin(const Camera3D& camera) { begin_frame(camera); }
+    void end() { end_frame(); }
 
     void set_directional_light(const DirectionalLight& light);
     void add_point_light(const PointLight& light);
@@ -74,6 +87,9 @@ public:
 
     void draw_mesh(const Mesh& mesh, const Mat4& transform,
                    Vec4 color = Vec4{1.0f}, rhi::TextureHandle texture = rhi::INVALID_HANDLE);
+
+    /// Simple frustum culling check against a bounding sphere.
+    [[nodiscard]] bool is_visible(Vec3 center, float radius) const;
 
 private:
     rhi::RHI*         rhi_{nullptr};
@@ -85,6 +101,11 @@ private:
 
     Mat4 view_projection_{1.0f};
     Vec3 camera_position_{0.0f};
+    bool in_frame_{false};
+
+    // Frustum planes for culling (extracted from view-projection matrix)
+    Vec4 frustum_planes_[6]{};
+    void extract_frustum_planes();
 };
 
 } // namespace nexus

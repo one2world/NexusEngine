@@ -103,7 +103,9 @@ public:
 
     void look_at(Vec3 target, Vec3 up_vec = Vec3{0.0f, 1.0f, 0.0f}) {
         Vec3 dir = glm::normalize(target - position);
-        pitch = glm::degrees(std::asin(dir.y));
+        // Clamp pitch to avoid gimbal lock at ±90 degrees
+        float sin_p = math::clamp(dir.y, -0.9999f, 0.9999f);
+        pitch = glm::degrees(std::asin(sin_p));
         yaw   = glm::degrees(std::atan2(dir.z, dir.x));
         (void)up_vec; // roll is kept at current value
     }

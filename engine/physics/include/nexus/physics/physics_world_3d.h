@@ -55,6 +55,8 @@ struct Body3D {
     // Material
     float mass{1.0f};
     float inv_mass{1.0f};
+    Mat3  inertia_tensor{1.0f};
+    Mat3  inv_inertia_tensor{0.0f};
     float friction{0.5f};
     float restitution{0.3f};
 

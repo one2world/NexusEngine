@@ -42,6 +42,15 @@ struct PointLight {
 
 class DeferredRenderer {
 public:
+    DeferredRenderer() = default;
+    ~DeferredRenderer() { shutdown(); }
+
+    // Non-copyable, movable
+    DeferredRenderer(const DeferredRenderer&) = delete;
+    DeferredRenderer& operator=(const DeferredRenderer&) = delete;
+    DeferredRenderer(DeferredRenderer&& other) noexcept;
+    DeferredRenderer& operator=(DeferredRenderer&& other) noexcept;
+
     void init(rhi::RHI* rhi, u32 width, u32 height);
     void shutdown();
     void resize(u32 width, u32 height);

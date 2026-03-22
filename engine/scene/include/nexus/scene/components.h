@@ -54,6 +54,7 @@ struct Transform3DComponent {
 struct SpriteRendererComponent {
     u32  texture_id  = 0;
     Vec4 color{1.0f, 1.0f, 1.0f, 1.0f};
+    Vec2 size{1.0f, 1.0f};       // sprite size in local units
     Vec2 uv_min{0.0f, 0.0f};
     Vec2 uv_max{1.0f, 1.0f};
     i32  sort_order  = 0;
@@ -77,12 +78,14 @@ struct CameraComponent {
     float ortho_size      = 10.0f;
     float near_clip       = 0.1f;
     float far_clip        = 1000.0f;
+    Quat  orientation{1.0f, 0.0f, 0.0f, 0.0f};
 };
 
 // ---------------------------------------------------------------------------
 // DirectionalLightComponent
 // ---------------------------------------------------------------------------
 struct DirectionalLightComponent {
+    Vec3  direction{-0.2f, -1.0f, -0.3f};
     Vec3  color{1.0f, 1.0f, 1.0f};
     float intensity = 1.0f;
 };

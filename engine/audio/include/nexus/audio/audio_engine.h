@@ -156,6 +156,10 @@ public:
     /// Number of currently active voices.
     u32 active_voice_count() const;
 
+    /// Set the output sample rate (default 44100).
+    void set_output_sample_rate(u32 rate) { output_sample_rate_ = rate; }
+    u32 output_sample_rate() const { return output_sample_rate_; }
+
 private:
     float compute_spatial_gain(const Voice& v) const;
     float compute_spatial_pan(const Voice& v) const;
@@ -169,6 +173,7 @@ private:
     Vec3 listener_position_{0.0f};
     Vec3 listener_forward_{0.0f, 0.0f, -1.0f};
 
+    u32 output_sample_rate_{44100};
     AudioClipId next_clip_id_{1};
     VoiceId     next_voice_id_{1};
     mutable std::mutex mutex_;

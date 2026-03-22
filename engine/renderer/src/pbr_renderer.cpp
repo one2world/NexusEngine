@@ -57,6 +57,15 @@ uniform float u_Exposure;
 // Texture flags
 uniform int   u_HasAlbedoMap;
 uniform sampler2D u_AlbedoMap;
+uniform int   u_HasNormalMap;
+uniform sampler2D u_NormalMap;
+uniform float u_NormalStrength;
+uniform int   u_HasMetallicRoughnessMap;
+uniform sampler2D u_MetallicRoughnessMap;
+uniform int   u_HasAOMap;
+uniform sampler2D u_AOMap;
+uniform int   u_HasEmissiveMap;
+uniform sampler2D u_EmissiveMap;
 
 // IBL
 uniform int         u_HasIBL;
@@ -110,17 +119,45 @@ void main() {
         albedo *= texture(u_AlbedoMap, v_TexCoord);
     }
 
+    float metallic = u_Metallic;
+    float roughness = u_Roughness;
+    if (u_HasMetallicRoughnessMap > 0) {
+        vec4 mr = texture(u_MetallicRoughnessMap, v_TexCoord);
+        roughness *= mr.g;  // glTF: green = roughness
+        metallic *= mr.b;   // glTF: blue = metallic
+    }
+
+    float ao = u_AO;
+    if (u_HasAOMap > 0) {
+        ao *= texture(u_AOMap, v_TexCoord).r;
+    }
+
     vec3 N = normalize(v_Normal);
+    if (u_HasNormalMap > 0) {
+        // Derive TBN from screen-space derivatives
+        vec3 dPdx = dFdx(v_WorldPos);
+        vec3 dPdy = dFdy(v_WorldPos);
+        vec2 dUVdx = dFdx(v_TexCoord);
+        vec2 dUVdy = dFdy(v_TexCoord);
+        float det = dUVdx.x * dUVdy.y - dUVdx.y * dUVdy.x;
+        vec3 T = normalize((dPdx * dUVdy.y - dPdy * dUVdx.y) / max(abs(det), 0.0001));
+        vec3 B = normalize(cross(N, T));
+        mat3 TBN = mat3(T, B, N);
+        vec3 tangentNormal = texture(u_NormalMap, v_TexCoord).rgb * 2.0 - 1.0;
+        tangentNormal.xy *= u_NormalStrength;
+        N = normalize(TBN * tangentNormal);
+    }
+
     vec3 V = normalize(u_CameraPos - v_WorldPos);
     vec3 L = normalize(-u_SunDirection);
     vec3 H = normalize(V + L);
 
     // F0 for dielectrics is 0.04, for metals it's the albedo color
-    vec3 F0 = mix(vec3(0.04), albedo.rgb, u_Metallic);
+    vec3 F0 = mix(vec3(0.04), albedo.rgb, metallic);
 
     // Cook-Torrance BRDF
-    float NDF = DistributionGGX(N, H, u_Roughness);
-    float G = GeometrySmith(N, V, L, u_Roughness);
+    float NDF = DistributionGGX(N, H, roughness);
+    float G = GeometrySmith(N, V, L, roughness);
     vec3  F = fresnelSchlick(max(dot(H, V), 0.0), F0);
 
     vec3 numerator = NDF * G * F;
@@ -128,7 +165,7 @@ void main() {
     vec3 specular = numerator / denominator;
 
     vec3 kS = F;
-    vec3 kD = (1.0 - kS) * (1.0 - u_Metallic);
+    vec3 kD = (1.0 - kS) * (1.0 - metallic);
 
     float NdotL = max(dot(N, L), 0.0);
 
@@ -138,9 +175,9 @@ void main() {
     vec3 ambient;
     if (u_HasIBL > 0) {
         float NdotV_ibl = max(dot(N, V), 0.0);
-        vec3 F_ibl = fresnelSchlickRoughness(NdotV_ibl, F0, u_Roughness);
+        vec3 F_ibl = fresnelSchlickRoughness(NdotV_ibl, F0, roughness);
         vec3 kS_ibl = F_ibl;
-        vec3 kD_ibl = (1.0 - kS_ibl) * (1.0 - u_Metallic);
+        vec3 kD_ibl = (1.0 - kS_ibl) * (1.0 - metallic);
 
         // Diffuse IBL from irradiance map
         vec3 irradiance = texture(u_IrradianceMap, N).rgb;
@@ -149,17 +186,20 @@ void main() {
         // Specular IBL from prefiltered environment map
         vec3 R = reflect(-V, N);
         vec3 prefilteredColor = textureLod(u_PrefilteredMap, R,
-                                           u_Roughness * MAX_REFLECTION_LOD).rgb;
-        vec2 brdf = texture(u_BrdfLUT, vec2(NdotV_ibl, u_Roughness)).rg;
+                                           roughness * MAX_REFLECTION_LOD).rgb;
+        vec2 brdf = texture(u_BrdfLUT, vec2(NdotV_ibl, roughness)).rg;
         vec3 specular_ibl = prefilteredColor * (F_ibl * brdf.x + brdf.y);
 
-        ambient = (kD_ibl * diffuse_ibl + specular_ibl) * u_AO * u_IBLIntensity;
+        ambient = (kD_ibl * diffuse_ibl + specular_ibl) * ao * u_IBLIntensity;
     } else {
-        ambient = vec3(0.03) * albedo.rgb * u_AO;
+        ambient = vec3(0.03) * albedo.rgb * ao;
     }
 
     // Emissive
     vec3 emissive = u_Emissive * u_EmissiveStrength;
+    if (u_HasEmissiveMap > 0) {
+        emissive *= texture(u_EmissiveMap, v_TexCoord).rgb;
+    }
 
     vec3 color = ambient + Lo + emissive;
 
@@ -176,6 +216,28 @@ void main() {
 } // namespace pbr_shaders
 
 // ── PBRRenderer ─────────────────────────────────────────────────────────────
+
+PBRRenderer::PBRRenderer(PBRRenderer&& other) noexcept
+    : rhi_(other.rhi_), shader_(other.shader_), pipeline_(other.pipeline_),
+      view_projection_(other.view_projection_), camera_position_(other.camera_position_),
+      sun_direction_(other.sun_direction_), sun_color_(other.sun_color_),
+      sun_intensity_(other.sun_intensity_), ibl_(other.ibl_), exposure_(other.exposure_) {
+    other.rhi_ = nullptr;
+    other.shader_ = rhi::INVALID_HANDLE;
+    other.pipeline_ = rhi::INVALID_HANDLE;
+}
+
+PBRRenderer& PBRRenderer::operator=(PBRRenderer&& other) noexcept {
+    if (this != &other) {
+        shutdown();
+        rhi_ = other.rhi_; shader_ = other.shader_; pipeline_ = other.pipeline_;
+        view_projection_ = other.view_projection_; camera_position_ = other.camera_position_;
+        sun_direction_ = other.sun_direction_; sun_color_ = other.sun_color_;
+        sun_intensity_ = other.sun_intensity_; ibl_ = other.ibl_; exposure_ = other.exposure_;
+        other.rhi_ = nullptr; other.shader_ = rhi::INVALID_HANDLE; other.pipeline_ = rhi::INVALID_HANDLE;
+    }
+    return *this;
+}
 
 void PBRRenderer::init(rhi::RHI* rhi) {
     rhi_ = rhi;
@@ -207,8 +269,10 @@ void PBRRenderer::init(rhi::RHI* rhi) {
 
 void PBRRenderer::shutdown() {
     if (!rhi_) return;
-    rhi_->destroy_pipeline(pipeline_);
-    rhi_->destroy_shader(shader_);
+    if (pipeline_ != rhi::INVALID_HANDLE) rhi_->destroy_pipeline(pipeline_);
+    if (shader_ != rhi::INVALID_HANDLE) rhi_->destroy_shader(shader_);
+    pipeline_ = rhi::INVALID_HANDLE;
+    shader_ = rhi::INVALID_HANDLE;
     rhi_ = nullptr;
 }
 
@@ -253,12 +317,45 @@ void PBRRenderer::draw(rhi::BufferHandle vbo, rhi::BufferHandle ibo,
     rhi_->set_uniform_float(shader_, "u_EmissiveStrength", material.emissive_strength);
     rhi_->set_uniform_float(shader_, "u_AO", material.ao_strength);
 
-    // Textures
+    // Textures — Albedo (slot 0)
     int has_albedo = (material.albedo_map != rhi::INVALID_HANDLE) ? 1 : 0;
     rhi_->set_uniform_int(shader_, "u_HasAlbedoMap", has_albedo);
     if (has_albedo) {
         rhi_->bind_texture(material.albedo_map, 0);
         rhi_->set_uniform_int(shader_, "u_AlbedoMap", 0);
+    }
+
+    // Normal map (slot 1)
+    int has_normal = (material.normal_map != rhi::INVALID_HANDLE) ? 1 : 0;
+    rhi_->set_uniform_int(shader_, "u_HasNormalMap", has_normal);
+    rhi_->set_uniform_float(shader_, "u_NormalStrength", material.normal_strength);
+    if (has_normal) {
+        rhi_->bind_texture(material.normal_map, 1);
+        rhi_->set_uniform_int(shader_, "u_NormalMap", 1);
+    }
+
+    // Metallic-roughness map (slot 2)
+    int has_mr = (material.metallic_roughness_map != rhi::INVALID_HANDLE) ? 1 : 0;
+    rhi_->set_uniform_int(shader_, "u_HasMetallicRoughnessMap", has_mr);
+    if (has_mr) {
+        rhi_->bind_texture(material.metallic_roughness_map, 2);
+        rhi_->set_uniform_int(shader_, "u_MetallicRoughnessMap", 2);
+    }
+
+    // AO map (slot 3)
+    int has_ao = (material.ao_map != rhi::INVALID_HANDLE) ? 1 : 0;
+    rhi_->set_uniform_int(shader_, "u_HasAOMap", has_ao);
+    if (has_ao) {
+        rhi_->bind_texture(material.ao_map, 3);
+        rhi_->set_uniform_int(shader_, "u_AOMap", 3);
+    }
+
+    // Emissive map (slot 7)
+    int has_emissive = (material.emissive_map != rhi::INVALID_HANDLE) ? 1 : 0;
+    rhi_->set_uniform_int(shader_, "u_HasEmissiveMap", has_emissive);
+    if (has_emissive) {
+        rhi_->bind_texture(material.emissive_map, 7);
+        rhi_->set_uniform_int(shader_, "u_EmissiveMap", 7);
     }
 
     // Lighting

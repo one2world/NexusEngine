@@ -1,5 +1,7 @@
 #include "nexus/scene/scene.h"
+#include "nexus/scene/scene_serializer.h"
 #include "nexus/scene/hierarchy.h"
+#include "nexus/core/log.h"
 
 namespace nexus {
 
@@ -40,6 +42,33 @@ void Scene::clear() {
     // Destroy all alive entities. Use registry's clear_all() which
     // safely handles iteration during destruction.
     registry_.clear_all();
+}
+
+// ── Play mode snapshot/restore ─────────────────────────────────────────────
+
+bool Scene::take_snapshot() {
+    SceneSerializer serializer(*this);
+    snapshot_json_ = serializer.to_json();
+    if (snapshot_json_.empty()) {
+        NX_ERROR("Scene::take_snapshot: failed to serialize scene");
+        return false;
+    }
+    NX_INFO("Scene snapshot captured ({} bytes)", snapshot_json_.size());
+    return true;
+}
+
+bool Scene::restore_snapshot() {
+    if (snapshot_json_.empty()) {
+        NX_WARN("Scene::restore_snapshot: no snapshot to restore");
+        return false;
+    }
+    SceneSerializer serializer(*this);
+    if (!serializer.from_json(snapshot_json_)) {
+        NX_ERROR("Scene::restore_snapshot: failed to deserialize snapshot");
+        return false;
+    }
+    NX_INFO("Scene snapshot restored");
+    return true;
 }
 
 } // namespace nexus

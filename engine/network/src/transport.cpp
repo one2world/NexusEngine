@@ -169,7 +169,9 @@ void NetworkSimulation::reset() {
     delayed_.clear();
 }
 
-// ── UDPSocket ───────────────────────────────────────────────────────────────
+} // namespace nexus::net (temporarily close for platform includes)
+
+// ── Platform socket includes ────────────────────────────────────────────────
 
 #ifdef _WIN32
     #include <winsock2.h>
@@ -198,6 +200,10 @@ void NetworkSimulation::reset() {
     #define SOCKET_ERROR_CODE errno
     static void init_winsock() {}
 #endif
+
+namespace nexus::net {
+
+// ── UDPSocket ───────────────────────────────────────────────────────────────
 
 static struct sockaddr_in to_sockaddr(const nexus::net::Address& addr) {
     struct sockaddr_in sa{};

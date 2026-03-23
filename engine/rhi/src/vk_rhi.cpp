@@ -304,6 +304,16 @@ void VulkanRHI::set_depth_test(bool enabled) {
     ++state_change_count_;
 }
 
+void VulkanRHI::set_depth_write(bool enabled) {
+    state_.depth_write = enabled;
+    ++state_change_count_;
+}
+
+void VulkanRHI::set_cull_mode(CullMode mode) {
+    state_.cull = mode;
+    ++state_change_count_;
+}
+
 // ── Uniforms ─────────────────────────────────────────────────────────────────
 
 void VulkanRHI::set_uniform_int(ShaderHandle shader,

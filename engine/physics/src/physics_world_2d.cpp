@@ -275,7 +275,7 @@ bool PhysicsWorld2D::box_vs_box(const Body2D& a, const Body2D& b, Contact2D& c) 
         float min_b_proj =  std::numeric_limits<float>::max();
         float max_b_proj = -std::numeric_limits<float>::max();
 
-        for (int j = 0; j < 4; ++j) {
+        for (size_t j = 0; j < 4; ++j) {
             float pa = glm::dot(corners_a[j], axis);
             float pb = glm::dot(corners_b[j], axis);
             min_a_proj = std::min(min_a_proj, pa);
@@ -307,34 +307,45 @@ bool PhysicsWorld2D::box_vs_box(const Body2D& a, const Body2D& b, Contact2D& c) 
 }
 
 bool PhysicsWorld2D::circle_vs_box(const Body2D& circle, const Body2D& box, Contact2D& c) const {
-    Vec2 diff = circle.position - box.position;
+    // Transform circle center into box local space for proper OBB support
+    float cos_r = std::cos(-box.rotation);
+    float sin_r = std::sin(-box.rotation);
+    Vec2 world_diff = circle.position - box.position;
+    Vec2 local_diff = { cos_r * world_diff.x - sin_r * world_diff.y,
+                        sin_r * world_diff.x + cos_r * world_diff.y };
 
     // Clamp to box extents
     Vec2 closest;
-    closest.x = math::clamp(diff.x, -box.half_size.x, box.half_size.x);
-    closest.y = math::clamp(diff.y, -box.half_size.y, box.half_size.y);
+    closest.x = math::clamp(local_diff.x, -box.half_size.x, box.half_size.x);
+    closest.y = math::clamp(local_diff.y, -box.half_size.y, box.half_size.y);
 
-    Vec2 delta = diff - closest;
+    Vec2 delta = local_diff - closest;
     float dist_sq = glm::dot(delta, delta);
 
     if (dist_sq > circle.radius * circle.radius) return false;
 
     float dist = std::sqrt(dist_sq);
+    Vec2 local_normal;
     if (dist < math::EPSILON) {
         // Circle center inside box
-        float pen_x = box.half_size.x - std::abs(diff.x);
-        float pen_y = box.half_size.y - std::abs(diff.y);
+        float pen_x = box.half_size.x - std::abs(local_diff.x);
+        float pen_y = box.half_size.y - std::abs(local_diff.y);
         if (pen_x < pen_y) {
-            c.normal = {(diff.x < 0.0f) ? -1.0f : 1.0f, 0.0f};
+            local_normal = {(local_diff.x < 0.0f) ? -1.0f : 1.0f, 0.0f};
             c.depth = pen_x + circle.radius;
         } else {
-            c.normal = {0.0f, (diff.y < 0.0f) ? -1.0f : 1.0f};
+            local_normal = {0.0f, (local_diff.y < 0.0f) ? -1.0f : 1.0f};
             c.depth = pen_y + circle.radius;
         }
     } else {
-        c.normal = delta / dist;
+        local_normal = delta / dist;
         c.depth = circle.radius - dist;
     }
+    // Transform normal back to world space
+    float cos_fwd = std::cos(box.rotation);
+    float sin_fwd = std::sin(box.rotation);
+    c.normal = { cos_fwd * local_normal.x - sin_fwd * local_normal.y,
+                 sin_fwd * local_normal.x + cos_fwd * local_normal.y };
     c.point = circle.position - c.normal * circle.radius;
     return true;
 }
@@ -447,17 +458,33 @@ bool PhysicsWorld2D::raycast(Vec2 origin, Vec2 direction, float max_distance,
                 found = true;
             }
         } else {
-            // AABB ray intersection
-            Vec2 bmin = b.position - b.half_size;
-            Vec2 bmax = b.position + b.half_size;
+            // OBB ray intersection — transform ray to box local space
+            float cos_r = std::cos(-b.rotation);
+            float sin_r = std::sin(-b.rotation);
+            Vec2 local_origin = {
+                cos_r * (origin.x - b.position.x) - sin_r * (origin.y - b.position.y),
+                sin_r * (origin.x - b.position.x) + cos_r * (origin.y - b.position.y)
+            };
+            Vec2 local_dir = { cos_r * dir.x - sin_r * dir.y,
+                               sin_r * dir.x + cos_r * dir.y };
 
             float tmin_val = 0.0f, tmax_val = max_distance;
+            int hit_axis = -1;
+            float hit_sign = 1.0f;
+
             for (int axis = 0; axis < 2; ++axis) {
-                float inv_d = 1.0f / dir[axis];
-                float t1 = (bmin[axis] - origin[axis]) * inv_d;
-                float t2 = (bmax[axis] - origin[axis]) * inv_d;
-                if (inv_d < 0.0f) std::swap(t1, t2);
-                tmin_val = std::max(tmin_val, t1);
+                if (std::abs(local_dir[axis]) < math::EPSILON) {
+                    if (local_origin[axis] < -b.half_size[axis] ||
+                        local_origin[axis] > b.half_size[axis])
+                        goto next_body;
+                    continue;
+                }
+                float inv_d = 1.0f / local_dir[axis];
+                float t1 = (-b.half_size[axis] - local_origin[axis]) * inv_d;
+                float t2 = ( b.half_size[axis] - local_origin[axis]) * inv_d;
+                float sign = -1.0f;
+                if (inv_d < 0.0f) { std::swap(t1, t2); sign = 1.0f; }
+                if (t1 > tmin_val) { tmin_val = t1; hit_axis = axis; hit_sign = sign; }
                 tmax_val = std::min(tmax_val, t2);
                 if (tmax_val < tmin_val) goto next_body;
             }
@@ -467,12 +494,13 @@ bool PhysicsWorld2D::raycast(Vec2 origin, Vec2 direction, float max_distance,
                 hit.body_id = b.id;
                 hit.point = origin + dir * tmin_val;
                 hit.distance = tmin_val;
-                // Determine normal
-                Vec2 p = hit.point - b.position;
-                if (std::abs(p.x) > std::abs(p.y))
-                    hit.normal = {(p.x > 0.0f) ? 1.0f : -1.0f, 0.0f};
-                else
-                    hit.normal = {0.0f, (p.y > 0.0f) ? 1.0f : -1.0f};
+                // Normal in local space, then rotate back to world
+                Vec2 local_normal(0.0f);
+                if (hit_axis >= 0) local_normal[hit_axis] = hit_sign;
+                float cos_fwd = std::cos(b.rotation);
+                float sin_fwd = std::sin(b.rotation);
+                hit.normal = { cos_fwd * local_normal.x - sin_fwd * local_normal.y,
+                               sin_fwd * local_normal.x + cos_fwd * local_normal.y };
                 found = true;
             }
         }

@@ -37,6 +37,16 @@ public:
     /// Compute cascade splits and light matrices for the given camera & light.
     void update(const Camera3D& camera, Vec3 light_direction);
 
+    /// Begin rendering the depth pass for a specific cascade.
+    void begin_pass(u32 cascade);
+
+    /// Submit geometry to be rendered into the current shadow cascade.
+    void submit_geometry(rhi::BufferHandle vbo, rhi::BufferHandle ibo,
+                         u32 index_count, const Mat4& model);
+
+    /// End the current cascade pass.
+    void end_pass();
+
     /// Get cascade data for shader binding.
     const std::array<CascadeData, MAX_CASCADES>& cascades() const { return cascades_; }
     u32 num_cascades() const { return config_.num_cascades; }
@@ -61,6 +71,11 @@ private:
     std::array<rhi::FramebufferHandle, MAX_CASCADES> framebuffers_;
     std::array<rhi::TextureHandle, MAX_CASCADES> depth_textures_;
     std::vector<float> splits_;
+
+    // Depth rendering resources
+    rhi::ShaderHandle   depth_shader_{rhi::INVALID_HANDLE};
+    rhi::PipelineHandle depth_pipeline_{rhi::INVALID_HANDLE};
+    u32 current_cascade_{0};
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,6 +97,16 @@ public:
     /// Compute the 6 face view-projection matrices for a point light.
     void update(Vec3 light_position);
 
+    /// Begin rendering the depth pass for a specific cubemap face.
+    void begin_face(u32 face, Vec3 light_position);
+
+    /// Submit geometry for the current face.
+    void submit_geometry(rhi::BufferHandle vbo, rhi::BufferHandle ibo,
+                         u32 index_count, const Mat4& model);
+
+    /// End the current face pass.
+    void end_face();
+
     /// Get the view-projection for a cubemap face (0-5).
     const Mat4& face_matrix(u32 face) const { return face_matrices_[face]; }
 
@@ -96,6 +121,10 @@ private:
     std::array<Mat4, 6> face_matrices_;
     rhi::FramebufferHandle framebuffer_{rhi::INVALID_HANDLE};
     rhi::TextureHandle depth_texture_{rhi::INVALID_HANDLE};
+
+    // Depth rendering resources
+    rhi::ShaderHandle   depth_shader_{rhi::INVALID_HANDLE};
+    rhi::PipelineHandle depth_pipeline_{rhi::INVALID_HANDLE};
 };
 
 } // namespace nexus

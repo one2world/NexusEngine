@@ -51,6 +51,8 @@ public:
     // State toggles
     void set_blend_mode(BlendMode mode) override;
     void set_depth_test(bool enabled) override;
+    void set_depth_write(bool enabled) override;
+    void set_cull_mode(CullMode mode) override;
 
     // Uniforms
     void set_uniform_int(ShaderHandle shader,

@@ -46,8 +46,20 @@ uniform vec4  u_Albedo;
 uniform float u_Metallic;
 uniform float u_Roughness;
 uniform float u_AO;
+uniform vec3  u_Emissive;
+uniform float u_EmissiveStrength;
+
 uniform int   u_HasAlbedoMap;
 uniform sampler2D u_AlbedoMap;
+uniform int   u_HasNormalMap;
+uniform sampler2D u_NormalMap;
+uniform float u_NormalStrength;
+uniform int   u_HasMetallicRoughnessMap;
+uniform sampler2D u_MetallicRoughnessMap;
+uniform int   u_HasAOMap;
+uniform sampler2D u_AOMap;
+uniform int   u_HasEmissiveMap;
+uniform sampler2D u_EmissiveMap;
 
 void main() {
     vec4 albedo = u_Albedo;
@@ -55,9 +67,45 @@ void main() {
         albedo *= texture(u_AlbedoMap, v_TexCoord);
     }
 
-    gAlbedoMetallic = vec4(albedo.rgb, u_Metallic);
-    gNormal = vec4(normalize(v_Normal) * 0.5 + 0.5, 1.0);
-    gRoughnessAO = vec4(u_Roughness, u_AO, 0.0, 1.0);
+    float metallic = u_Metallic;
+    float roughness = u_Roughness;
+    if (u_HasMetallicRoughnessMap > 0) {
+        vec4 mr = texture(u_MetallicRoughnessMap, v_TexCoord);
+        roughness *= mr.g;
+        metallic *= mr.b;
+    }
+
+    float ao = u_AO;
+    if (u_HasAOMap > 0) {
+        ao *= texture(u_AOMap, v_TexCoord).r;
+    }
+
+    vec3 N = normalize(v_Normal);
+    if (u_HasNormalMap > 0) {
+        // Screen-space TBN derivation (same as PBR forward pass)
+        vec3 dPdx = dFdx(v_WorldPos);
+        vec3 dPdy = dFdy(v_WorldPos);
+        vec2 dUVdx = dFdx(v_TexCoord);
+        vec2 dUVdy = dFdy(v_TexCoord);
+        float det = dUVdx.x * dUVdy.y - dUVdx.y * dUVdy.x;
+        vec3 T = normalize((dPdx * dUVdy.y - dPdy * dUVdx.y) / max(abs(det), 0.0001));
+        vec3 B = normalize(cross(N, T));
+        mat3 TBN = mat3(T, B, N);
+        vec3 tangentNormal = texture(u_NormalMap, v_TexCoord).rgb * 2.0 - 1.0;
+        tangentNormal.xy *= u_NormalStrength;
+        N = normalize(TBN * tangentNormal);
+    }
+
+    // Emissive (encoded as intensity in RT2.b to be additive in lighting pass)
+    vec3 emissive = u_Emissive * u_EmissiveStrength;
+    if (u_HasEmissiveMap > 0) {
+        emissive *= texture(u_EmissiveMap, v_TexCoord).rgb;
+    }
+    float emissive_luminance = dot(emissive, vec3(0.2126, 0.7152, 0.0722));
+
+    gAlbedoMetallic = vec4(albedo.rgb, metallic);
+    gNormal = vec4(normalize(N) * 0.5 + 0.5, 1.0);
+    gRoughnessAO = vec4(roughness, ao, emissive_luminance, 1.0);
 }
 )";
 
@@ -179,8 +227,12 @@ void main() {
                             albedo, metallic, roughness);
     }
 
+    // Emissive luminance from geometry pass (stored in RT2.b)
+    float emissiveLum = roughnessAO.b;
+    vec3 emissive = albedo * emissiveLum;
+
     vec3 ambient = vec3(0.03) * albedo * ao;
-    FragColor = vec4(ambient + Lo, 1.0);
+    FragColor = vec4(ambient + Lo + emissive, 1.0);
 }
 )";
 
@@ -367,12 +419,48 @@ void DeferredRenderer::submit_geometry(rhi::BufferHandle vbo,
     rhi_->set_uniform_float(geom_shader_, "u_Metallic", material.metallic);
     rhi_->set_uniform_float(geom_shader_, "u_Roughness", material.roughness);
     rhi_->set_uniform_float(geom_shader_, "u_AO", material.ao_strength);
+    rhi_->set_uniform_vec3(geom_shader_, "u_Emissive", material.emissive);
+    rhi_->set_uniform_float(geom_shader_, "u_EmissiveStrength", material.emissive_strength);
 
+    // Albedo map (slot 0)
     int has_albedo = (material.albedo_map != rhi::INVALID_HANDLE) ? 1 : 0;
     rhi_->set_uniform_int(geom_shader_, "u_HasAlbedoMap", has_albedo);
     if (has_albedo) {
         rhi_->bind_texture(material.albedo_map, 0);
         rhi_->set_uniform_int(geom_shader_, "u_AlbedoMap", 0);
+    }
+
+    // Normal map (slot 1)
+    int has_normal = (material.normal_map != rhi::INVALID_HANDLE) ? 1 : 0;
+    rhi_->set_uniform_int(geom_shader_, "u_HasNormalMap", has_normal);
+    rhi_->set_uniform_float(geom_shader_, "u_NormalStrength", material.normal_strength);
+    if (has_normal) {
+        rhi_->bind_texture(material.normal_map, 1);
+        rhi_->set_uniform_int(geom_shader_, "u_NormalMap", 1);
+    }
+
+    // Metallic-roughness map (slot 2)
+    int has_mr = (material.metallic_roughness_map != rhi::INVALID_HANDLE) ? 1 : 0;
+    rhi_->set_uniform_int(geom_shader_, "u_HasMetallicRoughnessMap", has_mr);
+    if (has_mr) {
+        rhi_->bind_texture(material.metallic_roughness_map, 2);
+        rhi_->set_uniform_int(geom_shader_, "u_MetallicRoughnessMap", 2);
+    }
+
+    // AO map (slot 3)
+    int has_ao = (material.ao_map != rhi::INVALID_HANDLE) ? 1 : 0;
+    rhi_->set_uniform_int(geom_shader_, "u_HasAOMap", has_ao);
+    if (has_ao) {
+        rhi_->bind_texture(material.ao_map, 3);
+        rhi_->set_uniform_int(geom_shader_, "u_AOMap", 3);
+    }
+
+    // Emissive map (slot 4)
+    int has_emissive = (material.emissive_map != rhi::INVALID_HANDLE) ? 1 : 0;
+    rhi_->set_uniform_int(geom_shader_, "u_HasEmissiveMap", has_emissive);
+    if (has_emissive) {
+        rhi_->bind_texture(material.emissive_map, 4);
+        rhi_->set_uniform_int(geom_shader_, "u_EmissiveMap", 4);
     }
 
     rhi_->bind_vertex_buffer(vbo);

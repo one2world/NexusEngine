@@ -78,6 +78,7 @@ void SystemScheduler::rebuild_order() {
     std::vector<std::vector<size_t>> adj(n);
     std::vector<int> in_degree(n, 0);
 
+    bool has_unknown_deps = false;
     for (size_t i = 0; i < n; ++i) {
         for (const auto& dep : systems_[i].run_after) {
             auto it = name_to_idx.find(dep);
@@ -85,8 +86,9 @@ void SystemScheduler::rebuild_order() {
                 adj[it->second].push_back(i);
                 in_degree[i]++;
             } else {
-                NX_WARN("SystemScheduler: system '{}' depends on unknown system '{}'",
-                        systems_[i].name, dep);
+                NX_ERROR("SystemScheduler: system '{}' depends on unknown system '{}' — "
+                         "dependency will be ignored", systems_[i].name, dep);
+                has_unknown_deps = true;
             }
         }
     }
@@ -108,8 +110,23 @@ void SystemScheduler::rebuild_order() {
     }
 
     if (execution_order_.size() != n) {
-        NX_ERROR("SystemScheduler: dependency cycle detected! Only {} of {} systems scheduled",
-                 execution_order_.size(), n);
+        // Identify which systems are in the cycle
+        std::string cycled;
+        for (size_t i = 0; i < n; ++i) {
+            if (in_degree[i] > 0) {
+                if (!cycled.empty()) cycled += ", ";
+                cycled += systems_[i].name;
+            }
+        }
+        NX_ERROR("SystemScheduler: DEPENDENCY CYCLE detected among [{}]! "
+                 "{} of {} systems scheduled. Cycled systems will NOT run.",
+                 cycled, execution_order_.size(), n);
+        // Do NOT include cycled systems — they are excluded from execution_order_
+    }
+
+    if (has_unknown_deps) {
+        NX_WARN("SystemScheduler: some dependencies reference unknown systems — "
+                "check your system registration order");
     }
 }
 

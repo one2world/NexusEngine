@@ -59,6 +59,8 @@ public:
     // ── State toggles ─────────────────────────────────────────────────
     virtual void set_blend_mode(BlendMode mode) = 0;
     virtual void set_depth_test(bool enabled)   = 0;
+    virtual void set_depth_write(bool enabled)  = 0;
+    virtual void set_cull_mode(CullMode mode)   = 0;
 
     // ── Uniforms ──────────────────────────────────────────────────────
     virtual void set_uniform_int(ShaderHandle shader,

@@ -222,19 +222,25 @@ bool PhysicsWorld3D::narrowphase(const Body3D& a, const Body3D& b, Contact3D& co
         if (result) contact.normal = -contact.normal;
         return result;
     }
-    // Capsule treated as sphere for basic collision
-    if (a.shape == Body3D::Capsule || b.shape == Body3D::Capsule) {
-        // Approximate capsule as sphere with combined radius
-        Body3D sa = a, sb = b;
-        if (sa.shape == Body3D::Capsule) {
-            sa.shape = Body3D::Sphere;
-            sa.radius = a.radius + a.height * 0.5f;
-        }
-        if (sb.shape == Body3D::Capsule) {
-            sb.shape = Body3D::Sphere;
-            sb.radius = b.radius + b.height * 0.5f;
-        }
-        return narrowphase(sa, sb, contact);
+    // Capsule collision — uses line-segment closest-point tests
+    if (a.shape == Body3D::Capsule && b.shape == Body3D::Capsule) {
+        return capsule_vs_capsule(a, b, contact);
+    }
+    if (a.shape == Body3D::Capsule && b.shape == Body3D::Sphere) {
+        return capsule_vs_sphere(a, b, contact);
+    }
+    if (a.shape == Body3D::Sphere && b.shape == Body3D::Capsule) {
+        bool result = capsule_vs_sphere(b, a, contact);
+        if (result) contact.normal = -contact.normal;
+        return result;
+    }
+    if (a.shape == Body3D::Capsule && b.shape == Body3D::Box) {
+        return capsule_vs_box(a, b, contact);
+    }
+    if (a.shape == Body3D::Box && b.shape == Body3D::Capsule) {
+        bool result = capsule_vs_box(b, a, contact);
+        if (result) contact.normal = -contact.normal;
+        return result;
     }
     return false;
 }
@@ -368,37 +374,228 @@ bool PhysicsWorld3D::box_vs_box(const Body3D& a, const Body3D& b, Contact3D& c) 
 }
 
 bool PhysicsWorld3D::sphere_vs_box(const Body3D& sphere, const Body3D& box, Contact3D& c) const {
-    Vec3 diff = sphere.position - box.position;
+    // Transform sphere center to box local space for proper OBB support
+    Mat3 rot = glm::mat3_cast(box.rotation);
+    Mat3 rot_inv = glm::transpose(rot);
+    Vec3 local_diff = rot_inv * (sphere.position - box.position);
 
     Vec3 closest;
     for (int i = 0; i < 3; ++i) {
-        closest[i] = math::clamp(diff[i], -box.half_extents[i], box.half_extents[i]);
+        closest[i] = math::clamp(local_diff[i], -box.half_extents[i], box.half_extents[i]);
     }
 
-    Vec3 delta = diff - closest;
+    Vec3 delta = local_diff - closest;
     float dist_sq = glm::dot(delta, delta);
 
     if (dist_sq > sphere.radius * sphere.radius) return false;
 
     float dist = std::sqrt(dist_sq);
+    Vec3 local_normal;
     if (dist < math::EPSILON) {
         // Sphere center inside box
         Vec3 pen;
         for (int i = 0; i < 3; ++i) {
-            pen[i] = box.half_extents[i] - std::abs(diff[i]);
+            pen[i] = box.half_extents[i] - std::abs(local_diff[i]);
         }
         int min_axis = 0;
         if (pen[1] < pen[min_axis]) min_axis = 1;
         if (pen[2] < pen[min_axis]) min_axis = 2;
 
-        c.normal = Vec3(0.0f);
-        c.normal[min_axis] = (diff[min_axis] < 0.0f) ? -1.0f : 1.0f;
+        local_normal = Vec3(0.0f);
+        local_normal[min_axis] = (local_diff[min_axis] < 0.0f) ? -1.0f : 1.0f;
         c.depth = pen[min_axis] + sphere.radius;
     } else {
-        c.normal = delta / dist;
+        local_normal = delta / dist;
         c.depth = sphere.radius - dist;
     }
+    // Transform normal back to world space
+    c.normal = rot * local_normal;
     c.point = sphere.position - c.normal * sphere.radius;
+    return true;
+}
+
+// ── Capsule helpers ─────────────────────────────────────────────────────────
+
+/// Closest point on line segment AB to point P
+static Vec3 closest_point_on_segment(Vec3 A, Vec3 B, Vec3 P) {
+    Vec3 ab = B - A;
+    float t = glm::dot(P - A, ab) / (glm::dot(ab, ab) + math::EPSILON);
+    return A + ab * math::clamp(t, 0.0f, 1.0f);
+}
+
+/// Get capsule segment endpoints (Y-axis aligned in local space, rotated by body quaternion)
+static void capsule_segment(const Body3D& cap, Vec3& A, Vec3& B) {
+    Vec3 up = glm::mat3_cast(cap.rotation) * Vec3(0.0f, cap.height * 0.5f, 0.0f);
+    A = cap.position - up;
+    B = cap.position + up;
+}
+
+/// Closest points between two line segments (returns squared distance)
+static float closest_points_segments(Vec3 p1, Vec3 q1, Vec3 p2, Vec3 q2,
+                                     Vec3& c1, Vec3& c2) {
+    Vec3 d1 = q1 - p1;
+    Vec3 d2 = q2 - p2;
+    Vec3 r  = p1 - p2;
+    float a = glm::dot(d1, d1);
+    float e = glm::dot(d2, d2);
+    float f = glm::dot(d2, r);
+
+    float s, t;
+
+    if (a <= math::EPSILON && e <= math::EPSILON) {
+        s = t = 0.0f;
+    } else if (a <= math::EPSILON) {
+        s = 0.0f;
+        t = math::clamp(f / e, 0.0f, 1.0f);
+    } else {
+        float c = glm::dot(d1, r);
+        if (e <= math::EPSILON) {
+            t = 0.0f;
+            s = math::clamp(-c / a, 0.0f, 1.0f);
+        } else {
+            float b = glm::dot(d1, d2);
+            float denom = a * e - b * b;
+            s = (denom != 0.0f) ? math::clamp((b * f - c * e) / denom, 0.0f, 1.0f) : 0.0f;
+            t = (b * s + f) / e;
+            if (t < 0.0f) { t = 0.0f; s = math::clamp(-c / a, 0.0f, 1.0f); }
+            else if (t > 1.0f) { t = 1.0f; s = math::clamp((b - c) / a, 0.0f, 1.0f); }
+        }
+    }
+
+    c1 = p1 + d1 * s;
+    c2 = p2 + d2 * t;
+    Vec3 diff = c1 - c2;
+    return glm::dot(diff, diff);
+}
+
+bool PhysicsWorld3D::capsule_vs_capsule(const Body3D& a, const Body3D& b, Contact3D& c) const {
+    Vec3 a0, a1, b0, b1;
+    capsule_segment(a, a0, a1);
+    capsule_segment(b, b0, b1);
+
+    Vec3 ca, cb;
+    float dist_sq = closest_points_segments(a0, a1, b0, b1, ca, cb);
+    float sum_r = a.radius + b.radius;
+
+    if (dist_sq > sum_r * sum_r) return false;
+
+    float dist = std::sqrt(dist_sq);
+    if (dist < math::EPSILON) {
+        c.normal = Vec3(0.0f, 1.0f, 0.0f);
+        c.depth = sum_r;
+    } else {
+        c.normal = (cb - ca) / dist;
+        c.depth = sum_r - dist;
+    }
+    c.point = ca + c.normal * a.radius;
+    return true;
+}
+
+bool PhysicsWorld3D::capsule_vs_sphere(const Body3D& cap, const Body3D& sph, Contact3D& c) const {
+    Vec3 a, b;
+    capsule_segment(cap, a, b);
+
+    Vec3 closest = closest_point_on_segment(a, b, sph.position);
+    Vec3 diff = sph.position - closest;
+    float dist_sq = glm::dot(diff, diff);
+    float sum_r = cap.radius + sph.radius;
+
+    if (dist_sq > sum_r * sum_r) return false;
+
+    float dist = std::sqrt(dist_sq);
+    if (dist < math::EPSILON) {
+        c.normal = Vec3(0.0f, 1.0f, 0.0f);
+        c.depth = sum_r;
+    } else {
+        c.normal = diff / dist;
+        c.depth = sum_r - dist;
+    }
+    c.point = closest + c.normal * cap.radius;
+    return true;
+}
+
+bool PhysicsWorld3D::capsule_vs_box(const Body3D& cap, const Body3D& box, Contact3D& c) const {
+    Vec3 a, b;
+    capsule_segment(cap, a, b);
+
+    // Transform capsule segment into box local space
+    Mat3 rot = glm::mat3_cast(box.rotation);
+    Mat3 rot_inv = glm::transpose(rot);
+    Vec3 la = rot_inv * (a - box.position);
+    Vec3 lb = rot_inv * (b - box.position);
+
+    // Find closest point on segment to box, then clamp to box
+    // Sample several points on the segment and pick the one with minimum distance
+    float best_dist_sq = std::numeric_limits<float>::max();
+    Vec3 best_cap_pt, best_box_pt;
+
+    auto test_point = [&](Vec3 local_pt) {
+        Vec3 clamped;
+        for (int i = 0; i < 3; ++i)
+            clamped[i] = math::clamp(local_pt[i], -box.half_extents[i], box.half_extents[i]);
+        Vec3 delta = local_pt - clamped;
+        float d2 = glm::dot(delta, delta);
+        if (d2 < best_dist_sq) {
+            best_dist_sq = d2;
+            best_cap_pt = local_pt;
+            best_box_pt = clamped;
+        }
+    };
+
+    // Test segment endpoints
+    test_point(la);
+    test_point(lb);
+
+    // Also find closest point on segment to box center and to each face center
+    test_point(closest_point_on_segment(la, lb, Vec3(0.0f)));
+    for (int axis = 0; axis < 3; ++axis) {
+        Vec3 face_pt(0.0f);
+        face_pt[axis] = box.half_extents[axis];
+        test_point(closest_point_on_segment(la, lb, face_pt));
+        face_pt[axis] = -box.half_extents[axis];
+        test_point(closest_point_on_segment(la, lb, face_pt));
+    }
+
+    // Now refine: closest point on segment to the best box point
+    Vec3 refined_seg_pt = closest_point_on_segment(la, lb, best_box_pt);
+    test_point(refined_seg_pt);
+    // And closest box point to that refined segment point
+    Vec3 refined_box_pt;
+    for (int i = 0; i < 3; ++i)
+        refined_box_pt[i] = math::clamp(refined_seg_pt[i], -box.half_extents[i], box.half_extents[i]);
+    Vec3 rdelta = refined_seg_pt - refined_box_pt;
+    float rd2 = glm::dot(rdelta, rdelta);
+    if (rd2 < best_dist_sq) {
+        best_dist_sq = rd2;
+        best_cap_pt = refined_seg_pt;
+        best_box_pt = refined_box_pt;
+    }
+
+    float dist = std::sqrt(best_dist_sq);
+
+    if (dist > cap.radius) return false;
+
+    Vec3 local_normal;
+    if (dist < math::EPSILON) {
+        // Capsule segment inside box — push out along smallest penetration axis
+        Vec3 pen;
+        for (int i = 0; i < 3; ++i)
+            pen[i] = box.half_extents[i] - std::abs(best_cap_pt[i]);
+        int min_axis = 0;
+        if (pen[1] < pen[min_axis]) min_axis = 1;
+        if (pen[2] < pen[min_axis]) min_axis = 2;
+        local_normal = Vec3(0.0f);
+        local_normal[min_axis] = (best_cap_pt[min_axis] < 0.0f) ? -1.0f : 1.0f;
+        c.depth = pen[min_axis] + cap.radius;
+    } else {
+        local_normal = (best_cap_pt - best_box_pt) / dist;
+        c.depth = cap.radius - dist;
+    }
+
+    // Transform back to world space
+    c.normal = rot * local_normal;
+    Vec3 world_cap_pt = box.position + rot * best_cap_pt;
+    c.point = world_cap_pt - c.normal * cap.radius;
     return true;
 }
 
@@ -493,12 +690,11 @@ bool PhysicsWorld3D::raycast(Vec3 origin, Vec3 direction, float max_distance,
     for (const auto& b : bodies_) {
         if (!(b.layer & layer_mask)) continue;
 
-        if (b.shape == Body3D::Sphere || b.shape == Body3D::Capsule) {
-            float r = (b.shape == Body3D::Capsule) ? b.radius + b.height * 0.5f : b.radius;
+        if (b.shape == Body3D::Sphere) {
             Vec3 oc = origin - b.position;
             float a_c = glm::dot(dir, dir);
             float b_c = 2.0f * glm::dot(oc, dir);
-            float c_c = glm::dot(oc, oc) - r * r;
+            float c_c = glm::dot(oc, oc) - b.radius * b.radius;
             float disc = b_c * b_c - 4.0f * a_c * c_c;
             if (disc < 0.0f) continue;
 
@@ -511,23 +707,88 @@ bool PhysicsWorld3D::raycast(Vec3 origin, Vec3 direction, float max_distance,
                 hit.distance = t;
                 found = true;
             }
+        } else if (b.shape == Body3D::Capsule) {
+            // Ray-capsule: test ray vs line-segment swept sphere
+            Vec3 capA, capB;
+            capsule_segment(b, capA, capB);
+            Vec3 seg = capB - capA;
+            Vec3 oc = origin - capA;
+
+            float seg_dot_seg = glm::dot(seg, seg);
+            float seg_dot_dir = glm::dot(seg, dir);
+            float seg_dot_oc  = glm::dot(seg, oc);
+
+            // Quadratic coefficients for infinite cylinder
+            float a_c = glm::dot(dir, dir) - seg_dot_dir * seg_dot_dir / (seg_dot_seg + math::EPSILON);
+            float b_c = 2.0f * (glm::dot(oc, dir) - seg_dot_dir * seg_dot_oc / (seg_dot_seg + math::EPSILON));
+            float c_c = glm::dot(oc, oc) - seg_dot_oc * seg_dot_oc / (seg_dot_seg + math::EPSILON) - b.radius * b.radius;
+            float disc = b_c * b_c - 4.0f * a_c * c_c;
+
+            float best_t = closest;
+            bool cap_found = false;
+
+            if (disc >= 0.0f && std::abs(a_c) > math::EPSILON) {
+                float t_cyl = (-b_c - std::sqrt(disc)) / (2.0f * a_c);
+                if (t_cyl >= 0.0f && t_cyl < best_t) {
+                    Vec3 pt = origin + dir * t_cyl;
+                    float proj = glm::dot(pt - capA, seg) / seg_dot_seg;
+                    if (proj >= 0.0f && proj <= 1.0f) {
+                        best_t = t_cyl;
+                        cap_found = true;
+                    }
+                }
+            }
+
+            // Test hemisphere caps (just use sphere tests at endpoints)
+            for (int cap = 0; cap < 2; ++cap) {
+                Vec3 center = (cap == 0) ? capA : capB;
+                Vec3 co = origin - center;
+                float sa = glm::dot(dir, dir);
+                float sb = 2.0f * glm::dot(co, dir);
+                float sc = glm::dot(co, co) - b.radius * b.radius;
+                float sd = sb * sb - 4.0f * sa * sc;
+                if (sd < 0.0f) continue;
+                float st = (-sb - std::sqrt(sd)) / (2.0f * sa);
+                if (st >= 0.0f && st < best_t) {
+                    best_t = st;
+                    cap_found = true;
+                }
+            }
+
+            if (cap_found && best_t < closest) {
+                closest = best_t;
+                hit.body_id = b.id;
+                hit.point = origin + dir * best_t;
+                hit.distance = best_t;
+                // Normal: closest point on capsule segment to hit point
+                Vec3 cp = closest_point_on_segment(capA, capB, hit.point);
+                hit.normal = glm::normalize(hit.point - cp);
+                found = true;
+            }
         } else {
-            // AABB ray intersection
-            Vec3 bmin = b.position - b.half_extents;
-            Vec3 bmax = b.position + b.half_extents;
+            // OBB ray intersection — transform ray to box local space
+            Mat3 rot = glm::mat3_cast(b.rotation);
+            Mat3 rot_inv = glm::transpose(rot);
+            Vec3 local_origin = rot_inv * (origin - b.position);
+            Vec3 local_dir = rot_inv * dir;
 
             float tmin_val = 0.0f, tmax_val = max_distance;
+            int hit_axis = -1;
+            float hit_sign = 1.0f;
+
             for (int axis = 0; axis < 3; ++axis) {
-                if (std::abs(dir[axis]) < math::EPSILON) {
-                    if (origin[axis] < bmin[axis] || origin[axis] > bmax[axis])
+                if (std::abs(local_dir[axis]) < math::EPSILON) {
+                    if (local_origin[axis] < -b.half_extents[axis] ||
+                        local_origin[axis] > b.half_extents[axis])
                         goto next_body_3d;
                     continue;
                 }
-                float inv_d = 1.0f / dir[axis];
-                float t1 = (bmin[axis] - origin[axis]) * inv_d;
-                float t2 = (bmax[axis] - origin[axis]) * inv_d;
-                if (inv_d < 0.0f) std::swap(t1, t2);
-                tmin_val = std::max(tmin_val, t1);
+                float inv_d = 1.0f / local_dir[axis];
+                float t1 = (-b.half_extents[axis] - local_origin[axis]) * inv_d;
+                float t2 = ( b.half_extents[axis] - local_origin[axis]) * inv_d;
+                float sign = -1.0f;
+                if (inv_d < 0.0f) { std::swap(t1, t2); sign = 1.0f; }
+                if (t1 > tmin_val) { tmin_val = t1; hit_axis = axis; hit_sign = sign; }
                 tmax_val = std::min(tmax_val, t2);
                 if (tmax_val < tmin_val) goto next_body_3d;
             }
@@ -537,14 +798,11 @@ bool PhysicsWorld3D::raycast(Vec3 origin, Vec3 direction, float max_distance,
                 hit.body_id = b.id;
                 hit.point = origin + dir * tmin_val;
                 hit.distance = tmin_val;
-                Vec3 p = hit.point - b.position;
-                Vec3 abs_p = glm::abs(p);
-                if (abs_p.x > abs_p.y && abs_p.x > abs_p.z)
-                    hit.normal = {(p.x > 0.0f) ? 1.0f : -1.0f, 0.0f, 0.0f};
-                else if (abs_p.y > abs_p.z)
-                    hit.normal = {0.0f, (p.y > 0.0f) ? 1.0f : -1.0f, 0.0f};
-                else
-                    hit.normal = {0.0f, 0.0f, (p.z > 0.0f) ? 1.0f : -1.0f};
+                // Normal in local space, then rotate back to world
+                Vec3 local_normal(0.0f);
+                if (hit_axis >= 0)
+                    local_normal[hit_axis] = hit_sign;
+                hit.normal = rot * local_normal;
                 found = true;
             }
         }

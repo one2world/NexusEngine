@@ -555,6 +555,19 @@ void OpenGLRHI::set_depth_test(bool enabled) {
         gl::Disable(GL_DEPTH_TEST);
 }
 
+void OpenGLRHI::set_depth_write(bool enabled) {
+    gl::DepthMask(enabled ? GL_TRUE : GL_FALSE);
+}
+
+void OpenGLRHI::set_cull_mode(CullMode mode) {
+    if (mode == CullMode::None) {
+        gl::Disable(GL_CULL_FACE);
+    } else {
+        gl::Enable(GL_CULL_FACE);
+        gl::CullFace(mode == CullMode::Front ? GL_FRONT : GL_BACK);
+    }
+}
+
 // ── Uniforms ────────────────────────────────────────────────────────────────
 
 GLint OpenGLRHI::get_uniform_loc(ShaderHandle shader, const std::string& name) {

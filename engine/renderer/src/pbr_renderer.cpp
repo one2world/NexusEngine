@@ -46,6 +46,7 @@ uniform float u_Roughness;
 uniform vec3  u_Emissive;
 uniform float u_EmissiveStrength;
 uniform float u_AO;
+uniform float u_AlphaCutoff;
 
 // Lighting
 uniform vec3  u_SunDirection;
@@ -117,6 +118,11 @@ void main() {
     vec4 albedo = u_Albedo;
     if (u_HasAlbedoMap > 0) {
         albedo *= texture(u_AlbedoMap, v_TexCoord);
+    }
+
+    // Alpha cutoff (discard fragments below threshold)
+    if (albedo.a < u_AlphaCutoff) {
+        discard;
     }
 
     float metallic = u_Metallic;
@@ -303,6 +309,16 @@ void PBRRenderer::draw(rhi::BufferHandle vbo, rhi::BufferHandle ibo,
     rhi_->bind_shader(shader_);
     rhi_->bind_pipeline(pipeline_);
 
+    // Per-material render state: transparency and double-sided
+    if (material.transparent) {
+        rhi_->set_blend_mode(rhi::BlendMode::Alpha);
+        rhi_->set_depth_write(false);
+    } else {
+        rhi_->set_blend_mode(rhi::BlendMode::None);
+        rhi_->set_depth_write(true);
+    }
+    rhi_->set_cull_mode(material.double_sided ? rhi::CullMode::None : rhi::CullMode::Back);
+
     // Transforms
     rhi_->set_uniform_mat4(shader_, "u_ViewProjection", view_projection_);
     rhi_->set_uniform_mat4(shader_, "u_Model", transform);
@@ -316,6 +332,7 @@ void PBRRenderer::draw(rhi::BufferHandle vbo, rhi::BufferHandle ibo,
     rhi_->set_uniform_vec3(shader_, "u_Emissive", material.emissive);
     rhi_->set_uniform_float(shader_, "u_EmissiveStrength", material.emissive_strength);
     rhi_->set_uniform_float(shader_, "u_AO", material.ao_strength);
+    rhi_->set_uniform_float(shader_, "u_AlphaCutoff", material.transparent ? 0.0f : material.alpha_cutoff);
 
     // Textures — Albedo (slot 0)
     int has_albedo = (material.albedo_map != rhi::INVALID_HANDLE) ? 1 : 0;

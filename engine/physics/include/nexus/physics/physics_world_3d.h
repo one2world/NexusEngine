@@ -128,6 +128,9 @@ private:
     bool sphere_vs_sphere(const Body3D& a, const Body3D& b, Contact3D& c) const;
     bool box_vs_box(const Body3D& a, const Body3D& b, Contact3D& c) const;
     bool sphere_vs_box(const Body3D& sphere, const Body3D& box, Contact3D& c) const;
+    bool capsule_vs_capsule(const Body3D& a, const Body3D& b, Contact3D& c) const;
+    bool capsule_vs_sphere(const Body3D& cap, const Body3D& sph, Contact3D& c) const;
+    bool capsule_vs_box(const Body3D& cap, const Body3D& box, Contact3D& c) const;
 
     Vec3 gravity_;
     std::vector<Body3D> bodies_;

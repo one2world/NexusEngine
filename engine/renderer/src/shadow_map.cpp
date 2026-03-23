@@ -6,6 +6,60 @@
 
 namespace nexus {
 
+// ── Shadow depth shaders ────────────────────────────────────────────────────
+
+namespace shadow_shaders {
+
+const char* DEPTH_VERTEX = R"(
+#version 330 core
+layout (location = 0) in vec3 a_Position;
+
+uniform mat4 u_LightViewProjection;
+uniform mat4 u_Model;
+
+void main() {
+    gl_Position = u_LightViewProjection * u_Model * vec4(a_Position, 1.0);
+}
+)";
+
+const char* DEPTH_FRAGMENT = R"(
+#version 330 core
+void main() {
+    // Depth is written automatically by the depth buffer
+}
+)";
+
+const char* POINT_DEPTH_VERTEX = R"(
+#version 330 core
+layout (location = 0) in vec3 a_Position;
+
+uniform mat4 u_Model;
+uniform mat4 u_LightViewProjection;
+
+out vec3 v_WorldPos;
+
+void main() {
+    vec4 worldPos = u_Model * vec4(a_Position, 1.0);
+    v_WorldPos = worldPos.xyz;
+    gl_Position = u_LightViewProjection * worldPos;
+}
+)";
+
+const char* POINT_DEPTH_FRAGMENT = R"(
+#version 330 core
+in vec3 v_WorldPos;
+
+uniform vec3  u_LightPos;
+uniform float u_FarPlane;
+
+void main() {
+    float dist = length(v_WorldPos - u_LightPos);
+    gl_FragDepth = dist / u_FarPlane;
+}
+)";
+
+} // namespace shadow_shaders
+
 // ── CascadedShadowMap ───────────────────────────────────────────────────────
 
 void CascadedShadowMap::init(rhi::RHI* rhi, const Config& config) {
@@ -31,6 +85,24 @@ void CascadedShadowMap::init(rhi::RHI* rhi, const Config& config) {
         framebuffers_[i] = rhi_->create_framebuffer(fb_desc);
     }
 
+    // Create depth-only shader and pipeline
+    depth_shader_ = rhi_->create_shader(shadow_shaders::DEPTH_VERTEX,
+                                         shadow_shaders::DEPTH_FRAGMENT);
+    {
+        rhi::PipelineDesc desc;
+        desc.shader = depth_shader_;
+        desc.blend = rhi::BlendMode::None;
+        desc.depth_test = true;
+        desc.depth_write = true;
+        desc.cull = rhi::CullMode::Front;  // Front-face culling reduces shadow acne
+        desc.primitive = rhi::PrimitiveType::Triangles;
+        desc.vertex_layout.stride = sizeof(float) * 8; // pos(3) + normal(3) + uv(2)
+        desc.vertex_layout.attributes = {
+            {0, 3, 0, false},  // only position needed
+        };
+        depth_pipeline_ = rhi_->create_pipeline(desc);
+    }
+
     NX_INFO("CascadedShadowMap initialized: {} cascades, {}x{}",
             config_.num_cascades, config_.resolution, config_.resolution);
 }
@@ -41,7 +113,38 @@ void CascadedShadowMap::shutdown() {
         rhi_->destroy_framebuffer(framebuffers_[i]);
         rhi_->destroy_texture(depth_textures_[i]);
     }
+    if (depth_pipeline_ != rhi::INVALID_HANDLE) rhi_->destroy_pipeline(depth_pipeline_);
+    if (depth_shader_ != rhi::INVALID_HANDLE) rhi_->destroy_shader(depth_shader_);
+    depth_pipeline_ = rhi::INVALID_HANDLE;
+    depth_shader_ = rhi::INVALID_HANDLE;
     rhi_ = nullptr;
+}
+
+void CascadedShadowMap::begin_pass(u32 cascade) {
+    if (cascade >= config_.num_cascades || !rhi_) return;
+    current_cascade_ = cascade;
+    rhi_->bind_framebuffer(framebuffers_[cascade]);
+    rhi_->set_viewport(0, 0, static_cast<i32>(config_.resolution),
+                       static_cast<i32>(config_.resolution));
+    rhi_->clear(Vec4(1.0f), 1.0f);
+    rhi_->bind_shader(depth_shader_);
+    rhi_->bind_pipeline(depth_pipeline_);
+    rhi_->set_uniform_mat4(depth_shader_, "u_LightViewProjection",
+                            cascades_[cascade].light_view_projection);
+}
+
+void CascadedShadowMap::submit_geometry(rhi::BufferHandle vbo, rhi::BufferHandle ibo,
+                                          u32 index_count, const Mat4& model) {
+    if (!rhi_ || depth_shader_ == rhi::INVALID_HANDLE) return;
+    rhi_->set_uniform_mat4(depth_shader_, "u_Model", model);
+    rhi_->bind_vertex_buffer(vbo);
+    rhi_->bind_index_buffer(ibo);
+    rhi_->draw_indexed(index_count);
+}
+
+void CascadedShadowMap::end_pass() {
+    if (!rhi_) return;
+    rhi_->unbind_framebuffer();
 }
 
 void CascadedShadowMap::compute_cascade_splits(float near, float far) {
@@ -174,13 +277,62 @@ void PointLightShadow::init(rhi::RHI* rhi, const Config& config) {
     fb_desc.height = config_.resolution;
     fb_desc.has_depth = true;
     framebuffer_ = rhi_->create_framebuffer(fb_desc);
+
+    // Create point light depth shader and pipeline
+    depth_shader_ = rhi_->create_shader(shadow_shaders::POINT_DEPTH_VERTEX,
+                                         shadow_shaders::POINT_DEPTH_FRAGMENT);
+    {
+        rhi::PipelineDesc desc;
+        desc.shader = depth_shader_;
+        desc.blend = rhi::BlendMode::None;
+        desc.depth_test = true;
+        desc.depth_write = true;
+        desc.cull = rhi::CullMode::Front;
+        desc.primitive = rhi::PrimitiveType::Triangles;
+        desc.vertex_layout.stride = sizeof(float) * 8;
+        desc.vertex_layout.attributes = {
+            {0, 3, 0, false},
+        };
+        depth_pipeline_ = rhi_->create_pipeline(desc);
+    }
 }
 
 void PointLightShadow::shutdown() {
     if (!rhi_) return;
     rhi_->destroy_framebuffer(framebuffer_);
     rhi_->destroy_texture(depth_texture_);
+    if (depth_pipeline_ != rhi::INVALID_HANDLE) rhi_->destroy_pipeline(depth_pipeline_);
+    if (depth_shader_ != rhi::INVALID_HANDLE) rhi_->destroy_shader(depth_shader_);
+    depth_pipeline_ = rhi::INVALID_HANDLE;
+    depth_shader_ = rhi::INVALID_HANDLE;
     rhi_ = nullptr;
+}
+
+void PointLightShadow::begin_face(u32 face, Vec3 light_pos) {
+    if (face >= 6 || !rhi_) return;
+    rhi_->bind_framebuffer(framebuffer_);
+    rhi_->set_viewport(0, 0, static_cast<i32>(config_.resolution),
+                       static_cast<i32>(config_.resolution));
+    rhi_->clear(Vec4(1.0f), 1.0f);
+    rhi_->bind_shader(depth_shader_);
+    rhi_->bind_pipeline(depth_pipeline_);
+    rhi_->set_uniform_mat4(depth_shader_, "u_LightViewProjection", face_matrices_[face]);
+    rhi_->set_uniform_vec3(depth_shader_, "u_LightPos", light_pos);
+    rhi_->set_uniform_float(depth_shader_, "u_FarPlane", config_.far_plane);
+}
+
+void PointLightShadow::submit_geometry(rhi::BufferHandle vbo, rhi::BufferHandle ibo,
+                                         u32 index_count, const Mat4& model) {
+    if (!rhi_ || depth_shader_ == rhi::INVALID_HANDLE) return;
+    rhi_->set_uniform_mat4(depth_shader_, "u_Model", model);
+    rhi_->bind_vertex_buffer(vbo);
+    rhi_->bind_index_buffer(ibo);
+    rhi_->draw_indexed(index_count);
+}
+
+void PointLightShadow::end_face() {
+    if (!rhi_) return;
+    rhi_->unbind_framebuffer();
 }
 
 void PointLightShadow::update(Vec3 pos) {

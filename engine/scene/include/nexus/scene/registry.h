@@ -22,19 +22,25 @@ public:
     // -- Entity management ---------------------------------------------------
 
     /// Create a new entity (reuses IDs from the free list when available).
+    /// Each reuse bumps the generation to invalidate stale handles.
     Entity create() {
-        Entity e;
+        u32 index;
         if (!free_list_.empty()) {
-            e = free_list_.back();
+            index = free_list_.back();
             free_list_.pop_back();
         } else {
-            e = next_entity_++;
+            index = next_index_++;
+            if (index >= generations_.size()) {
+                generations_.resize(index + 1, 0);
+            }
         }
+        Entity e = make_entity(index, generations_[index]);
         alive_.insert(e);
         return e;
     }
 
     /// Destroy an entity, removing all of its components.
+    /// Bumps generation so stale handles are detected.
     void destroy(Entity e) {
         if (!alive(e)) return;
 
@@ -44,12 +50,26 @@ public:
         }
 
         alive_.erase(e);
-        free_list_.push_back(e);
+
+        u32 index = entity_index(e);
+        // Bump generation (wraps around via mask)
+        if (index < generations_.size()) {
+            generations_[index] = (generations_[index] + 1) & ENTITY_GEN_MASK;
+        }
+        free_list_.push_back(index);
     }
 
-    /// Check whether the entity is currently alive.
+    /// Check whether the entity is currently alive (and generation matches).
     bool alive(Entity e) const {
         return alive_.count(e) > 0;
+    }
+
+    /// Validate that an entity handle is still valid (not stale).
+    bool valid(Entity e) const {
+        if (e == INVALID_ENTITY) return false;
+        u32 index = entity_index(e);
+        if (index >= generations_.size()) return false;
+        return entity_generation(e) == generations_[index] && alive_.count(e) > 0;
     }
 
     /// Total number of alive entities.
@@ -206,8 +226,9 @@ public:
     }
 
 private:
-    Entity next_entity_ = 0;
-    std::vector<Entity> free_list_;
+    u32 next_index_ = 0;
+    std::vector<u32> generations_;        // generation per index slot
+    std::vector<u32> free_list_;          // free index slots
     std::unordered_set<Entity> alive_;
     std::unordered_map<std::type_index, std::unique_ptr<IComponentPool>> pools_;
 };

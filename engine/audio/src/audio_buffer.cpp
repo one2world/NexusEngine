@@ -231,7 +231,6 @@ bool load_ogg_from_memory(const u8* data, size_t size, AudioBuffer& out_buffer) 
     std::vector<std::vector<u8>> audio_packets;
 
     while (offset < size) {
-        size_t page_start = offset;
         if (!detail::read_ogg_page(data, size, offset, page)) break;
 
         // Extract packets from page segments
@@ -239,9 +238,9 @@ bool load_ogg_from_memory(const u8* data, size_t size, AudioBuffer& out_buffer) 
         size_t seg_data_offset = 0;
         for (size_t i = 0; i < page.segment_table.size(); ++i) {
             u8 seg_size = page.segment_table[i];
-            current_packet.insert(current_packet.end(),
-                page.data.begin() + seg_data_offset,
-                page.data.begin() + seg_data_offset + seg_size);
+            auto seg_begin = page.data.begin() + static_cast<std::ptrdiff_t>(seg_data_offset);
+            auto seg_end   = seg_begin + static_cast<std::ptrdiff_t>(seg_size);
+            current_packet.insert(current_packet.end(), seg_begin, seg_end);
             seg_data_offset += seg_size;
 
             if (seg_size < 255) {

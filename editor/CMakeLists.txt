@@ -15,6 +15,7 @@ target_link_libraries(nexus-editor-lib
     PUBLIC
         Nexus::Core
         Nexus::Scene
+        Nexus::Renderer
 )
 
 nexus_set_compiler_flags(nexus-editor-lib)

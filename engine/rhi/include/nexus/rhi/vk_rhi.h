@@ -67,6 +67,8 @@ public:
     // State toggles
     void set_blend_mode(BlendMode mode) override;
     void set_depth_test(bool enabled) override;
+    void set_depth_write(bool enabled) override;
+    void set_cull_mode(CullMode mode) override;
 
     // Uniforms
     void set_uniform_int(ShaderHandle shader,
@@ -159,6 +161,8 @@ private:
         BufferHandle      index_buffer{INVALID_HANDLE};
         BlendMode         blend{BlendMode::None};
         bool              depth_test{true};
+        bool              depth_write{true};
+        CullMode          cull{CullMode::Back};
         i32 viewport_x{0}, viewport_y{0}, viewport_w{0}, viewport_h{0};
         i32 scissor_x{0}, scissor_y{0}, scissor_w{0}, scissor_h{0};
     };

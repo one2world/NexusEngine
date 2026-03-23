@@ -44,9 +44,26 @@ public:
     /// Remove all entities from the scene.
     void clear();
 
+    // -- Play mode snapshot/restore ------------------------------------------
+
+    /// Take a serialized snapshot of the current scene state (for editor play mode).
+    /// Returns true if snapshot was successfully captured.
+    bool take_snapshot();
+
+    /// Restore the scene to the last snapshot state.
+    /// Returns true if restore was successful.
+    bool restore_snapshot();
+
+    /// Check if a snapshot exists.
+    bool has_snapshot() const { return !snapshot_json_.empty(); }
+
+    /// Clear the stored snapshot.
+    void clear_snapshot() { snapshot_json_.clear(); }
+
 private:
     Registry registry_;
     SystemScheduler scheduler_;
+    std::string snapshot_json_;  // serialized scene state for play mode restore
 };
 
 } // namespace nexus

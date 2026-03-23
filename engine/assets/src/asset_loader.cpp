@@ -52,7 +52,7 @@ static bool parse_bmp_header(const std::vector<u8>& raw, u32& w, u32& h, u32& ch
                (u32(raw[off+2]) << 16) | (u32(raw[off+3]) << 24);
     };
     auto read_u16_le = [&](size_t off) -> u16 {
-        return u16(raw[off]) | (u16(raw[off+1]) << 8);
+        return static_cast<u16>(u16(raw[off]) | (u16(raw[off+1]) << 8));
     };
     w  = read_u32_le(18);
     h  = read_u32_le(22);
@@ -263,7 +263,6 @@ std::shared_ptr<AssetData> MeshImporter::import(const std::string& path,
         // Minimal glTF 2.0 JSON parser for mesh data
         // Reads the first mesh/primitive from a .gltf file (JSON-based)
         std::string json_str;
-        u32 bin_offset = 0;
         std::vector<u8> glb_bin;
 
         if (ext == ".glb") {
@@ -416,10 +415,10 @@ std::shared_ptr<AssetData> MeshImporter::import(const std::string& path,
         // Helper to read float data from buffer
         auto read_floats = [&](i64 acc_idx, u32 components) -> std::vector<f32> {
             std::vector<f32> result;
-            if (acc_idx < 0 || acc_idx >= static_cast<i64>(accessors.size())) return result;
-            const auto& acc = accessors[acc_idx];
-            if (acc.view < 0 || acc.view >= static_cast<i64>(buffer_views.size())) return result;
-            const auto& bv = buffer_views[acc.view];
+            if (acc_idx < 0 || static_cast<size_t>(acc_idx) >= accessors.size()) return result;
+            const auto& acc = accessors[static_cast<size_t>(acc_idx)];
+            if (acc.view < 0 || static_cast<size_t>(acc.view) >= buffer_views.size()) return result;
+            const auto& bv = buffer_views[static_cast<size_t>(acc.view)];
 
             const u8* buf_data = glb_bin.data();
             size_t buf_size = glb_bin.size();
@@ -444,10 +443,10 @@ std::shared_ptr<AssetData> MeshImporter::import(const std::string& path,
 
         auto read_indices = [&](i64 acc_idx) -> std::vector<u32> {
             std::vector<u32> result;
-            if (acc_idx < 0 || acc_idx >= static_cast<i64>(accessors.size())) return result;
-            const auto& acc = accessors[acc_idx];
-            if (acc.view < 0 || acc.view >= static_cast<i64>(buffer_views.size())) return result;
-            const auto& bv = buffer_views[acc.view];
+            if (acc_idx < 0 || static_cast<size_t>(acc_idx) >= accessors.size()) return result;
+            const auto& acc = accessors[static_cast<size_t>(acc_idx)];
+            if (acc.view < 0 || static_cast<size_t>(acc.view) >= buffer_views.size()) return result;
+            const auto& bv = buffer_views[static_cast<size_t>(acc.view)];
 
             const u8* buf_data = glb_bin.data();
             size_t buf_size = glb_bin.size();

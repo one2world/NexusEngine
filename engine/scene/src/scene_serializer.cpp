@@ -358,9 +358,11 @@ static Entity deserialize_entity(Registry& reg, const json& j,
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
+static constexpr int SCENE_FORMAT_VERSION = 2;
+
 std::string SceneSerializer::to_json() const {
     json root;
-    root["version"] = 1;
+    root["version"] = SCENE_FORMAT_VERSION;
     root["entities"] = json::array();
 
     auto& reg = scene_.registry();
@@ -374,14 +376,32 @@ std::string SceneSerializer::to_json() const {
 }
 
 bool SceneSerializer::from_json(const std::string& json_str) {
+    // Pre-validate the JSON before modifying any state
+    json root;
     try {
-        json root = json::parse(json_str);
+        root = json::parse(json_str);
+    } catch (const json::exception& e) {
+        NX_ERROR("SceneSerializer JSON parse error: {}", e.what());
+        return false;
+    }
 
-        if (!root.contains("entities") || !root["entities"].is_array()) {
-            NX_ERROR("SceneSerializer: invalid JSON format");
-            return false;
-        }
+    if (!root.contains("entities") || !root["entities"].is_array()) {
+        NX_ERROR("SceneSerializer: invalid JSON format");
+        return false;
+    }
 
+    // Version check
+    int version = root.value("version", 1);
+    if (version > SCENE_FORMAT_VERSION) {
+        NX_ERROR("SceneSerializer: file version {} is newer than supported version {}",
+                 version, SCENE_FORMAT_VERSION);
+        return false;
+    }
+
+    // Transactional safety: take a backup before clearing.
+    std::string backup_json = to_json();
+
+    try {
         scene_.clear();
         auto& reg = scene_.registry();
 
@@ -391,7 +411,8 @@ bool SceneSerializer::from_json(const std::string& json_str) {
             deserialize_entity(reg, entity_json, id_map);
         }
 
-        // Second pass: restore hierarchy
+        // Second pass: restore hierarchy with orphan detection
+        u32 orphaned_count = 0;
         for (auto& entity_json : root["entities"]) {
             if (entity_json.contains("parent")) {
                 u32 original_id = entity_json["id"].get<u32>();
@@ -401,14 +422,45 @@ bool SceneSerializer::from_json(const std::string& json_str) {
                 auto parent_it = id_map.find(parent_id);
                 if (child_it != id_map.end() && parent_it != id_map.end()) {
                     Hierarchy::set_parent(reg, child_it->second, parent_it->second);
+                } else {
+                    ++orphaned_count;
+                    NX_WARN("SceneSerializer: entity {} has parent {} which was not found — orphaned",
+                            original_id, parent_id);
                 }
             }
         }
 
-        NX_INFO("Scene loaded: {} entities", root["entities"].size());
+        if (orphaned_count > 0) {
+            NX_WARN("SceneSerializer: {} entities were orphaned during deserialization",
+                    orphaned_count);
+        }
+
+        NX_INFO("Scene loaded: {} entities (format v{})", root["entities"].size(), version);
         return true;
-    } catch (const json::exception& e) {
-        NX_ERROR("SceneSerializer JSON error: {}", e.what());
+    } catch (const std::exception& e) {
+        NX_ERROR("SceneSerializer error during deserialization: {} — restoring backup", e.what());
+        // Attempt rollback from backup
+        try {
+            scene_.clear();
+            json backup_root = json::parse(backup_json);
+            auto& reg = scene_.registry();
+            std::unordered_map<u32, Entity> id_map;
+            for (auto& entity_json : backup_root["entities"]) {
+                deserialize_entity(reg, entity_json, id_map);
+            }
+            for (auto& entity_json : backup_root["entities"]) {
+                if (entity_json.contains("parent")) {
+                    auto child_it = id_map.find(entity_json["id"].get<u32>());
+                    auto parent_it = id_map.find(entity_json["parent"].get<u32>());
+                    if (child_it != id_map.end() && parent_it != id_map.end()) {
+                        Hierarchy::set_parent(reg, child_it->second, parent_it->second);
+                    }
+                }
+            }
+            NX_WARN("SceneSerializer: backup restored successfully");
+        } catch (...) {
+            NX_ERROR("SceneSerializer: CRITICAL — backup restoration also failed");
+        }
         return false;
     }
 }

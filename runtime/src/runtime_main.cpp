@@ -180,7 +180,7 @@ int main(int argc, char* argv[]) {
             rhi->clear(nexus::Vec4{0.1f, 0.1f, 0.12f, 1.0f});
 
             float aspect = static_cast<float>(window.width()) /
-                           static_cast<float>(std::max(window.height(), 1u));
+                           static_cast<float>(std::max(window.height(), 1));
 
             // ── Find the primary camera ─────────────────────────────────
             bool has_3d_camera = false;

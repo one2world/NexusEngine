@@ -8,6 +8,13 @@
 namespace nexus {
 
 // ---------------------------------------------------------------------------
+// ActiveComponent - controls whether an entity is active (updated/rendered)
+// ---------------------------------------------------------------------------
+struct ActiveComponent {
+    bool active{true};
+};
+
+// ---------------------------------------------------------------------------
 // TagComponent - human-readable name for an entity
 // ---------------------------------------------------------------------------
 struct TagComponent {

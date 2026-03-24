@@ -9,6 +9,8 @@ add_library(nexus-renderer STATIC
     src/deferred_renderer.cpp
     src/terrain.cpp
     src/fog.cpp
+    src/ssao.cpp
+    src/particle_renderer.cpp
 )
 
 target_include_directories(nexus-renderer
@@ -17,7 +19,7 @@ target_include_directories(nexus-renderer
 )
 
 target_link_libraries(nexus-renderer
-    PUBLIC Nexus::Core Nexus::RHI
+    PUBLIC Nexus::Core Nexus::RHI Nexus::Animation
 )
 
 nexus_set_compiler_flags(nexus-renderer)

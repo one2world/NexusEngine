@@ -4,6 +4,8 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace nexus::physics {
 
@@ -89,6 +91,16 @@ void PhysicsWorld2D::step(float dt, u32 velocity_iterations, u32 /*position_iter
     // Detect collisions
     broadphase();
 
+    // Wake sleeping bodies involved in collisions
+    for (auto& pair : contacts_) {
+        Body2D* a = get_body(pair.body_a);
+        Body2D* b = get_body(pair.body_b);
+        if (a && b) {
+            if (a->sleeping && b->type == Body2D::Dynamic && !b->sleeping) a->wake();
+            if (b->sleeping && a->type == Body2D::Dynamic && !a->sleeping) b->wake();
+        }
+    }
+
     // Resolve (iterative impulse solver)
     for (u32 iter = 0; iter < velocity_iterations; ++iter) {
         for (auto& pair : contacts_) {
@@ -97,6 +109,8 @@ void PhysicsWorld2D::step(float dt, u32 velocity_iterations, u32 /*position_iter
             if (a && b) resolve_collision(*a, *b, pair.contact);
         }
     }
+
+    update_sleeping(dt);
 
     // Fire contact callbacks
     if (contact_callback_) {
@@ -107,17 +121,18 @@ void PhysicsWorld2D::step(float dt, u32 velocity_iterations, u32 /*position_iter
 }
 
 void PhysicsWorld2D::apply_force(u32 id, Vec2 force) {
-    if (auto* b = get_body(id)) b->force += force;
+    if (auto* b = get_body(id)) { b->wake(); b->force += force; }
 }
 
 void PhysicsWorld2D::apply_impulse(u32 id, Vec2 impulse) {
     if (auto* b = get_body(id)) {
+        b->wake();
         b->velocity += impulse * b->inv_mass;
     }
 }
 
 void PhysicsWorld2D::apply_torque(u32 id, float torque) {
-    if (auto* b = get_body(id)) b->torque += torque;
+    if (auto* b = get_body(id)) { b->wake(); b->torque += torque; }
 }
 
 // ── Integration ─────────────────────────────────────────────────────────────
@@ -125,6 +140,7 @@ void PhysicsWorld2D::apply_torque(u32 id, float torque) {
 void PhysicsWorld2D::integrate(float dt) {
     for (auto& b : bodies_) {
         if (b.type == Body2D::Static) continue;
+        if (b.sleeping) continue;
 
         if (b.type == Body2D::Dynamic) {
             // Apply gravity
@@ -147,7 +163,26 @@ void PhysicsWorld2D::integrate(float dt) {
     }
 }
 
-// ── Broadphase (AABB overlap, N^2 for now) ──────────────────────────────────
+void PhysicsWorld2D::update_sleeping(float dt) {
+    for (auto& b : bodies_) {
+        if (b.type == Body2D::Static) continue;
+        float energy = glm::dot(b.velocity, b.velocity)
+                     + b.angular_velocity * b.angular_velocity;
+        if (energy < Body2D::SLEEP_THRESHOLD) {
+            b.sleep_timer += dt;
+            if (b.sleep_timer >= Body2D::SLEEP_TIME) {
+                b.sleeping = true;
+                b.velocity = Vec2(0.0f);
+                b.angular_velocity = 0.0f;
+            }
+        } else {
+            b.sleep_timer = 0.0f;
+            b.sleeping = false;
+        }
+    }
+}
+
+// ── Broadphase ──────────────────────────────────────────────────────────────
 
 static void body_aabb(const Body2D& b, Vec2& out_min, Vec2& out_max) {
     if (b.shape == Body2D::Circle) {
@@ -167,30 +202,42 @@ static void body_aabb(const Body2D& b, Vec2& out_min, Vec2& out_max) {
 void PhysicsWorld2D::broadphase() {
     contacts_.clear();
 
-    for (size_t i = 0; i < bodies_.size(); ++i) {
-        for (size_t j = i + 1; j < bodies_.size(); ++j) {
-            auto& a = bodies_[i];
-            auto& b = bodies_[j];
+    // Build spatial hash
+    spatial_hash_.clear();
+    std::unordered_map<u32, std::pair<Vec2, Vec2>> aabb_cache;
+    for (const auto& b : bodies_) {
+        Vec2 bmin, bmax;
+        body_aabb(b, bmin, bmax);
+        aabb_cache[b.id] = {bmin, bmax};
+        spatial_hash_.insert(b.id, bmin, bmax);
+    }
 
-            // Skip static-static
-            if (a.type == Body2D::Static && b.type == Body2D::Static) continue;
+    // Query candidate pairs via spatial hash
+    std::unordered_set<u64> seen_pairs;
+    std::vector<std::pair<u32, u32>> candidates;
+    for (const auto& b : bodies_) {
+        auto& [bmin, bmax] = aabb_cache[b.id];
+        spatial_hash_.query(bmin, bmax, seen_pairs, b.id, candidates);
+    }
 
-            // Layer check
-            if (!(a.layer & b.mask) || !(b.layer & a.mask)) continue;
+    // Narrow phase on candidate pairs
+    for (const auto& [id_lo, id_hi] : candidates) {
+        Body2D* a = get_body(id_lo);
+        Body2D* b = get_body(id_hi);
+        if (!a || !b) continue;
 
-            // AABB overlap test
-            Vec2 a_min, a_max, b_min, b_max;
-            body_aabb(a, a_min, a_max);
-            body_aabb(b, b_min, b_max);
+        if (a->type == Body2D::Static && b->type == Body2D::Static) continue;
+        if (!(a->layer & b->mask) || !(b->layer & a->mask)) continue;
 
-            if (a_max.x < b_min.x || a_min.x > b_max.x ||
-                a_max.y < b_min.y || a_min.y > b_max.y) continue;
+        // AABB overlap confirmation
+        auto& [a_min, a_max] = aabb_cache[a->id];
+        auto& [b_min, b_max] = aabb_cache[b->id];
+        if (a_max.x < b_min.x || a_min.x > b_max.x ||
+            a_max.y < b_min.y || a_min.y > b_max.y) continue;
 
-            // Narrow phase
-            Contact2D contact;
-            if (narrowphase(a, b, contact)) {
-                contacts_.push_back({a.id, b.id, contact});
-            }
+        Contact2D contact;
+        if (narrowphase(*a, *b, contact)) {
+            contacts_.push_back({a->id, b->id, contact});
         }
     }
 }

@@ -2,6 +2,8 @@ add_library(nexus-physics STATIC
     src/physics_world_2d.cpp
     src/physics_world_3d.cpp
     src/physics_system.cpp
+    src/constraints.cpp
+    src/physics_debug_draw.cpp
 )
 
 target_include_directories(nexus-physics
@@ -10,7 +12,7 @@ target_include_directories(nexus-physics
 )
 
 target_link_libraries(nexus-physics
-    PUBLIC Nexus::Core Nexus::Scene
+    PUBLIC Nexus::Core Nexus::Scene Nexus::Renderer
 )
 
 nexus_set_compiler_flags(nexus-physics)

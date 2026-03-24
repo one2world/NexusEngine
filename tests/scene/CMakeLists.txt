@@ -3,6 +3,8 @@ add_executable(nexus-test-scene
     test_hierarchy.cpp
     test_scene_serializer.cpp
     test_system_scheduler.cpp
+    test_component_lifecycle.cpp
+    test_entity_active.cpp
 )
 
 target_link_libraries(nexus-test-scene

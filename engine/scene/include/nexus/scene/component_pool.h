@@ -5,8 +5,14 @@
 #include "nexus/scene/entity.h"
 
 #include <vector>
+#include <functional>
 
 namespace nexus {
+
+// ---------------------------------------------------------------------------
+// Component lifecycle callback type
+// ---------------------------------------------------------------------------
+using ComponentCallback = std::function<void(Entity)>;
 
 // ---------------------------------------------------------------------------
 // IComponentPool - type-erased interface for component storage
@@ -20,6 +26,10 @@ public:
 
     /// Return true if the pool contains a component for the given entity.
     virtual bool has(Entity e) const = 0;
+
+    /// Lifecycle callbacks (set via Registry convenience methods).
+    ComponentCallback on_added;
+    ComponentCallback on_removed;
 };
 
 // ---------------------------------------------------------------------------
@@ -32,7 +42,9 @@ public:
 
     /// Add (or replace) a component for the given entity.
     T& add(Entity e, T component) {
+        bool is_new = !set_.has(e);
         set_.add(e, std::move(component));
+        if (is_new && on_added) on_added(e);
         return set_.get(e);
     }
 
@@ -53,7 +65,10 @@ public:
 
     /// Remove the component for the given entity.
     void remove(Entity e) override {
-        set_.remove(e);
+        if (set_.has(e)) {
+            if (on_removed) on_removed(e);
+            set_.remove(e);
+        }
     }
 
     /// Number of components stored.

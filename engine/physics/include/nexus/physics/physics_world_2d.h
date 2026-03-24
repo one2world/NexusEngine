@@ -2,6 +2,7 @@
 
 #include "nexus/core/types.h"
 #include "nexus/core/math.h"
+#include "nexus/physics/spatial_hash.h"
 #include <vector>
 #include <functional>
 
@@ -78,7 +79,14 @@ struct Body2D {
     u16  layer{1};
     u16  mask{0xFFFF};
 
+    // Sleeping
+    bool  sleeping{false};
+    float sleep_timer{0.0f};
+    static constexpr float SLEEP_THRESHOLD = 0.005f;
+    static constexpr float SLEEP_TIME      = 0.5f;
+
     void compute_mass();
+    void wake() { sleeping = false; sleep_timer = 0.0f; }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -129,6 +137,7 @@ private:
     void broadphase();
     bool narrowphase(const Body2D& a, const Body2D& b, Contact2D& contact) const;
     void resolve_collision(Body2D& a, Body2D& b, const Contact2D& contact);
+    void update_sleeping(float dt);
 
     // Narrow-phase helpers
     bool circle_vs_circle(const Body2D& a, const Body2D& b, Contact2D& c) const;
@@ -140,6 +149,7 @@ private:
     std::vector<CollisionPair2D> contacts_;
     ContactCallback2D contact_callback_;
     u32 next_id_{1};
+    mutable SpatialHash2D spatial_hash_{2.0f};
 };
 
 } // namespace nexus::physics

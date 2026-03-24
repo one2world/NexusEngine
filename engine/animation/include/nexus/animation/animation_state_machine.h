@@ -64,6 +64,9 @@ public:
     /// Is currently blending between states?
     bool is_transitioning() const { return transitioning_; }
 
+    /// Set event callback for animation events.
+    void set_event_callback(AnimationEventCallback cb) { event_callback_ = std::move(cb); }
+
 private:
     AnimationState* find_state(const std::string& name);
 
@@ -83,6 +86,9 @@ private:
     // Parameters
     std::unordered_map<std::string, float> float_params_;
     std::unordered_map<std::string, bool>  bool_params_;
+
+    // Animation events
+    AnimationEventCallback event_callback_;
 };
 
 } // namespace nexus::anim

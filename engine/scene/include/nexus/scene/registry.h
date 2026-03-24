@@ -3,6 +3,7 @@
 #include "nexus/core/types.h"
 #include "nexus/scene/entity.h"
 #include "nexus/scene/component_pool.h"
+#include "nexus/scene/components.h"
 
 #include <memory>
 #include <typeindex>
@@ -74,6 +75,25 @@ public:
 
     /// Total number of alive entities.
     std::size_t size() const { return alive_.size(); }
+
+    /// Set the active state of an entity.
+    void set_active(Entity e, bool active) {
+        if (!alive(e)) return;
+        if (has_component<ActiveComponent>(e)) {
+            get_component<ActiveComponent>(e).active = active;
+        } else {
+            add_component<ActiveComponent>(e, ActiveComponent{active});
+        }
+    }
+
+    /// Check if an entity is active. Entities without ActiveComponent default to active.
+    bool is_active(Entity e) const {
+        if (!alive(e)) return false;
+        if (has_component<ActiveComponent>(e)) {
+            return get_component<ActiveComponent>(e).active;
+        }
+        return true;
+    }
 
     /// Destroy all entities (safe: copies the alive set first).
     void clear_all() {
@@ -171,6 +191,20 @@ public:
             }
         }
         return result;
+    }
+
+    // -- Lifecycle callbacks -------------------------------------------------
+
+    /// Register a callback invoked when a component of type T is added.
+    template <typename T>
+    void on_component_added(ComponentCallback callback) {
+        get_pool<T>().on_added = std::move(callback);
+    }
+
+    /// Register a callback invoked when a component of type T is removed.
+    template <typename T>
+    void on_component_removed(ComponentCallback callback) {
+        get_pool<T>().on_removed = std::move(callback);
     }
 
     // -- Each ----------------------------------------------------------------

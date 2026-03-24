@@ -59,6 +59,36 @@ void AnimationClip::add_channel(BoneChannel channel) {
     channels_.push_back(std::move(channel));
 }
 
+void AnimationClip::add_event(float time, const std::string& event_name) {
+    events_.push_back({time, event_name});
+    // Keep sorted by time
+    std::sort(events_.begin(), events_.end(),
+              [](const AnimationEvent& a, const AnimationEvent& b) {
+                  return a.time < b.time;
+              });
+}
+
+void AnimationClip::collect_events(float prev_time, float curr_time, bool looping,
+                                    std::vector<const AnimationEvent*>& out) const {
+    if (events_.empty()) return;
+
+    if (curr_time >= prev_time) {
+        // Normal forward playback (no wrap)
+        for (const auto& ev : events_) {
+            if (ev.time > prev_time && ev.time <= curr_time) {
+                out.push_back(&ev);
+            }
+        }
+    } else if (looping) {
+        // Wrapped around: fire events in [prev_time, duration) and [0, curr_time]
+        for (const auto& ev : events_) {
+            if (ev.time > prev_time || ev.time <= curr_time) {
+                out.push_back(&ev);
+            }
+        }
+    }
+}
+
 void AnimationClip::sample(float time, std::vector<BonePose>& out_poses) const {
     for (const auto& channel : channels_) {
         if (channel.bone_index >= 0 &&

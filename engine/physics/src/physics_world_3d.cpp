@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace nexus::physics {
 
@@ -92,13 +94,43 @@ void PhysicsWorld3D::step(float dt, u32 iterations) {
     integrate(dt);
     broadphase();
 
+    // Wake sleeping bodies involved in collisions
+    for (auto& pair : contacts_) {
+        Body3D* a = get_body(pair.body_a);
+        Body3D* b = get_body(pair.body_b);
+        if (a && b) {
+            if (a->sleeping && b->type == Body3D::Dynamic && !b->sleeping) a->wake();
+            if (b->sleeping && a->type == Body3D::Dynamic && !a->sleeping) b->wake();
+        }
+    }
+
+    // Prepare joints
+    for (auto& joint : joints_) {
+        if (!joint->enabled) continue;
+        joint->body_a = get_body(joint->body_a_id);
+        joint->body_b = get_body(joint->body_b_id);
+        if (joint->body_a && joint->body_b) {
+            joint->body_a->wake();
+            joint->body_b->wake();
+            joint->prepare(dt);
+        }
+    }
+
     for (u32 iter = 0; iter < iterations; ++iter) {
         for (auto& pair : contacts_) {
             Body3D* a = get_body(pair.body_a);
             Body3D* b = get_body(pair.body_b);
             if (a && b) resolve_collision(*a, *b, pair.contact);
         }
+        // Solve joints each iteration
+        for (auto& joint : joints_) {
+            if (joint->enabled && joint->body_a && joint->body_b) {
+                joint->solve();
+            }
+        }
     }
+
+    update_sleeping(dt);
 
     if (contact_callback_) {
         for (const auto& pair : contacts_) {
@@ -107,18 +139,33 @@ void PhysicsWorld3D::step(float dt, u32 iterations) {
     }
 }
 
+void PhysicsWorld3D::destroy_joint(u32 joint_id) {
+    joints_.erase(
+        std::remove_if(joints_.begin(), joints_.end(),
+            [joint_id](const std::unique_ptr<Constraint>& j) { return j->id == joint_id; }),
+        joints_.end());
+}
+
+Constraint* PhysicsWorld3D::get_joint(u32 joint_id) {
+    for (auto& j : joints_) {
+        if (j->id == joint_id) return j.get();
+    }
+    return nullptr;
+}
+
 void PhysicsWorld3D::apply_force(u32 id, Vec3 force) {
-    if (auto* b = get_body(id)) b->force += force;
+    if (auto* b = get_body(id)) { b->wake(); b->force += force; }
 }
 
 void PhysicsWorld3D::apply_impulse(u32 id, Vec3 impulse) {
     if (auto* b = get_body(id)) {
+        b->wake();
         b->velocity += impulse * b->inv_mass;
     }
 }
 
 void PhysicsWorld3D::apply_torque(u32 id, Vec3 torque) {
-    if (auto* b = get_body(id)) b->torque_accum += torque;
+    if (auto* b = get_body(id)) { b->wake(); b->torque_accum += torque; }
 }
 
 // ── Integration ─────────────────────────────────────────────────────────────
@@ -126,6 +173,7 @@ void PhysicsWorld3D::apply_torque(u32 id, Vec3 torque) {
 void PhysicsWorld3D::integrate(float dt) {
     for (auto& b : bodies_) {
         if (b.type == Body3D::Static) continue;
+        if (b.sleeping) continue;
 
         if (b.type == Body3D::Dynamic) {
             Vec3 accel = gravity_ * b.gravity_scale + b.force * b.inv_mass;
@@ -159,6 +207,25 @@ void PhysicsWorld3D::integrate(float dt) {
     }
 }
 
+void PhysicsWorld3D::update_sleeping(float dt) {
+    for (auto& b : bodies_) {
+        if (b.type == Body3D::Static) continue;
+        float energy = glm::dot(b.velocity, b.velocity)
+                     + glm::dot(b.angular_velocity, b.angular_velocity);
+        if (energy < Body3D::SLEEP_THRESHOLD) {
+            b.sleep_timer += dt;
+            if (b.sleep_timer >= Body3D::SLEEP_TIME) {
+                b.sleeping = true;
+                b.velocity = Vec3(0.0f);
+                b.angular_velocity = Vec3(0.0f);
+            }
+        } else {
+            b.sleep_timer = 0.0f;
+            b.sleeping = false;
+        }
+    }
+}
+
 // ── Broadphase ──────────────────────────────────────────────────────────────
 
 static AABB body3d_aabb(const Body3D& b) {
@@ -185,22 +252,37 @@ static AABB body3d_aabb(const Body3D& b) {
 void PhysicsWorld3D::broadphase() {
     contacts_.clear();
 
-    for (size_t i = 0; i < bodies_.size(); ++i) {
-        for (size_t j = i + 1; j < bodies_.size(); ++j) {
-            auto& a = bodies_[i];
-            auto& b = bodies_[j];
+    // Build spatial hash
+    spatial_hash_.clear();
+    std::unordered_map<u32, AABB> aabb_cache;
+    for (const auto& b : bodies_) {
+        AABB aabb = body3d_aabb(b);
+        aabb_cache[b.id] = aabb;
+        spatial_hash_.insert(b.id, aabb);
+    }
 
-            if (a.type == Body3D::Static && b.type == Body3D::Static) continue;
-            if (!(a.layer & b.mask) || !(b.layer & a.mask)) continue;
+    // Query candidate pairs via spatial hash
+    std::unordered_set<u64> seen_pairs;
+    std::vector<std::pair<u32, u32>> candidates;
+    for (const auto& b : bodies_) {
+        spatial_hash_.query(aabb_cache[b.id], seen_pairs, b.id, candidates);
+    }
 
-            AABB aa = body3d_aabb(a);
-            AABB ab = body3d_aabb(b);
-            if (!aa.overlaps(ab)) continue;
+    // Narrow phase on candidate pairs
+    for (const auto& [id_lo, id_hi] : candidates) {
+        Body3D* a = get_body(id_lo);
+        Body3D* b = get_body(id_hi);
+        if (!a || !b) continue;
 
-            Contact3D contact;
-            if (narrowphase(a, b, contact)) {
-                contacts_.push_back({a.id, b.id, contact});
-            }
+        if (a->type == Body3D::Static && b->type == Body3D::Static) continue;
+        if (!(a->layer & b->mask) || !(b->layer & a->mask)) continue;
+
+        // AABB overlap confirmation
+        if (!aabb_cache[a->id].overlaps(aabb_cache[b->id])) continue;
+
+        Contact3D contact;
+        if (narrowphase(*a, *b, contact)) {
+            contacts_.push_back({a->id, b->id, contact});
         }
     }
 }

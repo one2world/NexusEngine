@@ -2,8 +2,11 @@
 
 #include "nexus/core/types.h"
 #include "nexus/core/math.h"
+#include "nexus/physics/spatial_hash.h"
+#include "nexus/physics/constraints.h"
 #include <vector>
 #include <functional>
+#include <memory>
 
 namespace nexus::physics {
 
@@ -74,7 +77,14 @@ struct Body3D {
     u16   layer{1};
     u16   mask{0xFFFF};
 
+    // Sleeping
+    bool  sleeping{false};
+    float sleep_timer{0.0f};
+    static constexpr float SLEEP_THRESHOLD = 0.01f;   // velocity² below this → sleepy
+    static constexpr float SLEEP_TIME      = 0.5f;    // seconds of low-velocity before sleep
+
     void compute_mass();
+    void wake() { sleeping = false; sleep_timer = 0.0f; }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -109,6 +119,21 @@ public:
     std::vector<u32> overlap_aabb(Vec3 min, Vec3 max,
                                    u16 layer_mask = 0xFFFF) const;
 
+    // Joints / Constraints
+    template <typename T, typename... Args>
+    u32 create_joint(u32 body_a_id, u32 body_b_id, Args&&... args) {
+        auto joint = std::make_unique<T>(std::forward<Args>(args)...);
+        joint->body_a_id = body_a_id;
+        joint->body_b_id = body_b_id;
+        joint->id = next_joint_id_++;
+        u32 jid = joint->id;
+        joints_.push_back(std::move(joint));
+        return jid;
+    }
+    void destroy_joint(u32 joint_id);
+    Constraint* get_joint(u32 joint_id);
+    const std::vector<std::unique_ptr<Constraint>>& joints() const { return joints_; }
+
     // Callbacks
     void set_contact_callback(ContactCallback3D cb) { contact_callback_ = std::move(cb); }
 
@@ -124,6 +149,7 @@ private:
     void broadphase();
     bool narrowphase(const Body3D& a, const Body3D& b, Contact3D& contact) const;
     void resolve_collision(Body3D& a, Body3D& b, const Contact3D& contact);
+    void update_sleeping(float dt);
 
     bool sphere_vs_sphere(const Body3D& a, const Body3D& b, Contact3D& c) const;
     bool box_vs_box(const Body3D& a, const Body3D& b, Contact3D& c) const;
@@ -137,6 +163,9 @@ private:
     std::vector<CollisionPair3D> contacts_;
     ContactCallback3D contact_callback_;
     u32 next_id_{1};
+    mutable SpatialHash3D spatial_hash_{2.0f};
+    std::vector<std::unique_ptr<Constraint>> joints_;
+    u32 next_joint_id_{1};
 };
 
 } // namespace nexus::physics

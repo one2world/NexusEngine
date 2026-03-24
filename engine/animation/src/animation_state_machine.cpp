@@ -47,12 +47,22 @@ void AnimationStateMachine::update(float dt, const Skeleton& skeleton,
     }
 
     // Advance current time
+    float prev_time = current_time_;
     current_time_ += dt * current->speed;
     if (current->clip->duration() > 0.0f) {
         if (current->looping) {
             current_time_ = std::fmod(current_time_, current->clip->duration());
         } else {
             current_time_ = std::min(current_time_, current->clip->duration());
+        }
+    }
+
+    // Fire animation events
+    if (event_callback_ && current->clip) {
+        std::vector<const AnimationEvent*> fired;
+        current->clip->collect_events(prev_time, current_time_, current->looping, fired);
+        for (const auto* ev : fired) {
+            event_callback_(ev->name);
         }
     }
 

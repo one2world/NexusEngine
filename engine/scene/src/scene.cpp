@@ -7,12 +7,14 @@ namespace nexus {
 
 Entity Scene::create_entity(const std::string& name) {
     Entity e = registry_.create();
+    registry_.add_component<ActiveComponent>(e, ActiveComponent{true});
     registry_.add_component<TagComponent>(e, TagComponent{name});
     return e;
 }
 
 Entity Scene::create_entity_2d(const std::string& name) {
     Entity e = registry_.create();
+    registry_.add_component<ActiveComponent>(e, ActiveComponent{true});
     registry_.add_component<TagComponent>(e, TagComponent{name});
     registry_.add_component<Transform2DComponent>(e, Transform2DComponent{});
     return e;
@@ -20,6 +22,7 @@ Entity Scene::create_entity_2d(const std::string& name) {
 
 Entity Scene::create_entity_3d(const std::string& name) {
     Entity e = registry_.create();
+    registry_.add_component<ActiveComponent>(e, ActiveComponent{true});
     registry_.add_component<TagComponent>(e, TagComponent{name});
     registry_.add_component<Transform3DComponent>(e, Transform3DComponent{});
     return e;

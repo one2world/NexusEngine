@@ -58,6 +58,17 @@ uniform vec3 u_PointLight_Color[MAX_POINT_LIGHTS];
 uniform float u_PointLight_Intensity[MAX_POINT_LIGHTS];
 uniform float u_PointLight_Radius[MAX_POINT_LIGHTS];
 
+// Spot lights
+#define MAX_SPOT_LIGHTS 4
+uniform int u_NumSpotLights;
+uniform vec3 u_SpotLight_Position[MAX_SPOT_LIGHTS];
+uniform vec3 u_SpotLight_Direction[MAX_SPOT_LIGHTS];
+uniform vec3 u_SpotLight_Color[MAX_SPOT_LIGHTS];
+uniform float u_SpotLight_Intensity[MAX_SPOT_LIGHTS];
+uniform float u_SpotLight_Range[MAX_SPOT_LIGHTS];
+uniform float u_SpotLight_InnerCos[MAX_SPOT_LIGHTS];
+uniform float u_SpotLight_OuterCos[MAX_SPOT_LIGHTS];
+
 vec3 calcDirectionalLight(vec3 normal, vec3 viewDir) {
     vec3 lightDir = normalize(-u_DirLight_Direction);
 
@@ -97,6 +108,33 @@ vec3 calcPointLight(int i, vec3 normal, vec3 fragPos, vec3 viewDir) {
     return (diffuse + specular) * attenuation * u_PointLight_Intensity[i];
 }
 
+vec3 calcSpotLight(int i, vec3 normal, vec3 fragPos, vec3 viewDir) {
+    vec3 lightDir = u_SpotLight_Position[i] - fragPos;
+    float distance = length(lightDir);
+    lightDir = normalize(lightDir);
+
+    // Attenuation
+    float attenuation = 1.0 / (1.0 + (distance / u_SpotLight_Range[i]) *
+                                       (distance / u_SpotLight_Range[i]));
+
+    // Spotlight cone
+    float theta = dot(lightDir, normalize(-u_SpotLight_Direction[i]));
+    float epsilon = u_SpotLight_InnerCos[i] - u_SpotLight_OuterCos[i];
+    float spotIntensity = clamp((theta - u_SpotLight_OuterCos[i]) / max(epsilon, 0.001), 0.0, 1.0);
+
+    // Diffuse
+    float diff = max(dot(normal, lightDir), 0.0);
+
+    // Specular
+    vec3 halfwayDir = normalize(lightDir + viewDir);
+    float spec = pow(max(dot(normal, halfwayDir), 0.0), 32.0);
+
+    vec3 diffuse  = diff * u_SpotLight_Color[i];
+    vec3 specular = spec * 0.5 * u_SpotLight_Color[i];
+
+    return (diffuse + specular) * attenuation * spotIntensity * u_SpotLight_Intensity[i];
+}
+
 void main() {
     vec3 normal = normalize(v_Normal);
     vec3 viewDir = normalize(u_CameraPos - v_FragPos);
@@ -105,6 +143,10 @@ void main() {
 
     for (int i = 0; i < u_NumPointLights; ++i) {
         result += calcPointLight(i, normal, v_FragPos, viewDir);
+    }
+
+    for (int i = 0; i < u_NumSpotLights; ++i) {
+        result += calcSpotLight(i, normal, v_FragPos, viewDir);
     }
 
     vec4 texColor = texture(u_Texture, v_TexCoord);
@@ -209,6 +251,7 @@ void ForwardRenderer3D::begin_frame(const Camera3D& camera) {
     view_projection_ = camera.get_view_projection();
     camera_position_ = camera.position;
     point_lights_.clear();
+    spot_lights_.clear();
     in_frame_ = true;
 
     extract_frustum_planes();
@@ -249,6 +292,22 @@ void ForwardRenderer3D::add_point_light(const PointLight& light) {
 
     rhi_->set_uniform_int(shader_, "u_NumPointLights",
                           static_cast<i32>(point_lights_.size()));
+}
+
+void ForwardRenderer3D::add_spot_light(const SpotLight& light) {
+    if (spot_lights_.size() >= MAX_SPOT_LIGHTS) return;
+    u32 idx = static_cast<u32>(spot_lights_.size());
+    spot_lights_.push_back(light);
+
+    std::string si = std::to_string(idx);
+    rhi_->set_uniform_vec3(shader_, "u_SpotLight_Position[" + si + "]", light.position);
+    rhi_->set_uniform_vec3(shader_, "u_SpotLight_Direction[" + si + "]", light.direction);
+    rhi_->set_uniform_vec3(shader_, "u_SpotLight_Color[" + si + "]", light.color);
+    rhi_->set_uniform_float(shader_, "u_SpotLight_Intensity[" + si + "]", light.intensity);
+    rhi_->set_uniform_float(shader_, "u_SpotLight_Range[" + si + "]", light.range);
+    rhi_->set_uniform_float(shader_, "u_SpotLight_InnerCos[" + si + "]", light.inner_cos);
+    rhi_->set_uniform_float(shader_, "u_SpotLight_OuterCos[" + si + "]", light.outer_cos);
+    rhi_->set_uniform_int(shader_, "u_NumSpotLights", static_cast<i32>(spot_lights_.size()));
 }
 
 // ── Mesh management ─────────────────────────────────────────────────────────

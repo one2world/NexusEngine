@@ -4,6 +4,7 @@ add_executable(nexus-test-core
     test_memory.cpp
     test_string_id.cpp
     test_job_system.cpp
+    test_resource_manager.cpp
 )
 
 target_link_libraries(nexus-test-core

@@ -4,6 +4,7 @@ add_executable(nexus-test-animation
     test_skeleton.cpp
     test_particle_system.cpp
     test_animation_events.cpp
+    test_ik_solver.cpp
 )
 
 target_link_libraries(nexus-test-animation

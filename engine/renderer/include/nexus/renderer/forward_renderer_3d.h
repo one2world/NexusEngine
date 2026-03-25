@@ -52,6 +52,16 @@ struct PointLight {
     float radius{10.0f};
 };
 
+struct SpotLight {
+    Vec3  position{0.0f};
+    Vec3  direction{0.0f, -1.0f, 0.0f};
+    Vec3  color{1.0f};
+    float intensity{1.0f};
+    float range{20.0f};
+    float inner_cos{0.0f};  // cos(inner_angle)
+    float outer_cos{0.0f};  // cos(outer_angle)
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ForwardRenderer3D – multi-light forward rendering
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,6 +69,7 @@ struct PointLight {
 class ForwardRenderer3D {
 public:
     static constexpr u32 MAX_POINT_LIGHTS = 8;
+    static constexpr u32 MAX_SPOT_LIGHTS  = 4;
 
     ForwardRenderer3D() = default;
     ~ForwardRenderer3D() { shutdown(); }
@@ -81,6 +92,7 @@ public:
 
     void set_directional_light(const DirectionalLight& light);
     void add_point_light(const PointLight& light);
+    void add_spot_light(const SpotLight& light);
 
     void upload_mesh(Mesh& mesh);
     void destroy_mesh(Mesh& mesh);
@@ -98,6 +110,7 @@ private:
 
     DirectionalLight dir_light_;
     std::vector<PointLight> point_lights_;
+    std::vector<SpotLight>  spot_lights_;
 
     Mat4 view_projection_{1.0f};
     Vec3 camera_position_{0.0f};

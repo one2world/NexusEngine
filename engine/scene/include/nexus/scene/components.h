@@ -4,6 +4,7 @@
 #include "nexus/core/math.h"
 
 #include <string>
+#include <vector>
 
 namespace nexus {
 
@@ -193,6 +194,43 @@ struct AudioSourceComponent {
 // ---------------------------------------------------------------------------
 struct AudioListenerComponent {
     bool active{true};
+};
+
+// ---------------------------------------------------------------------------
+// SpotLightComponent
+// ---------------------------------------------------------------------------
+struct SpotLightComponent {
+    Vec3  color{1.0f, 1.0f, 1.0f};
+    float intensity{1.0f};
+    float range{20.0f};
+    float inner_angle{12.5f};    // degrees (full-bright cone)
+    float outer_angle{17.5f};    // degrees (fade-out cone)
+};
+
+// ---------------------------------------------------------------------------
+// TilemapComponent - 2D grid of tile indices for efficient tile rendering
+// ---------------------------------------------------------------------------
+struct TilemapComponent {
+    u32 width{0};
+    u32 height{0};
+    float tile_size{1.0f};
+    u32 texture_id{0};
+    u32 tiles_per_row{16};        // tiles in texture atlas row
+    u32 tiles_per_col{16};
+    std::vector<i32> tiles;       // -1 = empty, otherwise tile index
+
+    i32 get_tile(u32 x, u32 y) const {
+        if (x >= width || y >= height) return -1;
+        return tiles[y * width + x];
+    }
+    void set_tile(u32 x, u32 y, i32 tile_id) {
+        if (x < width && y < height)
+            tiles[y * width + x] = tile_id;
+    }
+    void resize(u32 w, u32 h, i32 fill = -1) {
+        width = w; height = h;
+        tiles.assign(static_cast<size_t>(w) * h, fill);
+    }
 };
 
 } // namespace nexus

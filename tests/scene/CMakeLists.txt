@@ -5,6 +5,8 @@ add_executable(nexus-test-scene
     test_system_scheduler.cpp
     test_component_lifecycle.cpp
     test_entity_active.cpp
+    test_scene_manager.cpp
+    test_prefab.cpp
 )
 
 target_link_libraries(nexus-test-scene

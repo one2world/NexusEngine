@@ -16,6 +16,7 @@ target_link_libraries(nexus-runtime
         Nexus::Animation
         Nexus::UI
         Nexus::Scripting
+        Nexus::Perf
         Nexus::Assets
         Nexus::Network
 )

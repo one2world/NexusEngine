@@ -3,6 +3,7 @@
 #include "nexus/core/types.h"
 #include "nexus/core/math.h"
 #include "nexus/audio/audio_buffer.h"
+#include "nexus/audio/audio_effects.h"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -43,9 +44,10 @@ struct Voice {
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct AudioBus {
-    std::string name;
-    float       volume{1.0f};
-    bool        muted{false};
+    std::string       name;
+    float             volume{1.0f};
+    bool              muted{false};
+    AudioEffectChain  effects;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

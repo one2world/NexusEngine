@@ -4,6 +4,7 @@ add_library(nexus-core STATIC
     src/event_bus.cpp
     src/vfs.cpp
     src/job_system.cpp
+    src/application.cpp
 )
 
 target_include_directories(nexus-core

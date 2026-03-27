@@ -185,6 +185,19 @@ static json serialize_entity(const Registry& reg, Entity e) {
         };
     }
 
+    if (reg.has_component<TilemapComponent>(e)) {
+        auto& tm = reg.get_component<TilemapComponent>(e);
+        entity_json["tilemap"] = {
+            {"width", tm.width},
+            {"height", tm.height},
+            {"tile_size", tm.tile_size},
+            {"texture_id", tm.texture_id},
+            {"tiles_per_row", tm.tiles_per_row},
+            {"tiles_per_col", tm.tiles_per_col},
+            {"tiles", tm.tiles}
+        };
+    }
+
     if (reg.has_component<HierarchyComponent>(e)) {
         auto& h = reg.get_component<HierarchyComponent>(e);
         if (h.parent != INVALID_ENTITY) {
@@ -344,6 +357,19 @@ static Entity deserialize_entity(Registry& reg, const json& j,
         comp.play_on_start = a["play_on_start"].get<bool>();
         comp.bus = a["bus"].get<u32>();
         reg.add_component<AudioSourceComponent>(e, comp);
+    }
+
+    if (j.contains("tilemap")) {
+        auto& tm = j["tilemap"];
+        TilemapComponent comp;
+        comp.width = tm["width"].get<u32>();
+        comp.height = tm["height"].get<u32>();
+        comp.tile_size = tm["tile_size"].get<float>();
+        comp.texture_id = tm["texture_id"].get<u32>();
+        comp.tiles_per_row = tm["tiles_per_row"].get<u32>();
+        comp.tiles_per_col = tm["tiles_per_col"].get<u32>();
+        comp.tiles = tm["tiles"].get<std::vector<i32>>();
+        reg.add_component<TilemapComponent>(e, std::move(comp));
     }
 
     if (j.contains("audio_listener")) {

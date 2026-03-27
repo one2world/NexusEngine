@@ -20,6 +20,10 @@
 #include "nexus/audio/audio_engine.h"
 #include "nexus/scripting/script_engine.h"
 #include "nexus/scripting/engine_bindings.h"
+#include "nexus/ui/ui_system.h"
+#include "nexus/ui/bitmap_font.h"
+#include "nexus/perf/profiler.h"
+#include "nexus/perf/lod_system.h"
 
 #include <cmath>
 #include <string>
@@ -139,6 +143,36 @@ int main(int argc, char* argv[]) {
         nexus::scripting::bind_all(script_engine, registry, input_handle, audio, physics);
         NX_APP_INFO("Scripting engine initialized with live bindings");
 
+        // ── UI system ──────────────────────────────────────────────────
+        nexus::ui::UISystem ui_system;
+        ui_system.set_screen_size(static_cast<float>(cfg.window.width),
+                                  static_cast<float>(cfg.window.height));
+        nexus::ui::BitmapFont ui_font;
+        ui_font.load_builtin(16.0f);
+
+        // Upload font atlas as a single-channel (R8) texture
+        nexus::rhi::TextureHandle font_atlas_tex = nexus::rhi::INVALID_HANDLE;
+        if (ui_font.is_valid()) {
+            nexus::rhi::TextureDesc font_desc;
+            font_desc.width  = ui_font.atlas_width();
+            font_desc.height = ui_font.atlas_height();
+            font_desc.format = nexus::rhi::TextureFormat::R8;
+            font_desc.min_filter = nexus::rhi::TextureFilter::Nearest;
+            font_desc.mag_filter = nexus::rhi::TextureFilter::Nearest;
+            font_desc.generate_mipmaps = false;
+            font_desc.data = ui_font.atlas_data();
+            font_atlas_tex = rhi->create_texture(font_desc);
+            ui_system.set_font(&ui_font);
+            ui_system.set_font_atlas_texture(font_atlas_tex);
+            NX_APP_INFO("UI font atlas uploaded ({}x{})", ui_font.atlas_width(), ui_font.atlas_height());
+        }
+
+        // ── Profiler ───────────────────────────────────────────────────
+        nexus::Profiler profiler;
+
+        // ── LOD Evaluator ──────────────────────────────────────────────
+        nexus::LODEvaluator lod_evaluator;
+
         // ── Load scene if provided ──────────────────────────────────────
         if (!cfg.scene_path.empty()) {
             NX_APP_INFO("Loading scene: {}", cfg.scene_path);
@@ -160,6 +194,7 @@ int main(int argc, char* argv[]) {
             timer.tick();
 
             float dt = timer.delta_time();
+            profiler.begin_frame();
 
             // ── Scene update (transform propagation + system scheduler) ──
             scene.update(dt);
@@ -264,24 +299,57 @@ int main(int argc, char* argv[]) {
             if (has_2d_camera) {
                 renderer_2d.begin(cam_2d);
 
+                // Draw sprites with frustum culling
                 registry.each<nexus::SpriteRendererComponent, nexus::Transform2DComponent>(
                     [&](nexus::Entity, nexus::SpriteRendererComponent& sr,
                         nexus::Transform2DComponent& t) {
+                        nexus::Vec2 half_size = t.world_scale * 0.5f;
+                        if (!renderer_2d.is_visible_2d(t.world_position, half_size))
+                            return;
                         renderer_2d.draw_quad(
                             t.world_position, t.world_scale,
                             t.world_rotation, sr.color);
                     });
 
+                // Draw tilemaps
+                registry.each<nexus::TilemapComponent, nexus::Transform2DComponent>(
+                    [&](nexus::Entity, nexus::TilemapComponent& tm,
+                        nexus::Transform2DComponent& t) {
+                        if (tm.tiles.empty()) return;
+                        renderer_2d.draw_tilemap(
+                            tm.tiles.data(), tm.width, tm.height,
+                            tm.tile_size, t.world_position,
+                            nexus::rhi::INVALID_HANDLE, // atlas texture placeholder
+                            tm.tiles_per_row, tm.tiles_per_col);
+                    });
+
+                renderer_2d.end();
+            }
+
+            // ── UI rendering pass ──────────────────────────────────────
+            {
+                ui_system.set_screen_size(static_cast<float>(window.width()),
+                                          static_cast<float>(window.height()));
+                ui_system.update();
+                nexus::Camera2D ui_cam;
+                ui_cam.set_projection(static_cast<float>(window.width()),
+                                      static_cast<float>(window.height()));
+                renderer_2d.begin(ui_cam);
+                ui_system.render(renderer_2d);
                 renderer_2d.end();
             }
 
             rhi->end_frame();
+            profiler.end_frame();
             window.swap_buffers();
 
             if (nexus::Input::key_pressed(nexus::Key::Escape)) break;
         }
 
         // ── Shutdown (reverse init order) ───────────────────────────────
+        if (font_atlas_tex != nexus::rhi::INVALID_HANDLE) {
+            rhi->destroy_texture(font_atlas_tex);
+        }
         audio.stop_all();
         for (auto& [id, mesh] : mesh_cache) {
             renderer_3d.destroy_mesh(mesh);

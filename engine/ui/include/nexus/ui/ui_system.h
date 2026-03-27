@@ -2,6 +2,7 @@
 
 #include "nexus/ui/ui_core.h"
 #include "nexus/ui/widgets.h"
+#include "nexus/ui/bitmap_font.h"
 #include <vector>
 #include <memory>
 
@@ -88,6 +89,10 @@ public:
     /// Hit test — find the deepest widget at a screen position.
     Widget* hit_test(Vec2 pos) const;
 
+    /// Set the bitmap font for text rendering.
+    void set_font(BitmapFont* font) { font_ = font; }
+    void set_font_atlas_texture(TextureHandle tex) { font_atlas_ = tex; }
+
     /// Render all collected draw commands via BatchRenderer2D.
     void render(BatchRenderer2D& renderer) const;
 
@@ -103,6 +108,9 @@ private:
     Vec2 mouse_pos_{0.0f};
     Widget* hovered_widget_{nullptr};
     Widget* pressed_widget_{nullptr};
+
+    BitmapFont* font_{nullptr};
+    TextureHandle font_atlas_{UI_INVALID_HANDLE};
 };
 
 } // namespace nexus::ui

@@ -199,6 +199,28 @@ void BatchRenderer2D::begin(const Camera2D& camera) {
     if (!rhi_ || shader_ == rhi::INVALID_HANDLE) return;
     rhi_->bind_shader(shader_);
     rhi_->set_uniform_mat4(shader_, "u_ViewProjection", camera.get_view_projection());
+
+    // Extract camera bounds for 2D frustum culling
+    Mat4 inv_vp = glm::inverse(camera.get_view_projection());
+    Vec4 corners[4] = {
+        inv_vp * Vec4{-1.0f, -1.0f, 0.0f, 1.0f},
+        inv_vp * Vec4{ 1.0f, -1.0f, 0.0f, 1.0f},
+        inv_vp * Vec4{ 1.0f,  1.0f, 0.0f, 1.0f},
+        inv_vp * Vec4{-1.0f,  1.0f, 0.0f, 1.0f},
+    };
+    camera_min_ = Vec2(corners[0].x / corners[0].w, corners[0].y / corners[0].w);
+    camera_max_ = camera_min_;
+    for (int i = 1; i < 4; ++i) {
+        Vec2 p(corners[i].x / corners[i].w, corners[i].y / corners[i].w);
+        camera_min_ = glm::min(camera_min_, p);
+        camera_max_ = glm::max(camera_max_, p);
+    }
+    // Add a small margin for objects partially on-screen
+    Vec2 margin = (camera_max_ - camera_min_) * 0.05f;
+    camera_min_ -= margin;
+    camera_max_ += margin;
+    culling_enabled_ = true;
+
     start_batch();
 }
 
@@ -423,6 +445,101 @@ void BatchRenderer2D::draw_rect(Vec2 position, Vec2 size, Vec4 color, float thic
     draw_line(tr, br, color, thickness);
     draw_line(br, bl, color, thickness);
     draw_line(bl, tl, color, thickness);
+}
+
+// ── 2D frustum culling ──────────────────────────────────────────────────────
+
+bool BatchRenderer2D::is_visible_2d(Vec2 center, Vec2 half_size) const {
+    if (!culling_enabled_) return true;
+    // AABB vs AABB test
+    if (center.x + half_size.x < camera_min_.x) return false;
+    if (center.x - half_size.x > camera_max_.x) return false;
+    if (center.y + half_size.y < camera_min_.y) return false;
+    if (center.y - half_size.y > camera_max_.y) return false;
+    return true;
+}
+
+// ── Tilemap drawing ─────────────────────────────────────────────────────────
+
+void BatchRenderer2D::draw_tilemap(const i32* tile_data, u32 map_width, u32 map_height,
+                                    float tile_size, Vec2 origin,
+                                    rhi::TextureHandle atlas_texture,
+                                    u32 tiles_per_row, u32 tiles_per_col,
+                                    Vec4 tint) {
+    if (!tile_data || tiles_per_row == 0 || tiles_per_col == 0) return;
+
+    float inv_row = 1.0f / static_cast<float>(tiles_per_row);
+    float inv_col = 1.0f / static_cast<float>(tiles_per_col);
+
+    for (u32 y = 0; y < map_height; ++y) {
+        for (u32 x = 0; x < map_width; ++x) {
+            i32 tile_id = tile_data[y * map_width + x];
+            if (tile_id < 0) continue; // empty tile
+
+            Vec2 tile_center = origin + Vec2{
+                (static_cast<float>(x) + 0.5f) * tile_size,
+                (static_cast<float>(y) + 0.5f) * tile_size
+            };
+            Vec2 half = Vec2(tile_size * 0.5f);
+
+            // Frustum cull individual tiles
+            if (!is_visible_2d(tile_center, half)) continue;
+
+            // Compute UV from tile atlas
+            u32 tx = static_cast<u32>(tile_id) % tiles_per_row;
+            u32 ty = static_cast<u32>(tile_id) / tiles_per_row;
+            Vec2 uv_min{static_cast<float>(tx) * inv_row, static_cast<float>(ty) * inv_col};
+            Vec2 uv_max{static_cast<float>(tx + 1) * inv_row, static_cast<float>(ty + 1) * inv_col};
+
+            draw_quad(tile_center, Vec2(tile_size), 0.0f, atlas_texture, tint, uv_min, uv_max);
+        }
+    }
+}
+
+// ── Glyph drawing ───────────────────────────────────────────────────────────
+
+void BatchRenderer2D::draw_glyph(Vec2 position, Vec2 size,
+                                  rhi::TextureHandle atlas_texture,
+                                  Vec2 uv_min, Vec2 uv_max,
+                                  Vec4 color) {
+    if (vertex_count_ + 4 > MAX_VERTICES) {
+        flush();
+        start_batch();
+    }
+
+    float tex_index = find_or_add_texture(atlas_texture);
+
+    // Glyph quads are axis-aligned, no rotation
+    float x0 = position.x;
+    float y0 = position.y;
+    float x1 = position.x + size.x;
+    float y1 = position.y + size.y;
+
+    vertices_[vertex_count_].position  = Vec3(x0, y0, 0.0f);
+    vertices_[vertex_count_].color     = color;
+    vertices_[vertex_count_].texcoord  = Vec2(uv_min.x, uv_min.y);
+    vertices_[vertex_count_].tex_index = tex_index;
+    vertex_count_++;
+
+    vertices_[vertex_count_].position  = Vec3(x1, y0, 0.0f);
+    vertices_[vertex_count_].color     = color;
+    vertices_[vertex_count_].texcoord  = Vec2(uv_max.x, uv_min.y);
+    vertices_[vertex_count_].tex_index = tex_index;
+    vertex_count_++;
+
+    vertices_[vertex_count_].position  = Vec3(x1, y1, 0.0f);
+    vertices_[vertex_count_].color     = color;
+    vertices_[vertex_count_].texcoord  = Vec2(uv_max.x, uv_max.y);
+    vertices_[vertex_count_].tex_index = tex_index;
+    vertex_count_++;
+
+    vertices_[vertex_count_].position  = Vec3(x0, y1, 0.0f);
+    vertices_[vertex_count_].color     = color;
+    vertices_[vertex_count_].texcoord  = Vec2(uv_min.x, uv_max.y);
+    vertices_[vertex_count_].tex_index = tex_index;
+    vertex_count_++;
+
+    stats_.quad_count++;
 }
 
 } // namespace nexus

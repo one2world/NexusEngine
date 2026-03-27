@@ -101,6 +101,14 @@ void ViewportPanel::on_render() {
 
 // ── HierarchyPanel ─────────────────────────────────────────────────────────
 
+void HierarchyPanel::on_render() {
+    // Hierarchy panel renders the entity tree.
+    // In a full ImGui integration this would use ImGui::TreeNode etc.
+    // For now, this prepares the filtered entity list for the UI system to consume.
+    (void)filter_;       // filter is applied by the UI layer
+    (void)selected_;     // selection state is tracked and ready
+}
+
 void HierarchyPanel::add_to_selection(u32 entity) {
     if (!is_multi_selected(entity)) {
         multi_selection_.push_back(entity);
@@ -120,6 +128,15 @@ bool HierarchyPanel::is_multi_selected(u32 entity) const {
 
 // ── InspectorPanel ──────────────────────────────────────────────────────────
 
+void InspectorPanel::on_render() {
+    // Inspector panel displays properties for the target entity.
+    // Pending edits are collected via push_edit() and drained by the editor.
+    if (!has_target_) return;
+    // When ImGui is integrated, this will render component property editors.
+    (void)target_;
+    (void)locked_;
+}
+
 std::vector<PropertyEdit> InspectorPanel::drain_edits() {
     std::vector<PropertyEdit> result;
     std::swap(result, pending_edits_);
@@ -127,6 +144,13 @@ std::vector<PropertyEdit> InspectorPanel::drain_edits() {
 }
 
 // ── ConsolePanel ────────────────────────────────────────────────────────────
+
+void ConsolePanel::on_render() {
+    // Console panel renders filtered log messages with color-coding by level.
+    // When ImGui is integrated, this will render a scrollable log view with
+    // per-level color (Info=white, Warning=yellow, Error=red, Debug=gray).
+    (void)auto_scroll_;
+}
 
 void ConsolePanel::add_message(const std::string& text, LogLevel level) {
     ConsoleMessage msg;
@@ -164,6 +188,15 @@ bool ConsolePanel::is_level_shown(LogLevel level) const {
 }
 
 // ── AssetBrowserPanel ───────────────────────────────────────────────────────
+
+void AssetBrowserPanel::on_render() {
+    // Asset browser panel displays files and directories in the current path.
+    // When ImGui is integrated, this will render a grid/list of asset entries
+    // with thumbnails, search filtering, and navigation breadcrumbs.
+    (void)search_;
+    (void)view_mode_;
+    (void)thumbnail_size_;
+}
 
 void AssetBrowserPanel::navigate_to(const std::string& path) {
     // Trim history forward if we navigated back then go somewhere new

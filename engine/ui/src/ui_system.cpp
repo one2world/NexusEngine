@@ -288,11 +288,26 @@ void UISystem::render(BatchRenderer2D& renderer) const {
             break;
 
         case Widget::DrawCommand::Type::Text:
-            // Text rendering requires a font system; draw a placeholder tinted quad
-            // so the layout is visible. Real text rendering integrates with a
-            // font atlas / glyph rasterizer which is not yet implemented.
-            renderer.draw_quad(pos, size, Vec4{cmd.color.r, cmd.color.g,
-                                               cmd.color.b, cmd.color.a * 0.15f});
+            if (font_ && font_->is_valid() && font_atlas_ != UI_INVALID_HANDLE) {
+                // Render text using the bitmap font glyph atlas
+                auto vertices = font_->generate_vertices(
+                    cmd.text, cmd.rect.position);
+                // Each 6 vertices = 1 glyph quad (2 triangles)
+                for (size_t v = 0; v + 5 < vertices.size(); v += 6) {
+                    auto& v0 = vertices[v];     // top-left
+                    auto& v2 = vertices[v + 2]; // bottom-right
+                    Vec2 glyph_pos{v0.x, v0.y};
+                    Vec2 glyph_size{v2.x - v0.x, v2.y - v0.y};
+                    Vec2 uv_min{v0.u, v0.v};
+                    Vec2 uv_max{v2.u, v2.v};
+                    renderer.draw_glyph(glyph_pos, glyph_size,
+                                        font_atlas_, uv_min, uv_max, cmd.color);
+                }
+            } else {
+                // Fallback: draw a placeholder tinted quad
+                renderer.draw_quad(pos, size, Vec4{cmd.color.r, cmd.color.g,
+                                                   cmd.color.b, cmd.color.a * 0.15f});
+            }
             break;
         }
     }

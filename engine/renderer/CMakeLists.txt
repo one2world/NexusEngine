@@ -11,6 +11,7 @@ add_library(nexus-renderer STATIC
     src/fog.cpp
     src/ssao.cpp
     src/particle_renderer.cpp
+    src/tilemap_renderer.cpp
 )
 
 target_include_directories(nexus-renderer

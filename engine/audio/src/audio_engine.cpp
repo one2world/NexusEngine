@@ -8,10 +8,10 @@ namespace nexus::audio {
 
 AudioEngine::AudioEngine() {
     // Initialize default buses
-    buses_.push_back({"Master", 1.0f, false});
-    buses_.push_back({"SFX",    1.0f, false});
-    buses_.push_back({"Music",  1.0f, false});
-    buses_.push_back({"Voice",  1.0f, false});
+    buses_.push_back({"Master", 1.0f, false, {}});
+    buses_.push_back({"SFX",    1.0f, false, {}});
+    buses_.push_back({"Music",  1.0f, false, {}});
+    buses_.push_back({"Voice",  1.0f, false, {}});
 }
 
 // ── Clip management ─────────────────────────────────────────────────────────

@@ -192,15 +192,15 @@ bool BitmapFont::load_bmfont(const std::string& fnt_path) {
             while (iss >> token) {
                 if (token.substr(0, 11) == "lineHeight=") line_height_ = std::stof(token.substr(11));
                 else if (token.substr(0, 5) == "base=") base_line_ = std::stof(token.substr(5));
-                else if (token.substr(0, 7) == "scaleW=") atlas_w = std::stoul(token.substr(7));
-                else if (token.substr(0, 7) == "scaleH=") atlas_h = std::stoul(token.substr(7));
+                else if (token.substr(0, 7) == "scaleW=") atlas_w = static_cast<u32>(std::stoul(token.substr(7)));
+                else if (token.substr(0, 7) == "scaleH=") atlas_h = static_cast<u32>(std::stoul(token.substr(7)));
             }
         } else if (tag == "char") {
             Glyph g{};
             float x = 0, y = 0, w = 0, h = 0;
             std::string token;
             while (iss >> token) {
-                if (token.substr(0, 3) == "id=") g.codepoint = std::stoul(token.substr(3));
+                if (token.substr(0, 3) == "id=") g.codepoint = static_cast<u32>(std::stoul(token.substr(3)));
                 else if (token.substr(0, 2) == "x=") x = std::stof(token.substr(2));
                 else if (token.substr(0, 2) == "y=") y = std::stof(token.substr(2));
                 else if (token.substr(0, 6) == "width=") w = std::stof(token.substr(6));

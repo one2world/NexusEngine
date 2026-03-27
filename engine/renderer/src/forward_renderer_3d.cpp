@@ -248,6 +248,7 @@ bool ForwardRenderer3D::is_visible(Vec3 center, float radius) const {
 void ForwardRenderer3D::begin_frame(const Camera3D& camera) {
     if (!rhi_ || shader_ == rhi::INVALID_HANDLE) return;
 
+    current_camera_ = camera;
     view_projection_ = camera.get_view_projection();
     camera_position_ = camera.position;
     point_lights_.clear();
@@ -387,6 +388,43 @@ void ForwardRenderer3D::draw_mesh(const Mesh& mesh, const Mat4& transform,
     rhi_->bind_vertex_buffer(mesh.vbo);
     rhi_->bind_index_buffer(mesh.ibo);
     rhi_->draw_indexed(static_cast<u32>(mesh.indices.size()));
+}
+
+// ── Shadow mapping ──────────────────────────────────────────────────────
+
+void ForwardRenderer3D::enable_shadows(const CascadedShadowMap::Config& config) {
+    if (!rhi_) return;
+    shadow_map_ = std::make_unique<CascadedShadowMap>();
+    shadow_map_->init(rhi_, config);
+    NX_INFO("ForwardRenderer3D: Cascaded shadow mapping enabled ({} cascades, {}px)",
+            config.num_cascades, config.resolution);
+}
+
+void ForwardRenderer3D::disable_shadows() {
+    if (shadow_map_) {
+        shadow_map_->shutdown();
+        shadow_map_.reset();
+    }
+}
+
+void ForwardRenderer3D::render_shadow_pass(Vec3 light_direction,
+                                            ShadowGeometryCallback submit_geometry) {
+    if (!shadow_map_ || !in_frame_) return;
+
+    // Update cascade splits based on current camera
+    shadow_map_->update(current_camera_, light_direction);
+
+    // Render each cascade
+    for (u32 c = 0; c < shadow_map_->num_cascades(); ++c) {
+        shadow_map_->begin_pass(c);
+        submit_geometry(c);
+        shadow_map_->end_pass();
+    }
+
+    // Re-bind the main shader after shadow pass
+    rhi_->bind_shader(shader_);
+    rhi_->set_uniform_mat4(shader_, "u_ViewProjection", view_projection_);
+    rhi_->set_uniform_vec3(shader_, "u_CameraPos", camera_position_);
 }
 
 // ── Primitive mesh generators ───────────────────────────────────────────────

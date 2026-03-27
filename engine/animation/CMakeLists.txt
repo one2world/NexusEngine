@@ -5,6 +5,7 @@ add_library(nexus-animation STATIC
     src/animation_state_machine.cpp
     src/particle_system.cpp
     src/ik_solver.cpp
+    src/blend_tree.cpp
 )
 
 target_include_directories(nexus-animation

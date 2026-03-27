@@ -19,6 +19,7 @@ struct AppConfig {
     bool vsync = true;
     bool fullscreen = false;
     float fixed_timestep = 1.0f / 60.0f;
+    float max_frame_time = 0.25f; // cap to avoid spiral of death
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -54,6 +55,10 @@ public:
     /// Called when the window is resized.
     virtual void on_resize(int width, int height) { (void)width; (void)height; }
 
+    /// Run the main game loop. Handles timing, fixed update accumulation, and frame pacing.
+    /// Returns exit code (0 = success).
+    int run();
+
     /// Request the application to quit at the end of the frame.
     void quit() { running_ = false; }
 
@@ -69,10 +74,18 @@ public:
     /// Get current FPS.
     float fps() const { return dt_ > 0.0f ? 1.0f / dt_ : 0.0f; }
 
+    /// Get current frame number.
+    u64 frame_count() const { return frame_count_; }
+
+    /// Get the fixed timestep interpolation alpha for render smoothing.
+    float fixed_alpha() const { return fixed_alpha_; }
+
 protected:
     bool running_{true};
     float dt_{0.0f};
     float elapsed_{0.0f};
+    u64 frame_count_{0};
+    float fixed_alpha_{0.0f};
 };
 
 } // namespace nexus

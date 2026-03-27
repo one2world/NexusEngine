@@ -4,7 +4,10 @@
 #include <nexus/core/math.h>
 #include <nexus/rhi/rhi.h>
 #include <nexus/renderer/camera.h>
+#include <nexus/renderer/shadow_map.h>
 #include <vector>
+#include <memory>
+#include <functional>
 
 namespace nexus {
 
@@ -103,6 +106,22 @@ public:
     /// Simple frustum culling check against a bounding sphere.
     [[nodiscard]] bool is_visible(Vec3 center, float radius) const;
 
+    // ── Shadow mapping ──────────────────────────────────────────────────
+    /// Enable cascaded shadow mapping for the directional light.
+    void enable_shadows(const CascadedShadowMap::Config& config = {});
+
+    /// Disable shadow mapping.
+    void disable_shadows();
+
+    /// Get shadow map (nullptr if disabled).
+    CascadedShadowMap* shadow_map() { return shadow_map_.get(); }
+    const CascadedShadowMap* shadow_map() const { return shadow_map_.get(); }
+
+    /// Render the shadow depth pass. Call after begin_frame(), before draw_mesh() calls.
+    /// Provide a callback that submits geometry for each cascade.
+    using ShadowGeometryCallback = std::function<void(u32 cascade)>;
+    void render_shadow_pass(Vec3 light_direction, ShadowGeometryCallback submit_geometry);
+
 private:
     rhi::RHI*         rhi_{nullptr};
     rhi::ShaderHandle shader_{rhi::INVALID_HANDLE};
@@ -119,6 +138,10 @@ private:
     // Frustum planes for culling (extracted from view-projection matrix)
     Vec4 frustum_planes_[6]{};
     void extract_frustum_planes();
+
+    // Shadow mapping
+    std::unique_ptr<CascadedShadowMap> shadow_map_;
+    Camera3D current_camera_;
 };
 
 } // namespace nexus

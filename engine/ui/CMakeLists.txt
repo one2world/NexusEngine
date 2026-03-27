@@ -2,6 +2,7 @@ add_library(nexus-ui STATIC
     src/ui_core.cpp
     src/widgets.cpp
     src/ui_system.cpp
+    src/bitmap_font.cpp
 )
 
 target_include_directories(nexus-ui

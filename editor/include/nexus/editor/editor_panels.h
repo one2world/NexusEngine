@@ -81,7 +81,7 @@ class HierarchyPanel : public Panel {
 public:
     HierarchyPanel() : Panel("Hierarchy") {}
 
-    void on_render() override {}
+    void on_render() override;
     const char* type_id() const override { return "HierarchyPanel"; }
 
     void set_selected_entity(u32 entity) { selected_ = entity; has_selection_ = true; }
@@ -122,7 +122,7 @@ class InspectorPanel : public Panel {
 public:
     InspectorPanel() : Panel("Inspector") {}
 
-    void on_render() override {}
+    void on_render() override;
     const char* type_id() const override { return "InspectorPanel"; }
 
     void set_target_entity(u32 entity) { target_ = entity; has_target_ = true; }
@@ -163,7 +163,7 @@ class ConsolePanel : public Panel {
 public:
     ConsolePanel() : Panel("Console") {}
 
-    void on_render() override {}
+    void on_render() override;
     const char* type_id() const override { return "ConsolePanel"; }
 
     void add_message(const std::string& text, LogLevel level = LogLevel::Info);
@@ -210,7 +210,7 @@ class AssetBrowserPanel : public Panel {
 public:
     AssetBrowserPanel() : Panel("Asset Browser") {}
 
-    void on_render() override {}
+    void on_render() override;
     const char* type_id() const override { return "AssetBrowserPanel"; }
 
     /// Set the root directory for browsing.

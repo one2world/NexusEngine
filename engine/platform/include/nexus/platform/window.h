@@ -31,6 +31,28 @@ public:
     void set_title(const std::string& title);
     void set_vsync(bool enabled);
 
+    /// Toggle between fullscreen and windowed mode at runtime.
+    void set_fullscreen(bool fullscreen);
+
+    /// Resize the window (windowed mode only).
+    void set_size(int width, int height);
+
+    /// Set cursor visibility/lock mode.
+    enum class CursorMode : int { Normal = 0, Hidden, Locked };
+    void set_cursor_mode(CursorMode mode);
+    [[nodiscard]] CursorMode cursor_mode() const { return cursor_mode_; }
+
+    /// Minimize/maximize the window.
+    void minimize();
+    void maximize();
+    void restore();
+
+    /// Set window position.
+    void set_position(int x, int y);
+    void get_position(int& x, int& y) const;
+
+    [[nodiscard]] bool is_fullscreen() const { return fullscreen_; }
+    [[nodiscard]] bool is_minimized() const;
     [[nodiscard]] int width() const { return width_; }
     [[nodiscard]] int height() const { return height_; }
     [[nodiscard]] float aspect_ratio() const {
@@ -46,6 +68,13 @@ private:
     int width_;
     int height_;
     bool vsync_;
+    bool fullscreen_{false};
+    CursorMode cursor_mode_{CursorMode::Normal};
+    // Saved windowed state for fullscreen toggle
+    int windowed_x_{0};
+    int windowed_y_{0};
+    int windowed_width_{0};
+    int windowed_height_{0};
     EventBus events_;
 };
 

@@ -12,6 +12,8 @@ add_library(nexus-renderer STATIC
     src/ssao.cpp
     src/particle_renderer.cpp
     src/tilemap_renderer.cpp
+    src/skybox.cpp
+    src/taa.cpp
 )
 
 target_include_directories(nexus-renderer

@@ -25,28 +25,20 @@ bool AssetImporter::supports(const std::string& extension) const {
 // ── TextureImporter ─────────────────────────────────────────────────────────
 
 std::vector<std::string> TextureImporter::supported_extensions() const {
-    return {".png", ".jpg", ".jpeg", ".tga", ".bmp", ".hdr"};
+    return {".png", ".jpg", ".jpeg", ".tga", ".bmp", ".hdr", ".ppm", ".pgm"};
 }
 
-// Parse image dimensions from file headers without a full decode library.
-// Supports PNG, BMP, TGA headers.  Falls back to raw-pixel import for unknown
-// formats (the pixel data is stored as-is for the RHI to upload).
+// ── BMP decoder ─────────────────────────────────────────────────────────────
+// Parses BITMAPFILEHEADER + BITMAPINFOHEADER, extracts uncompressed 24/32-bit
+// pixel data, and flips vertically (BMP stores rows bottom-up).
 
-static bool parse_png_header(const std::vector<u8>& raw, u32& w, u32& h) {
-    // PNG IHDR: bytes 16-19 = width (big-endian), 20-23 = height
-    if (raw.size() < 24) return false;
-    if (raw[0] != 0x89 || raw[1] != 'P' || raw[2] != 'N' || raw[3] != 'G')
-        return false;
-    w = (u32(raw[16]) << 24) | (u32(raw[17]) << 16) |
-        (u32(raw[18]) << 8)  |  u32(raw[19]);
-    h = (u32(raw[20]) << 24) | (u32(raw[21]) << 16) |
-        (u32(raw[22]) << 8)  |  u32(raw[23]);
-    return w > 0 && h > 0;
-}
+static std::shared_ptr<TextureData> decode_bmp(const std::vector<u8>& raw,
+                                                const std::string& filename) {
+    if (raw.size() < 54 || raw[0] != 'B' || raw[1] != 'M') {
+        NX_ERROR("TextureImporter: invalid BMP header in '{}'", filename);
+        return nullptr;
+    }
 
-static bool parse_bmp_header(const std::vector<u8>& raw, u32& w, u32& h, u32& ch) {
-    if (raw.size() < 54) return false;
-    if (raw[0] != 'B' || raw[1] != 'M') return false;
     auto read_u32_le = [&](size_t off) -> u32 {
         return u32(raw[off]) | (u32(raw[off+1]) << 8) |
                (u32(raw[off+2]) << 16) | (u32(raw[off+3]) << 24);
@@ -54,73 +46,367 @@ static bool parse_bmp_header(const std::vector<u8>& raw, u32& w, u32& h, u32& ch
     auto read_u16_le = [&](size_t off) -> u16 {
         return static_cast<u16>(u16(raw[off]) | (u16(raw[off+1]) << 8));
     };
-    w  = read_u32_le(18);
-    h  = read_u32_le(22);
-    ch = read_u16_le(28) / 8; // bits-per-pixel -> channels
-    return w > 0 && h > 0;
+    auto read_i32_le = [&](size_t off) -> i32 {
+        u32 v = read_u32_le(off);
+        i32 result;
+        std::memcpy(&result, &v, sizeof(result));
+        return result;
+    };
+
+    u32 pixel_offset = read_u32_le(10);
+    i32 width_signed = read_i32_le(18);
+    i32 height_signed = read_i32_le(22);
+    u16 bpp = read_u16_le(28);
+    u32 compression = read_u32_le(30);
+
+    if (width_signed <= 0) {
+        NX_ERROR("TextureImporter: BMP has invalid width {} in '{}'", width_signed, filename);
+        return nullptr;
+    }
+    if (compression != 0) {
+        NX_ERROR("TextureImporter: compressed BMP not supported in '{}'", filename);
+        return nullptr;
+    }
+    if (bpp != 24 && bpp != 32) {
+        NX_ERROR("TextureImporter: only 24/32-bit BMP supported, got {}bpp in '{}'", bpp, filename);
+        return nullptr;
+    }
+
+    u32 width = static_cast<u32>(width_signed);
+    bool top_down = (height_signed < 0);
+    u32 height = static_cast<u32>(top_down ? -height_signed : height_signed);
+    u32 src_channels = bpp / 8;
+
+    // BMP rows are padded to 4-byte boundaries
+    u32 row_stride = (width * src_channels + 3) & ~u32(3);
+
+    if (pixel_offset + static_cast<u64>(row_stride) * height > raw.size()) {
+        NX_ERROR("TextureImporter: BMP pixel data truncated in '{}'", filename);
+        return nullptr;
+    }
+
+    auto data = std::make_shared<TextureData>();
+    data->width = width;
+    data->height = height;
+    data->channels = 4; // always output RGBA
+    data->is_hdr = false;
+    data->pixels.resize(static_cast<size_t>(width) * height * 4);
+
+    for (u32 y = 0; y < height; ++y) {
+        // BMP is bottom-up unless height is negative (top-down)
+        u32 src_row = top_down ? y : (height - 1 - y);
+        const u8* src = raw.data() + pixel_offset + src_row * row_stride;
+        u8* dst = data->pixels.data() + static_cast<size_t>(y) * width * 4;
+
+        for (u32 x = 0; x < width; ++x) {
+            // BMP stores BGR(A)
+            dst[x * 4 + 0] = src[x * src_channels + 2]; // R
+            dst[x * 4 + 1] = src[x * src_channels + 1]; // G
+            dst[x * 4 + 2] = src[x * src_channels + 0]; // B
+            dst[x * 4 + 3] = (src_channels == 4) ? src[x * src_channels + 3] : 255;
+        }
+    }
+
+    NX_INFO("TextureImporter: loaded BMP '{}' ({}x{}, {}bpp -> RGBA)",
+            filename, width, height, bpp);
+    return data;
 }
 
-static bool parse_tga_header(const std::vector<u8>& raw, u32& w, u32& h, u32& ch) {
-    if (raw.size() < 18) return false;
-    w  = u32(raw[12]) | (u32(raw[13]) << 8);
-    h  = u32(raw[14]) | (u32(raw[15]) << 8);
-    ch = raw[16] / 8;
-    return w > 0 && h > 0;
+// ── TGA decoder ─────────────────────────────────────────────────────────────
+// Supports uncompressed true-color (type 2) and RLE compressed (type 10),
+// 24-bit and 32-bit.
+
+static std::shared_ptr<TextureData> decode_tga(const std::vector<u8>& raw,
+                                                const std::string& filename) {
+    if (raw.size() < 18) {
+        NX_ERROR("TextureImporter: TGA file too small in '{}'", filename);
+        return nullptr;
+    }
+
+    u8 id_length = raw[0];
+    u8 image_type = raw[2];
+    u32 width  = u32(raw[12]) | (u32(raw[13]) << 8);
+    u32 height = u32(raw[14]) | (u32(raw[15]) << 8);
+    u8 bpp = raw[16];
+    u8 descriptor = raw[17];
+    bool top_down = (descriptor & 0x20) != 0;
+
+    if (width == 0 || height == 0) {
+        NX_ERROR("TextureImporter: TGA has zero dimensions in '{}'", filename);
+        return nullptr;
+    }
+    if (bpp != 24 && bpp != 32) {
+        NX_ERROR("TextureImporter: only 24/32-bit TGA supported, got {}bpp in '{}'", bpp, filename);
+        return nullptr;
+    }
+    if (image_type != 2 && image_type != 10) {
+        NX_ERROR("TextureImporter: unsupported TGA image type {} in '{}' (only type 2 and 10 supported)",
+                 image_type, filename);
+        return nullptr;
+    }
+
+    u32 src_channels = bpp / 8;
+    size_t pixel_start = 18 + id_length;
+    u32 total_pixels = width * height;
+
+    // Decode pixels into a temporary BGR(A) buffer
+    std::vector<u8> decoded;
+    decoded.reserve(static_cast<size_t>(total_pixels) * src_channels);
+
+    if (image_type == 2) {
+        // Uncompressed true-color
+        size_t needed = pixel_start + static_cast<size_t>(total_pixels) * src_channels;
+        if (raw.size() < needed) {
+            NX_ERROR("TextureImporter: TGA pixel data truncated in '{}'", filename);
+            return nullptr;
+        }
+        decoded.assign(raw.begin() + static_cast<std::ptrdiff_t>(pixel_start),
+                       raw.begin() + static_cast<std::ptrdiff_t>(needed));
+    } else {
+        // RLE compressed (type 10)
+        size_t src_pos = pixel_start;
+        u32 pixels_decoded = 0;
+
+        while (pixels_decoded < total_pixels && src_pos < raw.size()) {
+            u8 header = raw[src_pos++];
+            u32 count = (header & 0x7F) + 1;
+
+            if (header & 0x80) {
+                // Run-length packet: one pixel repeated 'count' times
+                if (src_pos + src_channels > raw.size()) break;
+                for (u32 i = 0; i < count && pixels_decoded < total_pixels; ++i) {
+                    for (u32 c = 0; c < src_channels; ++c) {
+                        decoded.push_back(raw[src_pos + c]);
+                    }
+                    ++pixels_decoded;
+                }
+                src_pos += src_channels;
+            } else {
+                // Raw packet: 'count' individual pixels follow
+                for (u32 i = 0; i < count && pixels_decoded < total_pixels; ++i) {
+                    if (src_pos + src_channels > raw.size()) break;
+                    for (u32 c = 0; c < src_channels; ++c) {
+                        decoded.push_back(raw[src_pos + c]);
+                    }
+                    src_pos += src_channels;
+                    ++pixels_decoded;
+                }
+            }
+        }
+
+        if (pixels_decoded < total_pixels) {
+            NX_ERROR("TextureImporter: TGA RLE data incomplete in '{}'", filename);
+            return nullptr;
+        }
+    }
+
+    // Convert BGR(A) to RGBA, handling row order
+    auto data = std::make_shared<TextureData>();
+    data->width = width;
+    data->height = height;
+    data->channels = 4;
+    data->is_hdr = false;
+    data->pixels.resize(static_cast<size_t>(width) * height * 4);
+
+    for (u32 y = 0; y < height; ++y) {
+        u32 src_row = top_down ? y : (height - 1 - y);
+        const u8* src = decoded.data() + static_cast<size_t>(src_row) * width * src_channels;
+        u8* dst = data->pixels.data() + static_cast<size_t>(y) * width * 4;
+
+        for (u32 x = 0; x < width; ++x) {
+            dst[x * 4 + 0] = src[x * src_channels + 2]; // R (from B)
+            dst[x * 4 + 1] = src[x * src_channels + 1]; // G
+            dst[x * 4 + 2] = src[x * src_channels + 0]; // B (from R)
+            dst[x * 4 + 3] = (src_channels == 4) ? src[x * src_channels + 3] : 255;
+        }
+    }
+
+    NX_INFO("TextureImporter: loaded TGA '{}' ({}x{}, type {}, {}bpp -> RGBA)",
+            filename, width, height, image_type, bpp);
+    return data;
 }
+
+// ── PPM/PGM decoder ─────────────────────────────────────────────────────────
+// Supports binary P5 (PGM) and P6 (PPM) formats with 8-bit depth.
+
+static std::shared_ptr<TextureData> decode_ppm_pgm(const std::vector<u8>& raw,
+                                                     const std::string& filename) {
+    if (raw.size() < 3) {
+        NX_ERROR("TextureImporter: PPM/PGM file too small in '{}'", filename);
+        return nullptr;
+    }
+
+    // Check magic number
+    bool is_pgm_text = (raw[0] == 'P' && raw[1] == '2');
+    bool is_ppm_text = (raw[0] == 'P' && raw[1] == '3');
+    bool is_pgm_bin  = (raw[0] == 'P' && raw[1] == '5');
+    bool is_ppm_bin  = (raw[0] == 'P' && raw[1] == '6');
+    bool is_grayscale = is_pgm_text || is_pgm_bin;
+
+    if (!is_pgm_text && !is_ppm_text && !is_pgm_bin && !is_ppm_bin) {
+        NX_ERROR("TextureImporter: unsupported PPM/PGM format in '{}'", filename);
+        return nullptr;
+    }
+
+    // Parse header: skip magic, read width, height, maxval
+    // Comments start with '#' and go to end of line
+    size_t pos = 2;
+    auto skip_whitespace_and_comments = [&]() {
+        while (pos < raw.size()) {
+            if (raw[pos] == '#') {
+                while (pos < raw.size() && raw[pos] != '\n') ++pos;
+                if (pos < raw.size()) ++pos;
+            } else if (raw[pos] == ' ' || raw[pos] == '\t' ||
+                       raw[pos] == '\n' || raw[pos] == '\r') {
+                ++pos;
+            } else {
+                break;
+            }
+        }
+    };
+
+    auto read_int = [&]() -> u32 {
+        skip_whitespace_and_comments();
+        u32 val = 0;
+        while (pos < raw.size() && raw[pos] >= '0' && raw[pos] <= '9') {
+            val = val * 10 + (raw[pos] - '0');
+            ++pos;
+        }
+        return val;
+    };
+
+    u32 width = read_int();
+    u32 height = read_int();
+    u32 maxval = read_int();
+
+    if (width == 0 || height == 0 || maxval == 0) {
+        NX_ERROR("TextureImporter: invalid PPM/PGM header in '{}'", filename);
+        return nullptr;
+    }
+    if (maxval > 255) {
+        NX_ERROR("TextureImporter: 16-bit PPM/PGM not supported in '{}'", filename);
+        return nullptr;
+    }
+
+    // After maxval, exactly one whitespace character precedes pixel data
+    if (pos < raw.size() && (raw[pos] == ' ' || raw[pos] == '\t' ||
+                              raw[pos] == '\n' || raw[pos] == '\r')) {
+        ++pos;
+    }
+
+    auto data = std::make_shared<TextureData>();
+    data->width = width;
+    data->height = height;
+    data->channels = 4; // output RGBA
+    data->is_hdr = false;
+    data->pixels.resize(static_cast<size_t>(width) * height * 4);
+
+    u32 src_channels = is_grayscale ? 1 : 3;
+
+    if (is_pgm_bin || is_ppm_bin) {
+        // Binary format
+        size_t needed = static_cast<size_t>(width) * height * src_channels;
+        if (pos + needed > raw.size()) {
+            NX_ERROR("TextureImporter: PPM/PGM pixel data truncated in '{}'", filename);
+            return nullptr;
+        }
+
+        for (u32 y = 0; y < height; ++y) {
+            u8* dst = data->pixels.data() + static_cast<size_t>(y) * width * 4;
+            for (u32 x = 0; x < width; ++x) {
+                if (is_grayscale) {
+                    u8 g = raw[pos++];
+                    dst[x * 4 + 0] = g;
+                    dst[x * 4 + 1] = g;
+                    dst[x * 4 + 2] = g;
+                } else {
+                    dst[x * 4 + 0] = raw[pos++]; // R
+                    dst[x * 4 + 1] = raw[pos++]; // G
+                    dst[x * 4 + 2] = raw[pos++]; // B
+                }
+                dst[x * 4 + 3] = 255;
+            }
+        }
+    } else {
+        // Text format (P2/P3)
+        for (u32 y = 0; y < height; ++y) {
+            u8* dst = data->pixels.data() + static_cast<size_t>(y) * width * 4;
+            for (u32 x = 0; x < width; ++x) {
+                if (is_grayscale) {
+                    u8 g = static_cast<u8>(read_int());
+                    dst[x * 4 + 0] = g;
+                    dst[x * 4 + 1] = g;
+                    dst[x * 4 + 2] = g;
+                } else {
+                    dst[x * 4 + 0] = static_cast<u8>(read_int()); // R
+                    dst[x * 4 + 1] = static_cast<u8>(read_int()); // G
+                    dst[x * 4 + 2] = static_cast<u8>(read_int()); // B
+                }
+                dst[x * 4 + 3] = 255;
+            }
+        }
+    }
+
+    NX_INFO("TextureImporter: loaded {} '{}' ({}x{}, {} -> RGBA)",
+            is_grayscale ? "PGM" : "PPM", filename, width, height,
+            (is_pgm_bin || is_ppm_bin) ? "binary" : "text");
+    return data;
+}
+
+// ── TextureImporter::import ─────────────────────────────────────────────────
 
 std::shared_ptr<AssetData> TextureImporter::import(const std::string& path,
                                                      const AssetMeta& /*meta*/) {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
-        NX_ERROR("TextureImporter: failed to open {}", path);
+        NX_ERROR("TextureImporter: failed to open '{}'", path);
         return nullptr;
     }
 
-    auto data = std::make_shared<TextureData>();
-    data->pixels.assign(std::istreambuf_iterator<char>(file),
+    std::vector<u8> raw(std::istreambuf_iterator<char>(file),
                         std::istreambuf_iterator<char>{});
 
     std::filesystem::path p(path);
     std::string ext = p.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::string filename = p.filename().string();
 
-    data->is_hdr = (ext == ".hdr");
-    data->channels = 4; // default
+    if (ext == ".bmp") {
+        return decode_bmp(raw, filename);
+    }
 
-    // Try to read real dimensions from format headers
-    bool parsed = false;
+    if (ext == ".tga") {
+        return decode_tga(raw, filename);
+    }
+
+    if (ext == ".ppm" || ext == ".pgm") {
+        return decode_ppm_pgm(raw, filename);
+    }
+
     if (ext == ".png") {
-        parsed = parse_png_header(data->pixels, data->width, data->height);
-    } else if (ext == ".bmp") {
-        parsed = parse_bmp_header(data->pixels, data->width, data->height, data->channels);
-    } else if (ext == ".tga") {
-        parsed = parse_tga_header(data->pixels, data->width, data->height, data->channels);
-    } else if (ext == ".jpg" || ext == ".jpeg") {
-        // JPEG SOF0 parsing: search for 0xFF 0xC0 marker
-        for (size_t i = 0; i + 9 < data->pixels.size(); ++i) {
-            if (data->pixels[i] == 0xFF && data->pixels[i+1] == 0xC0) {
-                data->height = (u32(data->pixels[i+5]) << 8) | u32(data->pixels[i+6]);
-                data->width  = (u32(data->pixels[i+7]) << 8) | u32(data->pixels[i+8]);
-                data->channels = data->pixels[i+9];
-                parsed = true;
-                break;
-            }
-        }
+        NX_ERROR("TextureImporter: PNG decoding requires stb_image.h. "
+                 "Place stb_image.h in your include path and define "
+                 "NX_HAS_STB_IMAGE to enable PNG support. File: '{}'", path);
+        return nullptr;
     }
 
-    if (!parsed) {
-        // Fallback: assume raw RGBA if we can infer dimensions
-        u64 pixel_count = data->pixels.size() / 4;
-        u32 side = static_cast<u32>(std::sqrt(static_cast<double>(pixel_count)));
-        data->width  = (side > 0) ? side : 1;
-        data->height = (side > 0) ? side : 1;
-        data->channels = 4;
+    if (ext == ".jpg" || ext == ".jpeg") {
+        NX_ERROR("TextureImporter: JPEG decoding requires stb_image.h. "
+                 "Place stb_image.h in your include path and define "
+                 "NX_HAS_STB_IMAGE to enable JPEG support. File: '{}'", path);
+        return nullptr;
     }
 
-    NX_INFO("TextureImporter: loaded '{}' ({}x{}, {}ch)",
-            p.filename().string(), data->width, data->height, data->channels);
-    return data;
+    if (ext == ".hdr") {
+        NX_ERROR("TextureImporter: HDR decoding requires stb_image.h. "
+                 "Place stb_image.h in your include path and define "
+                 "NX_HAS_STB_IMAGE to enable HDR support. File: '{}'", path);
+        return nullptr;
+    }
+
+    NX_ERROR("TextureImporter: unsupported texture format '{}' for file '{}'", ext, path);
+    return nullptr;
 }
 
 // ── MeshImporter ────────────────────────────────────────────────────────────
@@ -160,7 +446,12 @@ std::shared_ptr<AssetData> MeshImporter::import(const std::string& path,
             std::string token;
             iss >> token;
 
-            if (token == "v") {
+            if (token == "o" || token == "g") {
+                std::string obj_name;
+                if (iss >> obj_name) {
+                    data->name = obj_name;
+                }
+            } else if (token == "v") {
                 std::array<f32, 3> pos{};
                 iss >> pos[0] >> pos[1] >> pos[2];
                 positions.push_back(pos);
@@ -539,26 +830,119 @@ std::shared_ptr<AssetData> AudioImporter::import(const std::string& path,
                                                    const AssetMeta& /*meta*/) {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
-        NX_ERROR("AudioImporter: failed to open {}", path);
+        NX_ERROR("AudioImporter: failed to open '{}'", path);
         return nullptr;
     }
 
-    auto data = std::make_shared<AudioData>();
-    data->samples.assign(std::istreambuf_iterator<char>(file),
-                         std::istreambuf_iterator<char>{});
-    data->sample_rate = 44100;
-    data->channels = 2;
-    data->bits_per_sample = 16;
+    std::vector<u8> raw(std::istreambuf_iterator<char>(file),
+                        std::istreambuf_iterator<char>{});
 
-    // Estimate duration from raw size
-    if (data->channels > 0 && data->bits_per_sample > 0 && data->sample_rate > 0) {
-        u64 bytes_per_sample = (data->bits_per_sample / 8) * data->channels;
-        if (bytes_per_sample > 0) {
-            data->duration = static_cast<f32>(data->samples.size()) /
-                            static_cast<f32>(bytes_per_sample * data->sample_rate);
-        }
+    std::filesystem::path p(path);
+    std::string ext = p.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    if (ext != ".wav") {
+        NX_ERROR("AudioImporter: format '{}' not supported for '{}'. "
+                 "Only WAV files are currently supported.", ext, path);
+        return nullptr;
     }
 
+    // ── WAV parser ──────────────────────────────────────────────────────
+    // RIFF/WAVE format: RIFF header -> "WAVE" -> chunks (fmt, data, etc.)
+
+    auto read_u32_le = [&](size_t off) -> u32 {
+        return u32(raw[off]) | (u32(raw[off+1]) << 8) |
+               (u32(raw[off+2]) << 16) | (u32(raw[off+3]) << 24);
+    };
+    auto read_u16_le = [&](size_t off) -> u16 {
+        return static_cast<u16>(u16(raw[off]) | (u16(raw[off+1]) << 8));
+    };
+
+    // Validate RIFF header
+    if (raw.size() < 44) {
+        NX_ERROR("AudioImporter: WAV file too small in '{}'", path);
+        return nullptr;
+    }
+    if (raw[0] != 'R' || raw[1] != 'I' || raw[2] != 'F' || raw[3] != 'F') {
+        NX_ERROR("AudioImporter: missing RIFF header in '{}'", path);
+        return nullptr;
+    }
+    if (raw[8] != 'W' || raw[9] != 'A' || raw[10] != 'V' || raw[11] != 'E') {
+        NX_ERROR("AudioImporter: missing WAVE identifier in '{}'", path);
+        return nullptr;
+    }
+
+    // Walk chunks to find 'fmt ' and 'data'
+    auto data = std::make_shared<AudioData>();
+    bool found_fmt = false;
+    bool found_data = false;
+    size_t pos = 12; // past RIFF header + "WAVE"
+
+    while (pos + 8 <= raw.size()) {
+        char chunk_id[5] = {};
+        std::memcpy(chunk_id, raw.data() + pos, 4);
+        u32 chunk_size = read_u32_le(pos + 4);
+        size_t chunk_data_start = pos + 8;
+
+        if (std::strncmp(chunk_id, "fmt ", 4) == 0) {
+            if (chunk_data_start + 16 > raw.size()) {
+                NX_ERROR("AudioImporter: fmt chunk truncated in '{}'", path);
+                return nullptr;
+            }
+            u16 audio_format = read_u16_le(chunk_data_start);
+            if (audio_format != 1) {
+                NX_ERROR("AudioImporter: only PCM format supported (got {}), file '{}'",
+                         audio_format, path);
+                return nullptr;
+            }
+            data->channels = read_u16_le(chunk_data_start + 2);
+            data->sample_rate = read_u32_le(chunk_data_start + 4);
+            // bytes 8-11: byte rate, bytes 12-13: block align
+            data->bits_per_sample = read_u16_le(chunk_data_start + 14);
+
+            if (data->channels == 0 || data->sample_rate == 0 || data->bits_per_sample == 0) {
+                NX_ERROR("AudioImporter: invalid fmt chunk values in '{}'", path);
+                return nullptr;
+            }
+            found_fmt = true;
+        } else if (std::strncmp(chunk_id, "data", 4) == 0) {
+            if (chunk_data_start + chunk_size > raw.size()) {
+                // Allow partial data reads (file may be truncated)
+                chunk_size = static_cast<u32>(raw.size() - chunk_data_start);
+            }
+            data->samples.assign(raw.begin() + static_cast<std::ptrdiff_t>(chunk_data_start),
+                                 raw.begin() + static_cast<std::ptrdiff_t>(chunk_data_start + chunk_size));
+            found_data = true;
+        }
+
+        // Advance to next chunk (chunks are 2-byte aligned)
+        pos = chunk_data_start + chunk_size;
+        if (pos % 2 != 0) ++pos;
+
+        if (found_fmt && found_data) break;
+    }
+
+    if (!found_fmt) {
+        NX_ERROR("AudioImporter: no fmt chunk found in '{}'", path);
+        return nullptr;
+    }
+    if (!found_data) {
+        NX_ERROR("AudioImporter: no data chunk found in '{}'", path);
+        return nullptr;
+    }
+
+    // Calculate duration from sample count
+    u32 bytes_per_sample = (data->bits_per_sample / 8) * data->channels;
+    if (bytes_per_sample > 0 && data->sample_rate > 0) {
+        u64 total_frames = data->samples.size() / bytes_per_sample;
+        data->duration = static_cast<f32>(total_frames) /
+                         static_cast<f32>(data->sample_rate);
+    }
+
+    NX_INFO("AudioImporter: loaded WAV '{}' ({}Hz, {}ch, {}bit, {:.2f}s)",
+            p.filename().string(), data->sample_rate, data->channels,
+            data->bits_per_sample, data->duration);
     return data;
 }
 

@@ -5,6 +5,8 @@ add_library(nexus-scene STATIC
     src/system_scheduler.cpp
     src/scene_manager.cpp
     src/prefab.cpp
+    src/game_state_serializer.cpp
+    src/binary_serializer.cpp
 )
 
 target_include_directories(nexus-scene

@@ -1,4 +1,5 @@
 #include "nexus/scripting/script_engine.h"
+#include "nexus/scripting/lua_backend.h"
 #include "nexus/core/log.h"
 #include <algorithm>
 #include <filesystem>
@@ -255,6 +256,16 @@ std::string ScriptEngine::get_script_source(const std::string& name) const {
 
 u32 ScriptEngine::script_count() const {
     return static_cast<u32>(scripts_.size());
+}
+
+// ── Lua Backend ─────────────────────────────────────────────────────────────
+
+LuaBackend& ScriptEngine::lua_backend() {
+    if (!lua_backend_) {
+        lua_backend_ = std::make_unique<LuaBackend>(*this);
+        lua_backend_->initialize();
+    }
+    return *lua_backend_;
 }
 
 // ── Errors ──────────────────────────────────────────────────────────────────

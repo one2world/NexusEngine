@@ -1,5 +1,6 @@
 add_library(nexus-network STATIC
     src/transport.cpp
+    src/udp_transport.cpp
     src/serialization.cpp
     src/replication.cpp
     src/rpc.cpp

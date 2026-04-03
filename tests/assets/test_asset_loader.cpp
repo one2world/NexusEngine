@@ -30,6 +30,79 @@ protected:
         return path.string();
     }
 
+    std::string create_binary_file(const std::string& name, const std::vector<u8>& content) {
+        auto path = test_dir_ / name;
+        std::filesystem::create_directories(path.parent_path());
+        std::ofstream f(path, std::ios::binary);
+        f.write(reinterpret_cast<const char*>(content.data()),
+                static_cast<std::streamsize>(content.size()));
+        f.close();
+        return path.string();
+    }
+
+    // Create a minimal valid 2x2 24-bit BMP file
+    static std::vector<u8> make_minimal_bmp() {
+        // BMP header (14 bytes) + DIB header (40 bytes) + pixel data
+        // 2x2 pixels, 24bpp, row stride = (2*3 + 3) & ~3 = 8
+        std::vector<u8> bmp(14 + 40 + 8 * 2, 0);
+        // BMP signature
+        bmp[0] = 'B'; bmp[1] = 'M';
+        // File size
+        u32 fsize = static_cast<u32>(bmp.size());
+        bmp[2] = static_cast<u8>(fsize); bmp[3] = static_cast<u8>(fsize >> 8);
+        // Pixel data offset
+        bmp[10] = 54;
+        // DIB header size
+        bmp[14] = 40;
+        // Width = 2
+        bmp[18] = 2;
+        // Height = 2
+        bmp[22] = 2;
+        // Planes = 1
+        bmp[26] = 1;
+        // BPP = 24
+        bmp[28] = 24;
+        // Fill pixels with some color
+        for (size_t i = 54; i < bmp.size(); ++i) bmp[i] = 128;
+        return bmp;
+    }
+
+    // Create a minimal valid WAV file
+    static std::vector<u8> make_minimal_wav() {
+        // RIFF header + fmt chunk + data chunk
+        // 44 bytes header + 4 bytes of PCM data
+        std::vector<u8> wav(48, 0);
+        // "RIFF"
+        wav[0]='R'; wav[1]='I'; wav[2]='F'; wav[3]='F';
+        // Chunk size = file_size - 8 = 40
+        wav[4] = 40;
+        // "WAVE"
+        wav[8]='W'; wav[9]='A'; wav[10]='V'; wav[11]='E';
+        // "fmt "
+        wav[12]='f'; wav[13]='m'; wav[14]='t'; wav[15]=' ';
+        // fmt chunk size = 16
+        wav[16] = 16;
+        // Audio format = 1 (PCM)
+        wav[20] = 1;
+        // Channels = 1
+        wav[22] = 1;
+        // Sample rate = 44100 (0xAC44)
+        wav[24] = 0x44; wav[25] = 0xAC;
+        // Byte rate = 44100 * 1 * 2 = 88200
+        wav[28] = 0xA8; wav[29] = 0x58; wav[30] = 0x01;
+        // Block align = 2
+        wav[32] = 2;
+        // Bits per sample = 16
+        wav[34] = 16;
+        // "data"
+        wav[36]='d'; wav[37]='a'; wav[38]='t'; wav[39]='a';
+        // Data chunk size = 4
+        wav[40] = 4;
+        // 4 bytes of PCM data
+        wav[44] = 0; wav[45] = 0; wav[46] = 127; wav[47] = 0;
+        return wav;
+    }
+
     std::filesystem::path test_dir_;
     AssetRegistry registry_;
     std::unique_ptr<AssetLoader> loader_;
@@ -76,12 +149,13 @@ TEST_F(AssetLoaderTest, ImporterSupportsExtension) {
 // =============================================================================
 
 TEST_F(AssetLoaderTest, LoadTextureSync) {
-    auto file = create_file("test.png", "fake_png_data");
-    auto id = registry_.register_asset("test.png", file, AssetType::Texture);
+    auto bmp_data = make_minimal_bmp();
+    auto file = create_binary_file("test.bmp", bmp_data);
+    auto id = registry_.register_asset("test.bmp", file, AssetType::Texture);
 
     EXPECT_TRUE(loader_->load_sync(id));
 
-    auto handle = registry_.get_handle<TextureData>("test.png");
+    auto handle = registry_.get_handle<TextureData>("test.bmp");
     EXPECT_TRUE(handle.valid());
     EXPECT_FALSE(handle->pixels.empty());
 }
@@ -98,7 +172,8 @@ TEST_F(AssetLoaderTest, LoadMeshSync) {
 }
 
 TEST_F(AssetLoaderTest, LoadAudioSync) {
-    auto file = create_file("sound.wav", std::string(1024, '\0'));
+    auto wav_data = make_minimal_wav();
+    auto file = create_binary_file("sound.wav", wav_data);
     auto id = registry_.register_asset("sound.wav", file, AssetType::Audio);
 
     EXPECT_TRUE(loader_->load_sync(id));
@@ -144,10 +219,11 @@ TEST_F(AssetLoaderTest, LoadMaterialSync) {
 }
 
 TEST_F(AssetLoaderTest, LoadByPath) {
-    auto file = create_file("test.png", "data");
-    registry_.register_asset("test.png", file, AssetType::Texture);
+    auto bmp_data = make_minimal_bmp();
+    auto file = create_binary_file("test.bmp", bmp_data);
+    registry_.register_asset("test.bmp", file, AssetType::Texture);
 
-    EXPECT_TRUE(loader_->load_sync("test.png"));
+    EXPECT_TRUE(loader_->load_sync("test.bmp"));
 }
 
 TEST_F(AssetLoaderTest, LoadNonexistent) {
@@ -163,8 +239,9 @@ TEST_F(AssetLoaderTest, LoadUnknownId) {
 }
 
 TEST_F(AssetLoaderTest, AlreadyLoadedSkips) {
-    auto file = create_file("test.png", "data");
-    auto id = registry_.register_asset("test.png", file, AssetType::Texture);
+    auto bmp_data = make_minimal_bmp();
+    auto file = create_binary_file("test.bmp", bmp_data);
+    auto id = registry_.register_asset("test.bmp", file, AssetType::Texture);
 
     EXPECT_TRUE(loader_->load_sync(id));
     EXPECT_TRUE(loader_->load_sync(id)); // Should succeed immediately
@@ -175,8 +252,9 @@ TEST_F(AssetLoaderTest, AlreadyLoadedSkips) {
 // =============================================================================
 
 TEST_F(AssetLoaderTest, AsyncLoadSingle) {
-    auto file = create_file("async.png", "data");
-    auto id = registry_.register_asset("async.png", file, AssetType::Texture);
+    auto bmp_data = make_minimal_bmp();
+    auto file = create_binary_file("async.bmp", bmp_data);
+    auto id = registry_.register_asset("async.bmp", file, AssetType::Texture);
 
     loader_->load_async(id, 0);
     EXPECT_EQ(loader_->progress().total, 1u);
@@ -187,11 +265,12 @@ TEST_F(AssetLoaderTest, AsyncLoadSingle) {
 }
 
 TEST_F(AssetLoaderTest, AsyncLoadPriority) {
-    auto low_file = create_file("low.png", "low");
-    auto high_file = create_file("high.png", "high");
+    auto bmp = make_minimal_bmp();
+    auto low_file = create_binary_file("low.bmp", bmp);
+    auto high_file = create_binary_file("high.bmp", bmp);
 
-    auto low_id = registry_.register_asset("low.png", low_file, AssetType::Texture);
-    auto high_id = registry_.register_asset("high.png", high_file, AssetType::Texture);
+    auto low_id = registry_.register_asset("low.bmp", low_file, AssetType::Texture);
+    auto high_id = registry_.register_asset("high.bmp", high_file, AssetType::Texture);
 
     loader_->load_async(low_id, 1);
     loader_->load_async(high_id, 10);
@@ -202,9 +281,10 @@ TEST_F(AssetLoaderTest, AsyncLoadPriority) {
 }
 
 TEST_F(AssetLoaderTest, ProcessAll) {
+    auto bmp = make_minimal_bmp();
     for (int i = 0; i < 5; i++) {
-        auto name = "file" + std::to_string(i) + ".png";
-        auto file = create_file(name, "data");
+        auto name = "file" + std::to_string(i) + ".bmp";
+        auto file = create_binary_file(name, bmp);
         auto id = registry_.register_asset(name, file, AssetType::Texture);
         loader_->load_async(id);
     }
@@ -215,8 +295,9 @@ TEST_F(AssetLoaderTest, ProcessAll) {
 }
 
 TEST_F(AssetLoaderTest, ProgressCallback) {
-    auto file = create_file("cb.png", "data");
-    auto id = registry_.register_asset("cb.png", file, AssetType::Texture);
+    auto bmp = make_minimal_bmp();
+    auto file = create_binary_file("cb.bmp", bmp);
+    auto id = registry_.register_asset("cb.bmp", file, AssetType::Texture);
 
     u32 callback_count = 0;
     loader_->set_progress_callback([&](const ProgressInfo& info) {

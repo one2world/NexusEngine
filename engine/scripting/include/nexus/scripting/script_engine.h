@@ -8,6 +8,8 @@
 #include <functional>
 #include <memory>
 
+namespace nexus::scripting { class LuaBackend; }
+
 namespace nexus::scripting {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -136,6 +138,11 @@ public:
     ScriptContext& globals() { return globals_; }
     const ScriptContext& globals() const { return globals_; }
 
+    // ── Lua Backend ────────────────────────────────────────────────────
+
+    /// Get (or lazily create) the Lua scripting backend.
+    LuaBackend& lua_backend();
+
 private:
     void report_error(const std::string& message,
                        const std::string& source = "",
@@ -156,6 +163,8 @@ private:
 
     ErrorHandler error_handler_;
     std::vector<ScriptError> errors_;
+
+    std::unique_ptr<LuaBackend> lua_backend_;
 };
 
 } // namespace nexus::scripting

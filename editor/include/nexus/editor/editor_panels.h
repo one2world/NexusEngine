@@ -84,6 +84,8 @@ public:
     void on_render() override;
     const char* type_id() const override { return "HierarchyPanel"; }
 
+    void bind_scene(Scene* scene) { scene_ = scene; }
+
     void set_selected_entity(u32 entity) { selected_ = entity; has_selection_ = true; }
     void clear_selection() { has_selection_ = false; selected_ = 0; }
     bool has_selection() const { return has_selection_; }
@@ -101,6 +103,7 @@ public:
     bool is_multi_selected(u32 entity) const;
 
 private:
+    Scene* scene_{nullptr};
     u32 selected_{0};
     bool has_selection_{false};
     std::string filter_;
@@ -125,6 +128,8 @@ public:
     void on_render() override;
     const char* type_id() const override { return "InspectorPanel"; }
 
+    void bind_scene(Scene* scene) { scene_ = scene; }
+
     void set_target_entity(u32 entity) { target_ = entity; has_target_ = true; }
     void clear_target() { has_target_ = false; target_ = 0; }
     bool has_target() const { return has_target_; }
@@ -139,6 +144,7 @@ public:
     void set_locked(bool l) { locked_ = l; }
 
 private:
+    Scene* scene_{nullptr};
     u32 target_{0};
     bool has_target_{false};
     bool locked_{false};

@@ -9,6 +9,14 @@
 
 namespace nexus {
 
+/// GLSL source string containing PCF soft shadow sampling functions.
+/// Renderers can embed this in their fragment shaders for soft shadow support.
+/// Provides: sampleShadowPCF (16-tap Poisson), sampleShadowPCF3x3 (cheap 3x3),
+///           samplePointShadowPCF (20-tap cubemap).
+namespace shadow_shaders {
+    extern const char* SHADOW_SAMPLING_GLSL;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CascadedShadowMap - directional light shadows with multiple cascades
 // ─────────────────────────────────────────────────────────────────────────────

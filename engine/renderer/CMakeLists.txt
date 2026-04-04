@@ -14,6 +14,11 @@ add_library(nexus-renderer STATIC
     src/tilemap_renderer.cpp
     src/skybox.cpp
     src/taa.cpp
+    src/skinned_mesh_renderer.cpp
+    src/shader_library.cpp
+    src/light_probe.cpp
+    src/gpu_particles.cpp
+    src/decal_system.cpp
 )
 
 target_include_directories(nexus-renderer

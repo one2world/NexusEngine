@@ -29,6 +29,84 @@ void main() {
 }
 )";
 
+// ── PCF Soft Shadow sampling (used by lighting shaders) ─────────────────────
+// This is exported as a utility string that forward/deferred renderers can
+// #include or paste into their fragment shaders.
+
+const char* SHADOW_SAMPLING_GLSL = R"(
+// ── Poisson disk (16 taps) for soft shadow sampling ──────────────────────
+const vec2 poissonDisk[16] = vec2[](
+    vec2(-0.94201624, -0.39906216),
+    vec2( 0.94558609, -0.76890725),
+    vec2(-0.09418410, -0.92938870),
+    vec2( 0.34495938,  0.29387760),
+    vec2(-0.91588581,  0.45771432),
+    vec2(-0.81544232, -0.87912464),
+    vec2(-0.38277543,  0.27676845),
+    vec2( 0.97484398,  0.75648379),
+    vec2( 0.44323325, -0.97511554),
+    vec2( 0.53742981, -0.47373420),
+    vec2(-0.26496911, -0.41893023),
+    vec2( 0.79197514,  0.19090188),
+    vec2(-0.24188840,  0.99706507),
+    vec2(-0.81409955,  0.91437590),
+    vec2( 0.19984126,  0.78641367),
+    vec2( 0.14383161, -0.14100790)
+);
+
+// ── PCF shadow for directional/CSM shadow maps ──────────────────────────
+// coord: shadow-map projected XY, depth: comparison depth, texelSize: 1/shadow_resolution
+float sampleShadowPCF(sampler2D shadowMap, vec3 projCoords, float bias, float texelSize) {
+    float currentDepth = projCoords.z - bias;
+    if (currentDepth > 1.0) return 1.0;
+
+    float shadow = 0.0;
+    // 16-tap Poisson disk PCF
+    for (int i = 0; i < 16; ++i) {
+        float pcfDepth = texture(shadowMap, projCoords.xy + poissonDisk[i] * texelSize * 2.0).r;
+        shadow += (currentDepth > pcfDepth) ? 0.0 : 1.0;
+    }
+    return shadow / 16.0;
+}
+
+// ── Simple 3x3 PCF fallback (cheaper) ───────────────────────────────────
+float sampleShadowPCF3x3(sampler2D shadowMap, vec3 projCoords, float bias, float texelSize) {
+    float currentDepth = projCoords.z - bias;
+    if (currentDepth > 1.0) return 1.0;
+
+    float shadow = 0.0;
+    for (int x = -1; x <= 1; ++x) {
+        for (int y = -1; y <= 1; ++y) {
+            float pcfDepth = texture(shadowMap, projCoords.xy + vec2(x, y) * texelSize).r;
+            shadow += (currentDepth > pcfDepth) ? 0.0 : 1.0;
+        }
+    }
+    return shadow / 9.0;
+}
+
+// ── Point light soft shadow (PCF on cubemap depth) ──────────────────────
+float samplePointShadowPCF(samplerCube shadowCube, vec3 fragToLight, float currentDist,
+                            float farPlane, float bias) {
+    float shadow = 0.0;
+    float diskRadius = 0.02;
+    // 20-tap offset directions for cubemap PCF
+    vec3 sampleOffsets[20] = vec3[](
+        vec3( 1,  1,  1), vec3( 1, -1,  1), vec3(-1, -1,  1), vec3(-1,  1,  1),
+        vec3( 1,  1, -1), vec3( 1, -1, -1), vec3(-1, -1, -1), vec3(-1,  1, -1),
+        vec3( 1,  1,  0), vec3( 1, -1,  0), vec3(-1, -1,  0), vec3(-1,  1,  0),
+        vec3( 1,  0,  1), vec3(-1,  0,  1), vec3( 1,  0, -1), vec3(-1,  0, -1),
+        vec3( 0,  1,  1), vec3( 0, -1,  1), vec3( 0, -1, -1), vec3( 0,  1, -1)
+    );
+
+    float currentDepth = currentDist / farPlane - bias;
+    for (int i = 0; i < 20; ++i) {
+        float closestDepth = texture(shadowCube, fragToLight + sampleOffsets[i] * diskRadius).r;
+        shadow += (currentDepth > closestDepth) ? 0.0 : 1.0;
+    }
+    return shadow / 20.0;
+}
+)";
+
 const char* POINT_DEPTH_VERTEX = R"(
 #version 330 core
 layout (location = 0) in vec3 a_Position;

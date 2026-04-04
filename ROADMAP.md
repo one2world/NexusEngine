@@ -2,7 +2,7 @@
 
 > **NexusEngine** — A modern 2D + 3D hybrid game engine built with C++20, designed for flexibility, performance, and ease of use.
 >
-> **Last audit date:** 2026-04-03 | **Overall readiness: 82/100** (targeting 2026 commercial engine standards)
+> **Last audit date:** 2026-04-04 | **Overall readiness: 88/100** (targeting 2026 commercial engine standards)
 
 ---
 
@@ -223,11 +223,11 @@
 - [x] Albedo modification with edge fade
 - [x] Layer-sorted rendering
 
-#### C.5 Editor Specialized Tools
-- [ ] Tilemap editor (paint, auto-tile, collision shapes)
-- [ ] Animation timeline editor (keyframes, curves)
-- [ ] Particle editor (real-time preview, presets)
-- [ ] Material editor (property panel, live preview)
+#### C.5 Editor Specialized Tools ✓
+- [x] Tilemap editor (paint, erase, fill, rectangle, pick, tile palette, grid)
+- [x] Animation timeline editor (dopesheet/curve modes, keyframes, cubic Hermite interpolation)
+- [x] Particle editor (real-time preview, presets, emitter property editing)
+- [x] Material editor (property panel, save callback, live editing)
 
 ### Phase D: Platform & Distribution (P3)
 
@@ -251,10 +251,11 @@
 - [ ] WebGL 2.0 backend
 - [ ] Asset streaming for web
 
-#### D.4 Build & Export Pipeline
-- [ ] One-click platform export
-- [ ] Asset cooking (compress textures, strip debug)
-- [ ] Build configuration profiles
+#### D.4 Build & Export Pipeline ✓
+- [x] Export profiles (per-platform configuration: graphics API, compression, signing)
+- [x] Asset cooker (texture compression settings, mesh/audio/script processing)
+- [x] Build pipeline (step-based: validate → cook → compile → build → package → sign)
+- [x] Platform-specific steps (APK signing, iOS code sign, WebGL HTML shell)
 
 ### Phase E: Polish & Production (P4)
 
@@ -272,11 +273,12 @@
 - [ ] Frame graph visualization
 - [ ] Automated performance regression tests
 
-#### E.3 Stability
-- [ ] Crash handler with minidump generation
-- [ ] Structured error codes across all subsystems
-- [ ] Integration test suite
-- [ ] Stress tests (10K entities, 100K particles)
+#### E.3 Stability — Partial ✓
+- [x] Crash handler with signal handling (SIGSEGV/SIGABRT/SIGFPE) and dump generation
+- [x] Structured error codes across all subsystems (ErrorCode enum, 40+ codes)
+- [x] ErrorResult type for consistent error reporting
+- [ ] Integration test suite — planned
+- [ ] Stress tests (10K entities, 100K particles) — planned
 
 ---
 
@@ -308,6 +310,6 @@
 |-----------|-------|-------|-----------------|
 | **M-A — Usable Engine** | A (P0) | ✅ 78/100 | Scripting, asset importers, editor panels, networking |
 | **M-B — Visual Parity** | B (P1) | ✅ 85/100 | TAA, skybox, soft shadows, GPU skinning, shader system |
-| **M-C — Competitive** | C (P2) | 82/100 (partial) | Light probes, GPU particles, decals — editor tools pending |
-| **M-D — Multi-Platform** | D (P3) | → 95/100 | Vulkan, mobile, web export |
-| **M-E — 1.0 Release** | E (P4) | → 100/100 | Docs, stability, performance validation |
+| **M-C — Competitive** | C (P2) | ✅ 88/100 | Light probes, GPU particles, decals, editor tools complete |
+| **M-D — Multi-Platform** | D (P3) | 85/100 (partial) | Build/export pipeline done, Vulkan/mobile runtime pending |
+| **M-E — 1.0 Release** | E (P4) | 82/100 (partial) | Crash handler + error codes done, docs/profiling pending |

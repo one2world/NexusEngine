@@ -5,6 +5,7 @@ add_library(nexus-editor-lib STATIC
     src/undo_redo.cpp
     src/editor_state.cpp
     src/gizmo.cpp
+    src/editor_tools.cpp
 )
 
 target_include_directories(nexus-editor-lib

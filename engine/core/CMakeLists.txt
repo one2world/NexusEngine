@@ -5,6 +5,7 @@ add_library(nexus-core STATIC
     src/vfs.cpp
     src/job_system.cpp
     src/application.cpp
+    src/crash_handler.cpp
 )
 
 target_include_directories(nexus-core

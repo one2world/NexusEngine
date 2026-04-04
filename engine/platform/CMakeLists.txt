@@ -2,6 +2,7 @@ add_library(nexus-platform STATIC
     src/window.cpp
     src/input.cpp
     src/input_action.cpp
+    src/build_export.cpp
 )
 
 target_include_directories(nexus-platform

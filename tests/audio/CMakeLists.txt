@@ -1,5 +1,6 @@
 add_executable(nexus-test-audio
     test_audio.cpp
+    test_reverb_zone.cpp
 )
 
 target_link_libraries(nexus-test-audio

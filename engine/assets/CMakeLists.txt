@@ -3,6 +3,7 @@ add_library(nexus-assets STATIC
     src/asset_registry.cpp
     src/asset_loader.cpp
     src/asset_package.cpp
+    src/gltf_importer.cpp
 )
 
 target_include_directories(nexus-assets

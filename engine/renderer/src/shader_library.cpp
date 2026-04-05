@@ -1,5 +1,7 @@
 #include "nexus/renderer/shader_library.h"
 #include "nexus/core/log.h"
+#include <algorithm>
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <filesystem>
@@ -212,6 +214,211 @@ void ShaderLibrary::reload_all() {
             reload_callback_(name, entry.handle);
         }
     }
+}
+
+// ── Cache ─────────────────────────────────────────────────────────────────
+
+std::string ShaderLibrary::compute_cache_key(
+    const std::string& vert_source,
+    const std::string& frag_source,
+    const std::unordered_map<std::string, std::string>& defines) {
+
+    // Build a deterministic string: vert + frag + sorted defines + platform
+    std::string combined = vert_source;
+    combined += '\0';
+    combined += frag_source;
+    combined += '\0';
+
+    // Sort defines for deterministic ordering
+    std::vector<std::pair<std::string, std::string>> sorted_defines(
+        defines.begin(), defines.end());
+    std::sort(sorted_defines.begin(), sorted_defines.end());
+    for (const auto& [key, val] : sorted_defines) {
+        combined += key;
+        combined += '=';
+        combined += val;
+        combined += ';';
+    }
+
+    // Platform identifier
+#if defined(_WIN32)
+    combined += "platform:win32";
+#elif defined(__APPLE__)
+    combined += "platform:apple";
+#elif defined(__linux__)
+    combined += "platform:linux";
+#else
+    combined += "platform:unknown";
+#endif
+
+    std::size_t h = std::hash<std::string>{}(combined);
+
+    // Convert to hex string
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%016zx", h);
+    return std::string(buf);
+}
+
+void ShaderLibrary::save_binary_to_cache(const ShaderEntry& entry,
+                                          const std::string& cache_key) {
+    std::error_code ec;
+    std::filesystem::create_directories(cache_dir_, ec);
+    if (ec) {
+        NX_WARN("ShaderLibrary: failed to create cache directory '{}': {}",
+                cache_dir_, ec.message());
+        return;
+    }
+
+    // Read the source files to store in cache
+    std::unordered_set<std::string> included_vert;
+    std::string vert_source = const_cast<ShaderLibrary*>(this)->read_shader_file(
+        entry.vertex_path, included_vert);
+
+    std::unordered_set<std::string> included_frag;
+    std::string frag_source = const_cast<ShaderLibrary*>(this)->read_shader_file(
+        entry.fragment_path, included_frag);
+
+    vert_source = inject_defines(vert_source, entry.defines);
+    frag_source = inject_defines(frag_source, entry.defines);
+
+    std::string filepath = cache_dir_ + "/" + cache_key + ".bin";
+    std::ofstream out(filepath, std::ios::binary);
+    if (!out.is_open()) {
+        NX_WARN("ShaderLibrary: failed to write cache file '{}'", filepath);
+        return;
+    }
+
+    // Format: [4-byte vert_size][vert_source][4-byte frag_size][frag_source]
+    auto vert_size = static_cast<u32>(vert_source.size());
+    auto frag_size = static_cast<u32>(frag_source.size());
+
+    out.write(reinterpret_cast<const char*>(&vert_size), sizeof(vert_size));
+    out.write(vert_source.data(), vert_size);
+    out.write(reinterpret_cast<const char*>(&frag_size), sizeof(frag_size));
+    out.write(frag_source.data(), frag_size);
+}
+
+bool ShaderLibrary::load_cached_binary(ShaderEntry& entry) {
+    // Read source to compute cache key
+    std::unordered_set<std::string> included_vert;
+    std::string vert_source = read_shader_file(entry.vertex_path, included_vert);
+    if (vert_source.empty()) return false;
+
+    std::unordered_set<std::string> included_frag;
+    std::string frag_source = read_shader_file(entry.fragment_path, included_frag);
+    if (frag_source.empty()) return false;
+
+    vert_source = inject_defines(vert_source, entry.defines);
+    frag_source = inject_defines(frag_source, entry.defines);
+
+    std::string cache_key = compute_cache_key(vert_source, frag_source, entry.defines);
+    std::string filepath = cache_dir_ + "/" + cache_key + ".bin";
+
+    std::ifstream in(filepath, std::ios::binary);
+    if (!in.is_open()) return false;
+
+    // Read cached sources
+    u32 cached_vert_size = 0;
+    u32 cached_frag_size = 0;
+
+    in.read(reinterpret_cast<char*>(&cached_vert_size), sizeof(cached_vert_size));
+    if (!in.good() || cached_vert_size > 10 * 1024 * 1024) return false;
+
+    std::string cached_vert(cached_vert_size, '\0');
+    in.read(cached_vert.data(), cached_vert_size);
+    if (!in.good()) return false;
+
+    in.read(reinterpret_cast<char*>(&cached_frag_size), sizeof(cached_frag_size));
+    if (!in.good() || cached_frag_size > 10 * 1024 * 1024) return false;
+
+    std::string cached_frag(cached_frag_size, '\0');
+    in.read(cached_frag.data(), cached_frag_size);
+    if (!in) return false;
+
+    // Destroy old shader if any
+    if (entry.handle != rhi::INVALID_HANDLE) {
+        rhi_->destroy_shader(entry.handle);
+    }
+
+    entry.handle = rhi_->create_shader(cached_vert.c_str(), cached_frag.c_str());
+    if (entry.handle == rhi::INVALID_HANDLE) {
+        NX_WARN("ShaderLibrary: cached binary for '{}' failed to compile", entry.name);
+        return false;
+    }
+
+    // Update modification times
+    std::string vert_full = shader_dir_.empty() ? entry.vertex_path
+        : (shader_dir_ + "/" + entry.vertex_path);
+    std::string frag_full = shader_dir_.empty() ? entry.fragment_path
+        : (shader_dir_ + "/" + entry.fragment_path);
+    entry.vertex_last_modified = get_file_mtime(vert_full);
+    entry.fragment_last_modified = get_file_mtime(frag_full);
+
+    return true;
+}
+
+u32 ShaderLibrary::save_cache() {
+    u32 saved = 0;
+    for (const auto& [name, entry] : entries_) {
+        if (entry.handle == rhi::INVALID_HANDLE) continue;
+
+        std::unordered_set<std::string> included_vert;
+        std::string vert_source = const_cast<ShaderLibrary*>(this)->read_shader_file(
+            entry.vertex_path, included_vert);
+
+        std::unordered_set<std::string> included_frag;
+        std::string frag_source = const_cast<ShaderLibrary*>(this)->read_shader_file(
+            entry.fragment_path, included_frag);
+
+        vert_source = inject_defines(vert_source, entry.defines);
+        frag_source = inject_defines(frag_source, entry.defines);
+
+        std::string cache_key = compute_cache_key(vert_source, frag_source, entry.defines);
+        save_binary_to_cache(entry, cache_key);
+        ++saved;
+    }
+
+    if (saved > 0) {
+        NX_INFO("ShaderLibrary: saved {} shader(s) to cache '{}'", saved, cache_dir_);
+    }
+    return saved;
+}
+
+u32 ShaderLibrary::load_cache() {
+    std::error_code ec;
+    if (!std::filesystem::exists(cache_dir_, ec) ||
+        !std::filesystem::is_directory(cache_dir_, ec)) {
+        return 0;
+    }
+
+    u32 loaded = 0;
+    for (auto& [name, entry] : entries_) {
+        if (entry.handle != rhi::INVALID_HANDLE) continue;
+        if (load_cached_binary(entry)) {
+            ++loaded;
+            NX_INFO("ShaderLibrary: loaded '{}' from cache", name);
+        }
+    }
+
+    if (loaded > 0) {
+        NX_INFO("ShaderLibrary: loaded {} shader(s) from cache", loaded);
+    }
+    return loaded;
+}
+
+void ShaderLibrary::clear_cache() {
+    std::error_code ec;
+    if (!std::filesystem::exists(cache_dir_, ec)) return;
+
+    u32 removed = 0;
+    for (const auto& dir_entry : std::filesystem::directory_iterator(cache_dir_, ec)) {
+        if (dir_entry.path().extension() == ".bin") {
+            std::filesystem::remove(dir_entry.path(), ec);
+            if (!ec) ++removed;
+        }
+    }
+
+    NX_INFO("ShaderLibrary: cleared {} cached shader file(s) from '{}'", removed, cache_dir_);
 }
 
 } // namespace nexus

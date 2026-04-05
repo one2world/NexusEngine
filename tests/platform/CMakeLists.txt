@@ -1,5 +1,6 @@
 add_executable(nexus-test-platform
     test_input_action.cpp
+    test_touch_input.cpp
 )
 
 target_link_libraries(nexus-test-platform

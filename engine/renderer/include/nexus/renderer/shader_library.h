@@ -55,6 +55,18 @@ public:
     using ReloadCallback = std::function<void(const std::string& name, rhi::ShaderHandle handle)>;
     void set_reload_callback(ReloadCallback cb) { reload_callback_ = std::move(cb); }
 
+    /// Set the cache directory for compiled shader binaries.
+    void set_cache_directory(const std::string& dir) { cache_dir_ = dir; }
+
+    /// Save all compiled shaders to the cache directory.
+    u32 save_cache();
+
+    /// Load cached shaders. Returns number of shaders loaded from cache.
+    u32 load_cache();
+
+    /// Clear all cached shader binaries from disk.
+    void clear_cache();
+
 private:
     struct ShaderEntry {
         std::string name;
@@ -82,8 +94,20 @@ private:
 
     rhi::RHI* rhi_;
     std::string shader_dir_;
+    std::string cache_dir_{".nexus/shader_cache"};
     std::unordered_map<std::string, ShaderEntry> entries_;
     ReloadCallback reload_callback_;
+
+    /// Compute a hash string for a shader (source + defines + platform).
+    static std::string compute_cache_key(const std::string& vert_source,
+                                          const std::string& frag_source,
+                                          const std::unordered_map<std::string, std::string>& defines);
+
+    /// Try to load a cached binary for an entry. Returns true if successful.
+    bool load_cached_binary(ShaderEntry& entry);
+
+    /// Save a compiled shader binary to cache.
+    void save_binary_to_cache(const ShaderEntry& entry, const std::string& cache_key);
 };
 
 } // namespace nexus

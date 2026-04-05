@@ -3,6 +3,7 @@ add_library(nexus-platform STATIC
     src/input.cpp
     src/input_action.cpp
     src/build_export.cpp
+    src/touch_input.cpp
 )
 
 target_include_directories(nexus-platform

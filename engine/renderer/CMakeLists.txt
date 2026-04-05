@@ -19,6 +19,8 @@ add_library(nexus-renderer STATIC
     src/light_probe.cpp
     src/gpu_particles.cpp
     src/decal_system.cpp
+    src/lightmap_baker.cpp
+    src/mobile_renderer.cpp
 )
 
 target_include_directories(nexus-renderer

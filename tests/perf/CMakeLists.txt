@@ -6,6 +6,7 @@ add_executable(nexus-test-perf
     test_lod_system.cpp
     test_instancing.cpp
     test_thread_pool.cpp
+    test_profiler_ui.cpp
 )
 
 target_link_libraries(nexus-test-perf

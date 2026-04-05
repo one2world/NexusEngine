@@ -105,6 +105,50 @@ float samplePointShadowPCF(samplerCube shadowCube, vec3 fragToLight, float curre
     }
     return shadow / 20.0;
 }
+
+// ── PCSS (Percentage-Closer Soft Shadows) ──────────────────────────────
+// Provides contact-hardening shadows: sharp near contact, soft far away.
+// lightSize: world-space light size (larger = softer), searchRadius: blocker search texels
+float findAverageBlockerDepth(sampler2D shadowMap, vec2 uv, float receiverDepth,
+                               float searchRadius, float texelSize) {
+    float blockerSum = 0.0;
+    float numBlockers = 0.0;
+    for (int i = 0; i < 16; ++i) {
+        vec2 offset = poissonDisk[i] * searchRadius * texelSize;
+        float sampleDepth = texture(shadowMap, uv + offset).r;
+        if (sampleDepth < receiverDepth) {
+            blockerSum += sampleDepth;
+            numBlockers += 1.0;
+        }
+    }
+    if (numBlockers < 0.5) return -1.0; // No blockers found
+    return blockerSum / numBlockers;
+}
+
+float sampleShadowPCSS(sampler2D shadowMap, vec3 projCoords, float bias,
+                        float texelSize, float lightSize) {
+    float receiverDepth = projCoords.z - bias;
+    if (receiverDepth > 1.0) return 1.0;
+
+    // Step 1: Blocker search
+    float searchRadius = lightSize * 20.0;
+    float avgBlockerDepth = findAverageBlockerDepth(shadowMap, projCoords.xy,
+                                                     receiverDepth, searchRadius, texelSize);
+    if (avgBlockerDepth < 0.0) return 1.0; // No blockers = fully lit
+
+    // Step 2: Penumbra estimation
+    float penumbraWidth = (receiverDepth - avgBlockerDepth) * lightSize / avgBlockerDepth;
+    float filterRadius = penumbraWidth * 10.0;
+
+    // Step 3: Variable-size PCF
+    float shadow = 0.0;
+    for (int i = 0; i < 16; ++i) {
+        vec2 offset = poissonDisk[i] * filterRadius * texelSize;
+        float sampleDepth = texture(shadowMap, projCoords.xy + offset).r;
+        shadow += (receiverDepth > sampleDepth) ? 0.0 : 1.0;
+    }
+    return shadow / 16.0;
+}
 )";
 
 const char* POINT_DEPTH_VERTEX = R"(

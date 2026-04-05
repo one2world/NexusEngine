@@ -9,6 +9,7 @@ namespace nexus::rhi {
 enum class Backend : u8 {
     OpenGL,
     Vulkan,
+    WebGL,
 };
 
 class RHI {

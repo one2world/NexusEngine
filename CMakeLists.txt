@@ -27,6 +27,18 @@ endif()
 # CMake modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(cmake/CompilerFlags.cmake)
+
+# Platform-specific overlays
+option(NEXUS_ENABLE_WEBGL  "Enable WebGL 2.0 rendering backend" OFF)
+option(NEXUS_ENABLE_GLES   "Enable OpenGL ES 3.0 backend"       OFF)
+
+if(EMSCRIPTEN)
+    include(cmake/Emscripten.cmake)
+endif()
+if(ANDROID)
+    include(cmake/Android.cmake)
+endif()
+
 include(cmake/Dependencies.cmake)
 
 # Engine modules (order matters: dependencies first)

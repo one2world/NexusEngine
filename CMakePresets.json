@@ -1,0 +1,154 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 21,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "default",
+            "displayName": "Desktop Debug",
+            "description": "Default debug build for host platform",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "NEXUS_BUILD_TESTS": "ON",
+                "NEXUS_BUILD_EDITOR": "ON",
+                "NEXUS_BUILD_SANDBOX": "ON",
+                "NEXUS_ENABLE_OPENGL": "ON",
+                "NEXUS_ENABLE_VULKAN": "ON"
+            }
+        },
+        {
+            "name": "release",
+            "displayName": "Desktop Release",
+            "description": "Optimized release build for host platform",
+            "binaryDir": "${sourceDir}/build-release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "NEXUS_BUILD_TESTS": "OFF",
+                "NEXUS_BUILD_EDITOR": "ON",
+                "NEXUS_BUILD_SANDBOX": "ON",
+                "NEXUS_ENABLE_OPENGL": "ON",
+                "NEXUS_ENABLE_VULKAN": "ON"
+            }
+        },
+        {
+            "name": "ci",
+            "displayName": "CI Build",
+            "description": "Continuous integration build with tests",
+            "binaryDir": "${sourceDir}/build-ci",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "NEXUS_BUILD_TESTS": "ON",
+                "NEXUS_BUILD_EDITOR": "ON",
+                "NEXUS_BUILD_SANDBOX": "OFF",
+                "NEXUS_ENABLE_OPENGL": "ON",
+                "NEXUS_ENABLE_VULKAN": "ON"
+            }
+        },
+        {
+            "name": "web",
+            "displayName": "Web (Emscripten/WebGL 2.0)",
+            "description": "Build for web browsers via Emscripten",
+            "binaryDir": "${sourceDir}/build-web",
+            "toolchainFile": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "NEXUS_BUILD_TESTS": "OFF",
+                "NEXUS_BUILD_EDITOR": "OFF",
+                "NEXUS_BUILD_SANDBOX": "ON",
+                "NEXUS_ENABLE_OPENGL": "OFF",
+                "NEXUS_ENABLE_VULKAN": "OFF",
+                "NEXUS_ENABLE_WEBGL": "ON",
+                "NEXUS_PLATFORM_WEB": "ON"
+            }
+        },
+        {
+            "name": "android-arm64",
+            "displayName": "Android ARM64",
+            "description": "Build for Android ARM64 (aarch64) via NDK",
+            "binaryDir": "${sourceDir}/build-android-arm64",
+            "toolchainFile": "$env{ANDROID_NDK}/build/cmake/android.toolchain.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "ANDROID_ABI": "arm64-v8a",
+                "ANDROID_PLATFORM": "android-26",
+                "ANDROID_STL": "c++_shared",
+                "NEXUS_BUILD_TESTS": "OFF",
+                "NEXUS_BUILD_EDITOR": "OFF",
+                "NEXUS_BUILD_SANDBOX": "ON",
+                "NEXUS_ENABLE_OPENGL": "OFF",
+                "NEXUS_ENABLE_VULKAN": "OFF",
+                "NEXUS_ENABLE_GLES": "ON",
+                "NEXUS_PLATFORM_ANDROID": "ON"
+            }
+        },
+        {
+            "name": "android-x86_64",
+            "displayName": "Android x86_64 (Emulator)",
+            "description": "Build for Android x86_64 (emulator) via NDK",
+            "binaryDir": "${sourceDir}/build-android-x86_64",
+            "toolchainFile": "$env{ANDROID_NDK}/build/cmake/android.toolchain.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "ANDROID_ABI": "x86_64",
+                "ANDROID_PLATFORM": "android-26",
+                "ANDROID_STL": "c++_shared",
+                "NEXUS_BUILD_TESTS": "OFF",
+                "NEXUS_BUILD_EDITOR": "OFF",
+                "NEXUS_BUILD_SANDBOX": "ON",
+                "NEXUS_ENABLE_OPENGL": "OFF",
+                "NEXUS_ENABLE_VULKAN": "OFF",
+                "NEXUS_ENABLE_GLES": "ON",
+                "NEXUS_PLATFORM_ANDROID": "ON"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "default",
+            "configurePreset": "default",
+            "jobs": 0
+        },
+        {
+            "name": "release",
+            "configurePreset": "release",
+            "jobs": 0
+        },
+        {
+            "name": "web",
+            "configurePreset": "web",
+            "jobs": 0
+        },
+        {
+            "name": "android-arm64",
+            "configurePreset": "android-arm64",
+            "jobs": 0
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "default",
+            "configurePreset": "default",
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "jobs": 0
+            }
+        },
+        {
+            "name": "ci",
+            "configurePreset": "ci",
+            "output": {
+                "outputOnFailure": true,
+                "verbosity": "default"
+            },
+            "execution": {
+                "jobs": 0
+            }
+        }
+    ]
+}

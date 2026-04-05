@@ -6,6 +6,9 @@
 #if NEXUS_ENABLE_VULKAN
 #include <nexus/rhi/vk_rhi.h>
 #endif
+#if NEXUS_ENABLE_WEBGL
+#include <nexus/rhi/webgl_rhi.h>
+#endif
 #include <nexus/core/log.h>
 #include <glm/gtc/type_ptr.hpp>
 
@@ -656,6 +659,10 @@ std::unique_ptr<RHI> RHI::create(Backend backend) {
 #if NEXUS_ENABLE_VULKAN
         case Backend::Vulkan:
             return std::make_unique<VulkanRHI>();
+#endif
+#if NEXUS_ENABLE_WEBGL
+        case Backend::WebGL:
+            return std::make_unique<WebGLRHI>();
 #endif
         default:
             NX_ERROR("Requested RHI backend is not available");

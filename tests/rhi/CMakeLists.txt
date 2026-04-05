@@ -4,6 +4,9 @@ if(NEXUS_ENABLE_VULKAN)
     list(APPEND NEXUS_RHI_TEST_SOURCES test_vk_rhi.cpp)
 endif()
 
+# WebGL tests always run in CPU-simulated mode on desktop
+list(APPEND NEXUS_RHI_TEST_SOURCES test_webgl_rhi.cpp)
+
 if(NEXUS_RHI_TEST_SOURCES)
     add_executable(nexus-test-rhi ${NEXUS_RHI_TEST_SOURCES})
 

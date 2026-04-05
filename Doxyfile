@@ -1,0 +1,41 @@
+# Doxyfile for NexusEngine
+# Generate with: doxygen Doxyfile
+
+PROJECT_NAME           = "NexusEngine"
+PROJECT_NUMBER         = "1.0"
+PROJECT_BRIEF          = "Modern 2D+3D hybrid game engine built with C++20"
+OUTPUT_DIRECTORY       = docs/api
+INPUT                  = engine editor
+FILE_PATTERNS          = *.h *.hpp *.cpp
+RECURSIVE              = YES
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+HTML_OUTPUT            = html
+HTML_COLORSTYLE        = LIGHT
+GENERATE_TREEVIEW      = YES
+DISABLE_INDEX          = NO
+FULL_SIDEBAR           = NO
+SEARCHENGINE           = YES
+SORT_BRIEF_DOCS        = YES
+SORT_MEMBERS_CTORS_1ST = YES
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+STRIP_CODE_COMMENTS    = NO
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+BUILTIN_STL_SUPPORT    = YES
+USE_MDFILE_AS_MAINPAGE = docs/architecture.md
+EXCLUDE_PATTERNS       = */build/* */third_party/* */_deps/*
+WARN_IF_UNDOCUMENTED   = NO
+QUIET                  = YES
+DOT_IMAGE_FORMAT       = svg
+HAVE_DOT               = NO
+CLASS_DIAGRAMS         = YES
+COLLABORATION_GRAPH    = NO
+INCLUDE_GRAPH          = NO
+INCLUDED_BY_GRAPH      = NO
+GRAPHICAL_HIERARCHY    = YES
+DIRECTORY_GRAPH        = NO

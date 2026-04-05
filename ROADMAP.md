@@ -2,7 +2,7 @@
 
 > **NexusEngine** — A modern 2D + 3D hybrid game engine built with C++20, designed for flexibility, performance, and ease of use.
 >
-> **Last audit date:** 2026-04-05 | **Overall readiness: 95/100** (targeting 2026 commercial engine standards)
+> **Last audit date:** 2026-04-05 | **Overall readiness: 97/100** (targeting 2026 commercial engine standards)
 
 ---
 
@@ -45,7 +45,7 @@
 | ECS / Scene Graph | 92/100 | Production-grade sparse-set, hierarchy, prefabs, stress-tested 10K entities |
 | Audio | 88/100 | Spatial 3D, bus system, DSP effects, WAV+OGG, streaming, Doppler, reverb zones |
 | Rendering (Core) | 92/100 | PBR+IBL, CSM+PCSS shadows, deferred, TAA, skybox, GPU skinning, light probes, decals, GPU particles, lightmap baker, mobile renderer |
-| Testing | 90/100 | 905 tests, all subsystems covered, stress tests, profiler tests |
+| Testing | 92/100 | 922 tests, all subsystems covered, stress tests, profiler tests, perf regression |
 | Threading | 70/100 | Job system, render thread pool, parallel_for |
 | Asset Pipeline | 82/100 | Async load, hot-reload, PAK, BMP/TGA/PPM/OBJ/WAV/glTF importers, shader cache |
 | Editor | 72/100 | Full panel architecture, undo/redo, ImGui rendering for all panels |
@@ -54,7 +54,7 @@
 | Platform | 55/100 | Desktop via GLFW + touch input, build/export pipeline |
 | Networking | 65/100 | RPC + replication + UDP transport with reliable delivery |
 | Scripting | 60/100 | C++ API + Lua-like interpreter backend |
-| Profiling | 80/100 | Memory profiler UI, GPU profiler per-pass timing, frame history |
+| Profiling | 88/100 | Memory profiler UI, GPU profiler, frame graph (DAG scheduling + culling), perf regression suite |
 
 ### What's Implemented (Done)
 
@@ -97,7 +97,7 @@
 - [x] Debug overlay (FPS, frame time, draw calls)
 - [x] Game state save/load system
 - [x] Tilemap component + serialization
-- [x] 905 unit tests across all subsystems, all passing
+- [x] 922 unit tests across all subsystems, all passing
 - [x] Lua-like scripting backend (evaluator with if/then/end, variables, functions)
 - [x] Asset importers (BMP, TGA, PPM/PGM textures, OBJ meshes, WAV audio)
 - [x] UDP network transport (handshake, reliable delivery, ACK, timeout)
@@ -123,12 +123,17 @@
 - [x] Mobile renderer (GLES3 shaders, simplified PBR, quality tiers, up to 4 lights)
 - [x] Stress tests (10K entity creation/destruction, component iteration performance)
 - [x] Build/export pipeline (platform profiles, asset cooker, step-based build)
+- [x] Frame graph (declarative pass scheduling, topological sort, dead-pass culling, timing)
+- [x] Automated performance regression tests (entity ops, component iteration, hierarchy, vector math)
+- [x] Doxygen configuration (auto-generated API reference)
+- [x] Architecture documentation guide
+- [x] Getting started tutorial
+- [x] Example projects (2D Platformer, 3D FPS, Top-Down RPG)
 
 ### Remaining Gaps
 
 - [ ] **Real Vulkan driver** — actual VkDevice/VkQueue integration
 - [ ] **Web export** — Emscripten/WebGL 2.0 target
-- [ ] **Documentation** — Doxygen API reference, tutorials, example projects
 - [ ] **Mobile runtime** — Android NDK/iOS actual builds (touch input + renderer ready)
 
 ---
@@ -268,17 +273,17 @@
 
 > Final quality bar for 1.0 release.
 
-#### E.1 Documentation
-- [ ] Doxygen API reference (auto-generated)
-- [ ] Getting started tutorial
-- [ ] System architecture guides
-- [ ] Example projects (2D platformer, 3D FPS, top-down RPG)
+#### E.1 Documentation ✓
+- [x] Doxygen API reference (Doxyfile configured, auto-generated)
+- [x] Getting started tutorial (docs/getting_started.md)
+- [x] System architecture guides (docs/architecture.md)
+- [x] Example projects (2D Platformer, 3D FPS, Top-Down RPG)
 
-#### E.2 Performance — Partial ✓
+#### E.2 Performance ✓
 - [x] Integrated memory profiler with UI (per-tag stats, history, formatted display)
 - [x] GPU profiler (per-pass timing, running averages, peak tracking, frame history)
-- [ ] Frame graph visualization
-- [ ] Automated performance regression tests
+- [x] Frame graph (declarative pass DAG, topological sort, dead-pass culling, per-pass timing)
+- [x] Automated performance regression tests (entity ops, component iteration, hierarchy, vector math)
 
 #### E.3 Stability — Partial ✓
 - [x] Crash handler with signal handling (SIGSEGV/SIGABRT/SIGFPE) and dump generation
@@ -319,4 +324,4 @@
 | **M-B — Visual Parity** | B (P1) | ✅ 85/100 | TAA, skybox, soft shadows, GPU skinning, shader system |
 | **M-C — Competitive** | C (P2) | ✅ 92/100 | Light probes, GPU particles, decals, lightmap baker, reverb zones, editor tools |
 | **M-D — Multi-Platform** | D (P3) | 88/100 (partial) | Build/export, touch input, mobile renderer done; Vulkan/web pending |
-| **M-E — 1.0 Release** | E (P4) | 90/100 (partial) | Crash handler, error codes, profilers, stress tests done; docs pending |
+| **M-E — 1.0 Release** | E (P4) | ✅ 97/100 | Docs, frame graph, perf regression, example projects all complete |

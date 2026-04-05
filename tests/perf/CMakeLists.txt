@@ -7,12 +7,15 @@ add_executable(nexus-test-perf
     test_instancing.cpp
     test_thread_pool.cpp
     test_profiler_ui.cpp
+    test_frame_graph.cpp
+    test_perf_regression.cpp
 )
 
 target_link_libraries(nexus-test-perf
     PRIVATE
         Nexus::Core
         Nexus::Perf
+        Nexus::Scene
         gtest
         gtest_main
 )

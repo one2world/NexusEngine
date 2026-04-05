@@ -8,6 +8,7 @@ add_library(nexus-perf STATIC
     src/thread_pool.cpp
     src/memory_profiler_ui.cpp
     src/gpu_profiler.cpp
+    src/frame_graph.cpp
 )
 
 target_include_directories(nexus-perf

@@ -140,6 +140,14 @@ public:
     /// All network entity ids.
     std::vector<NetworkId> all_entities() const;
 
+    /// Create a delta-compressed snapshot relative to a baseline.
+    /// Only includes entities/components that changed since baseline.
+    std::vector<u8> create_delta_snapshot(const std::vector<u8>& baseline) const;
+
+    /// Apply a delta snapshot on top of a baseline to produce full state.
+    void apply_delta_snapshot(const std::vector<u8>& baseline,
+                              const std::vector<u8>& delta);
+
 private:
     NetworkId next_id();
 

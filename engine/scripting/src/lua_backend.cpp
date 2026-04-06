@@ -99,6 +99,52 @@ bool LuaBackend::execute(const std::string& script) {
             continue;
         }
 
+        // Handle "while ... do" loop.
+        if (trimmed.size() > 6 && trimmed.substr(0, 6) == "while ") {
+            auto do_pos = trimmed.rfind(" do");
+            if (do_pos != std::string::npos && do_pos + 3 >= trimmed.size() - 1) {
+                std::string cond_expr = trim(trimmed.substr(6, do_pos - 6));
+                auto body = collect_block(stream, line_number);
+                if (!execute_while(cond_expr, body, line_number, "<string>")) {
+                    return false;
+                }
+                continue;
+            }
+        }
+
+        // Handle "for var = start, stop[, step] do" numeric for loop.
+        if (trimmed.size() > 4 && trimmed.substr(0, 4) == "for ") {
+            auto do_pos = trimmed.rfind(" do");
+            if (do_pos != std::string::npos) {
+                std::string for_clause = trim(trimmed.substr(4, do_pos - 4));
+                auto eq_pos = for_clause.find('=');
+                if (eq_pos != std::string::npos) {
+                    std::string var = trim(for_clause.substr(0, eq_pos));
+                    std::string range_str = trim(for_clause.substr(eq_pos + 1));
+                    auto parts = tokenize_args(range_str);
+
+                    if (parts.size() >= 2) {
+                        ScriptValue sv_start = evaluate_expression(trim(parts[0]));
+                        ScriptValue sv_stop = evaluate_expression(trim(parts[1]));
+                        i32 start_val = sv_start.is_int() ? sv_start.as_int() : static_cast<i32>(sv_start.as_float());
+                        i32 stop_val = sv_stop.is_int() ? sv_stop.as_int() : static_cast<i32>(sv_stop.as_float());
+                        i32 step_val = 1;
+                        if (parts.size() >= 3) {
+                            ScriptValue sv_step = evaluate_expression(trim(parts[2]));
+                            step_val = sv_step.is_int() ? sv_step.as_int() : static_cast<i32>(sv_step.as_float());
+                        }
+
+                        auto body = collect_block(stream, line_number);
+                        if (!execute_for(var, start_val, stop_val, step_val,
+                                        body, line_number, "<string>")) {
+                            return false;
+                        }
+                        continue;
+                    }
+                }
+            }
+        }
+
         // Handle "if ... then" pattern.
         if (trimmed.substr(0, 3) == "if " && trimmed.size() > 4) {
             // Find "then" at the end.
@@ -372,6 +418,11 @@ ScriptValue LuaBackend::parse_value(const std::string& token) {
     if (t == "true") return ScriptValue(true);
     if (t == "false") return ScriptValue(false);
 
+    // Table constructors: { ... }
+    if (t.front() == '{' && t.back() == '}') {
+        return parse_table_constructor(t);
+    }
+
     // String literals (double-quoted).
     if (t.size() >= 2 && t.front() == '"' && t.back() == '"') {
         return ScriptValue(t.substr(1, t.size() - 2));
@@ -466,6 +517,117 @@ LuaBackend::tokenize_args(const std::string& args_str) {
     }
 
     return tokens;
+}
+
+// ── Block Collection ────────────────────────────────────────────────────
+
+std::vector<std::string>
+LuaBackend::collect_block(std::istringstream& stream, u32& line_number) {
+    std::vector<std::string> body;
+    std::string line;
+    i32 depth = 1; // We already consumed the opening keyword
+
+    while (std::getline(stream, line)) {
+        ++line_number;
+        std::string t = trim(line);
+        if (t.empty() || (t.size() >= 2 && t[0] == '-' && t[1] == '-'))
+            continue;
+
+        // Track nesting depth
+        if (t.substr(0, 6) == "while " || t.substr(0, 4) == "for " ||
+            (t.substr(0, 3) == "if " && t.find("then") != std::string::npos) ||
+            t.substr(0, 9) == "function ") {
+            ++depth;
+        }
+        if (t == "end") {
+            --depth;
+            if (depth == 0) return body;
+        }
+
+        body.push_back(t);
+    }
+    return body;
+}
+
+bool LuaBackend::execute_while(const std::string& condition,
+                                const std::vector<std::string>& body,
+                                u32 line_number, const std::string& source) {
+    constexpr u32 MAX_ITERATIONS = 100000;
+    u32 iterations = 0;
+
+    while (evaluate_expression(condition).truthy()) {
+        if (++iterations > MAX_ITERATIONS) {
+            set_error("while loop exceeded max iterations", source, line_number);
+            return false;
+        }
+
+        for (const auto& stmt : body) {
+            if (!execute_line(stmt, line_number, source)) return false;
+        }
+    }
+    return true;
+}
+
+bool LuaBackend::execute_for(const std::string& var, i32 start, i32 stop,
+                              i32 step, const std::vector<std::string>& body,
+                              u32 line_number, const std::string& source) {
+    if (step == 0) {
+        set_error("for loop step cannot be zero", source, line_number);
+        return false;
+    }
+
+    constexpr u32 MAX_ITERATIONS = 100000;
+    u32 iterations = 0;
+
+    for (i32 i = start; (step > 0) ? (i <= stop) : (i >= stop); i += step) {
+        if (++iterations > MAX_ITERATIONS) {
+            set_error("for loop exceeded max iterations", source, line_number);
+            return false;
+        }
+
+        globals_[var] = ScriptValue(i);
+        for (const auto& stmt : body) {
+            if (!execute_line(stmt, line_number, source)) return false;
+        }
+    }
+
+    // Remove loop variable after loop
+    globals_.erase(var);
+    return true;
+}
+
+// ── Table Constructor ───────────────────────────────────────────────────
+
+ScriptValue LuaBackend::parse_table_constructor(const std::string& expr) {
+    // Parse "{key=val, ...}" or "{val1, val2, ...}"
+    std::string inner = trim(expr.substr(1, expr.size() - 2));
+    if (inner.empty()) return ScriptValue::table();
+
+    auto items = tokenize_args(inner);
+    ScriptValue table = ScriptValue::table();
+    i32 array_index = 1; // Lua 1-based arrays
+
+    for (auto& item : items) {
+        std::string t = trim(item);
+        if (t.empty()) continue;
+
+        // Check for "key = value" form
+        auto eq_pos = t.find('=');
+        if (eq_pos != std::string::npos && eq_pos > 0 &&
+            (eq_pos + 1 >= t.size() || t[eq_pos + 1] != '=') &&
+            t[eq_pos - 1] != '~' && t[eq_pos - 1] != '<' &&
+            t[eq_pos - 1] != '>') {
+            std::string key = trim(t.substr(0, eq_pos));
+            std::string val_str = trim(t.substr(eq_pos + 1));
+            table.set_field(key, evaluate_expression(val_str));
+        } else {
+            // Array-style: table[1], table[2], ...
+            table.set_field(std::to_string(array_index++),
+                           evaluate_expression(t));
+        }
+    }
+
+    return table;
 }
 
 // ── Utilities ───────────────────────────────────────────────────────────────

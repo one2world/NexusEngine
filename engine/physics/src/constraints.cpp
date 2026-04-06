@@ -67,23 +67,56 @@ void HingeJoint::prepare(float dt) {
 void HingeJoint::solve() {
     if (!body_a || !body_b) return;
 
-    // Point-to-point constraint along non-axis directions
+    // Transform axis to world space using body_a's rotation
+    Vec3 axis_world = glm::normalize(glm::mat3_cast(body_a->rotation) * axis);
+
+    // Point-to-point constraint: constrain anchor positions
     Vec3 wa = body_a->position + r_a_;
     Vec3 wb = body_b->position + r_b_;
     Vec3 diff = wb - wa;
 
-    // Project out axis component to only constrain perpendicular
-    Vec3 perp = diff - axis * glm::dot(diff, axis);
+    // Project error perpendicular to hinge axis
+    Vec3 perp = diff - axis_world * glm::dot(diff, axis_world);
     float len = glm::length(perp);
-    if (len < math::EPSILON) return;
 
-    Vec3 n = perp / len;
-    float rel_v = glm::dot(body_b->velocity - body_a->velocity, n);
-    float lambda = effective_mass_ * (-rel_v + bias_);
+    if (len > math::EPSILON) {
+        Vec3 n = perp / len;
+        float rel_v = glm::dot(body_b->velocity - body_a->velocity, n);
+        float lambda = effective_mass_ * (-rel_v + bias_);
 
-    Vec3 p = n * lambda;
-    body_a->velocity -= p * body_a->inv_mass;
-    body_b->velocity += p * body_b->inv_mass;
+        Vec3 p = n * lambda;
+        body_a->velocity -= p * body_a->inv_mass;
+        body_b->velocity += p * body_b->inv_mass;
+    }
+
+    // Angular constraint: align body axes along hinge axis
+    Vec3 axis_b = glm::normalize(glm::mat3_cast(body_b->rotation) * axis);
+    Vec3 axis_error = glm::cross(axis_b, axis_world);
+    float error_mag = glm::length(axis_error);
+
+    if (error_mag > math::EPSILON) {
+        Vec3 correction = axis_error * (0.2f / dt_);
+        body_a->angular_velocity -= correction * body_a->inv_mass * 0.5f;
+        body_b->angular_velocity += correction * body_b->inv_mass * 0.5f;
+    }
+
+    // Angle limits enforcement
+    if (enable_limits) {
+        Quat q_rel = glm::conjugate(body_a->rotation) * body_b->rotation;
+        float angle = 2.0f * std::atan2(
+            glm::dot(Vec3(q_rel.x, q_rel.y, q_rel.z), axis), q_rel.w);
+
+        if (angle > 3.14159f) angle -= 2.0f * 3.14159f;
+        if (angle < -3.14159f) angle += 2.0f * 3.14159f;
+
+        if (angle < lower_limit) {
+            float corr = (lower_limit - angle) * 0.3f / dt_;
+            body_b->angular_velocity += axis_world * corr * body_b->inv_mass;
+        } else if (angle > upper_limit) {
+            float corr = (upper_limit - angle) * 0.3f / dt_;
+            body_b->angular_velocity += axis_world * corr * body_b->inv_mass;
+        }
+    }
 }
 
 // ── BallJoint ───────────────────────────────────────────────────────────────

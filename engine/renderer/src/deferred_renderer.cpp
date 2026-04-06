@@ -472,6 +472,94 @@ void DeferredRenderer::end_geometry_pass() {
     rhi_->unbind_framebuffer();
 }
 
+// ── Light culling ──────────────────────────────────────────────────────────
+
+std::vector<PointLight> DeferredRenderer::cull_lights(
+        const std::vector<PointLight>& lights,
+        const Mat4& view_projection, Vec3 camera_pos) {
+
+    // Extract frustum planes from view-projection matrix (Gribb-Hartmann method)
+    struct Plane { float a, b, c, d; };
+    Plane planes[6];
+    for (int i = 0; i < 4; ++i) {
+        // Left, Right, Bottom, Top
+        int row = i / 2;
+        float sign = (i % 2 == 0) ? 1.0f : -1.0f;
+        planes[i].a = view_projection[0][3] + sign * view_projection[0][row];
+        planes[i].b = view_projection[1][3] + sign * view_projection[1][row];
+        planes[i].c = view_projection[2][3] + sign * view_projection[2][row];
+        planes[i].d = view_projection[3][3] + sign * view_projection[3][row];
+        // Normalize
+        float len = std::sqrt(planes[i].a * planes[i].a + planes[i].b * planes[i].b +
+                               planes[i].c * planes[i].c);
+        if (len > 0.0001f) {
+            planes[i].a /= len; planes[i].b /= len;
+            planes[i].c /= len; planes[i].d /= len;
+        }
+    }
+    // Near
+    planes[4] = { view_projection[0][3] + view_projection[0][2],
+                  view_projection[1][3] + view_projection[1][2],
+                  view_projection[2][3] + view_projection[2][2],
+                  view_projection[3][3] + view_projection[3][2] };
+    // Far
+    planes[5] = { view_projection[0][3] - view_projection[0][2],
+                  view_projection[1][3] - view_projection[1][2],
+                  view_projection[2][3] - view_projection[2][2],
+                  view_projection[3][3] - view_projection[3][2] };
+    for (int i = 4; i < 6; ++i) {
+        float len = std::sqrt(planes[i].a * planes[i].a + planes[i].b * planes[i].b +
+                               planes[i].c * planes[i].c);
+        if (len > 0.0001f) {
+            planes[i].a /= len; planes[i].b /= len;
+            planes[i].c /= len; planes[i].d /= len;
+        }
+    }
+
+    // Test each light sphere against frustum
+    struct ScoredLight {
+        const PointLight* light;
+        float dist_sq;
+    };
+    std::vector<ScoredLight> visible;
+    visible.reserve(lights.size());
+
+    for (auto& light : lights) {
+        bool inside = true;
+        for (int p = 0; p < 6; ++p) {
+            float dist = planes[p].a * light.position.x +
+                         planes[p].b * light.position.y +
+                         planes[p].c * light.position.z +
+                         planes[p].d;
+            if (dist < -light.radius) {
+                inside = false;
+                break;
+            }
+        }
+        if (inside) {
+            Vec3 diff = light.position - camera_pos;
+            float d2 = glm::dot(diff, diff);
+            visible.push_back({&light, d2});
+        }
+    }
+
+    // Sort by distance (nearest first)
+    std::sort(visible.begin(), visible.end(),
+              [](const ScoredLight& a, const ScoredLight& b) {
+                  return a.dist_sq < b.dist_sq;
+              });
+
+    // Cap at MAX_POINT_LIGHTS
+    u32 count = std::min(static_cast<u32>(visible.size()),
+                          static_cast<u32>(MAX_POINT_LIGHTS));
+    std::vector<PointLight> result;
+    result.reserve(count);
+    for (u32 i = 0; i < count; ++i) {
+        result.push_back(*visible[i].light);
+    }
+    return result;
+}
+
 void DeferredRenderer::lighting_pass(const Camera3D& camera,
                                        Vec3 sun_direction, Vec3 sun_color,
                                        float sun_intensity,

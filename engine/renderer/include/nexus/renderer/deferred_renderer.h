@@ -78,6 +78,12 @@ public:
     /// Maximum point lights per pass.
     static constexpr u32 MAX_POINT_LIGHTS = 32;
 
+    /// Cull point lights against camera frustum. Returns visible lights sorted
+    /// by distance to camera (nearest first), capped at MAX_POINT_LIGHTS.
+    static std::vector<PointLight> cull_lights(
+        const std::vector<PointLight>& lights,
+        const Mat4& view_projection, Vec3 camera_pos);
+
 private:
     void create_gbuffer(u32 width, u32 height);
     void destroy_gbuffer();

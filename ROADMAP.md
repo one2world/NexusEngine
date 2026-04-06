@@ -2,7 +2,7 @@
 
 > **NexusEngine** — A modern 2D + 3D hybrid game engine built with C++20, designed for flexibility, performance, and ease of use.
 >
-> **Last audit date:** 2026-04-05 | **Overall readiness: 99/100** (targeting 2026 commercial engine standards)
+> **Last audit date:** 2026-04-06 | **Overall readiness: 99/100** (targeting 2026 commercial engine standards)
 
 ---
 
@@ -42,18 +42,18 @@
 
 | Subsystem | Score | Status |
 |-----------|-------|--------|
-| ECS / Scene Graph | 92/100 | Production-grade sparse-set, hierarchy, prefabs, stress-tested 10K entities |
-| Audio | 88/100 | Spatial 3D, bus system, DSP effects, WAV+OGG, streaming, Doppler, reverb zones |
-| Rendering (Core) | 94/100 | PBR+IBL, CSM+PCSS shadows, deferred, TAA, skybox, GPU skinning, light probes, decals, GPU particles, lightmap baker, mobile renderer, WebGL2 RHI |
+| ECS / Scene Graph | 94/100 | Production-grade sparse-set, hierarchy, prefabs with hierarchy preservation, stress-tested 10K entities |
+| Audio | 90/100 | Spatial 3D, bus system, DSP effects, WAV+OGG (Vorbis decode), streaming, Doppler, reverb zones |
+| Rendering (Core) | 95/100 | PBR+IBL, CSM+PCSS shadows, deferred with light culling, TAA, skybox, GPU skinning, light probes, decals, GPU particles, lightmap baker, mobile renderer, WebGL2 RHI |
 | Testing | 93/100 | 932 tests, all subsystems covered, stress tests, profiler tests, perf regression, RHI tests |
 | Threading | 70/100 | Job system, render thread pool, parallel_for |
 | Asset Pipeline | 84/100 | Async load, hot-reload, PAK, BMP/TGA/PPM/OBJ/WAV/glTF importers, shader cache, web asset streaming design |
 | Editor | 72/100 | Full panel architecture, undo/redo, ImGui rendering for all panels |
 | Serialization | 70/100 | JSON + binary (.nxs) scene formats with schema versioning |
-| Physics | 40/100 | Custom 2D+3D with spatial hash — not battle-tested |
-| Platform | 78/100 | Desktop GLFW, touch input, build/export, Emscripten main loop, Android NDK bridge, CMakePresets |
-| Networking | 65/100 | RPC + replication + UDP transport with reliable delivery |
-| Scripting | 60/100 | C++ API + Lua-like interpreter backend |
+| Physics | 45/100 | Custom 2D+3D with spatial hash, hinge joint world-space axis + angle limits |
+| Platform | 80/100 | Desktop GLFW, touch input, build/export, Emscripten main loop, Android NDK bridge, CMakePresets, cross-platform crash handler |
+| Networking | 72/100 | RPC + replication + UDP transport with reliable delivery, default interpolation, delta compression |
+| Scripting | 65/100 | C++ API + Lua-like interpreter backend with loops, tables, control flow |
 | Profiling | 88/100 | Memory profiler UI, GPU profiler, frame graph (DAG scheduling + culling), perf regression suite |
 
 ### What's Implemented (Done)
@@ -136,7 +136,13 @@
 - [x] CMakePresets.json (desktop debug/release, CI, web/Emscripten, Android ARM64/x86_64)
 - [x] Web HTML shell template (loading screen, canvas resize, touch handling)
 - [x] Platform CMake overlays (cmake/Emscripten.cmake, cmake/Android.cmake)
-- [x] 932 unit tests across all subsystems, all passing
+- [x] Cross-platform crash handler (POSIX signals, Windows SEH, Android NDK unwind, Emscripten, symbol demangling)
+- [x] Lua scripting loops (while/for) and table constructors
+- [x] Physics HingeJoint world-space axis transform, angular constraint, angle limits
+- [x] Prefab instantiation with hierarchy preservation (parent-child relationships)
+- [x] OGG Vorbis decoder (codebook parsing, setup header, packet decoding, overlap-add)
+- [x] Deferred renderer CPU light volume culling (frustum test, distance sort, capped at 32)
+- [x] Network default interpolation (float-aligned lerp) and delta snapshot compression
 
 ### Remaining Gaps
 
@@ -232,8 +238,8 @@
 - [x] Additive/alpha blending, soft circle falloff
 - [x] 100K+ particle capacity with dead-particle compaction
 
-#### C.3 Advanced Audio — Partial ✓
-- [x] OGG container parsing + Vorbis header extraction
+#### C.3 Advanced Audio ✓
+- [x] OGG Vorbis decoder (container parsing, codebook/floor/residue setup, packet decode, overlap-add)
 - [x] Streaming playback (WAV chunk-based, OGG memory-buffered)
 - [x] Doppler effect (velocity-based pitch calculation)
 - [x] Reverb zones (AABB/sphere spatial zones, fade blending, priority system)
@@ -300,7 +306,7 @@
 - [x] Automated performance regression tests (entity ops, component iteration, hierarchy, vector math)
 
 #### E.3 Stability — Partial ✓
-- [x] Crash handler with signal handling (SIGSEGV/SIGABRT/SIGFPE) and dump generation
+- [x] Cross-platform crash handler (POSIX, Windows SEH, Android, Emscripten, C++ symbol demangling)
 - [x] Structured error codes across all subsystems (ErrorCode enum, 40+ codes)
 - [x] ErrorResult type for consistent error reporting
 - [x] Integration test suite (renderer, audio, profiler, platform systems tested)

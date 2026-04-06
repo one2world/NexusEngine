@@ -84,6 +84,23 @@ private:
     /// Handle string concatenation with the ".." operator.
     ScriptValue evaluate_concatenation(const std::string& expr);
 
+    /// Parse a table constructor: {key=val, ...} or {val1, val2, ...}.
+    ScriptValue parse_table_constructor(const std::string& expr);
+
+    /// Collect lines for a multi-line block (while/for/function ... end).
+    std::vector<std::string> collect_block(std::istringstream& stream,
+                                            u32& line_number);
+
+    /// Execute a while loop body.
+    bool execute_while(const std::string& condition,
+                       const std::vector<std::string>& body,
+                       u32 line_number, const std::string& source);
+
+    /// Execute a numeric for loop body.
+    bool execute_for(const std::string& var, i32 start, i32 stop, i32 step,
+                     const std::vector<std::string>& body,
+                     u32 line_number, const std::string& source);
+
     /// Report an error with context.
     void set_error(const std::string& message, const std::string& source,
                    u32 line);

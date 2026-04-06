@@ -229,6 +229,58 @@ std::vector<NetworkId> ReplicationManager::all_entities() const {
     return result;
 }
 
+std::vector<u8> ReplicationManager::create_delta_snapshot(
+        const std::vector<u8>& baseline) const {
+    // Parse baseline to get previous entity states
+    std::unordered_map<u32, std::vector<u8>> baseline_states;
+    if (!baseline.empty()) {
+        BitReader reader(baseline);
+        u32 count = reader.read_u32();
+        for (u32 i = 0; i < count && !reader.has_error(); ++i) {
+            u32 state_size = reader.read_u32();
+            auto state_bytes = reader.read_bytes(state_size);
+            if (state_bytes.size() >= 4) {
+                BitReader sr(state_bytes);
+                u32 net_id_val = sr.read_u32();
+                baseline_states[net_id_val] = std::move(state_bytes);
+            }
+        }
+    }
+
+    // Build delta: only include entities whose serialized state differs from baseline
+    BitWriter writer;
+    std::vector<std::pair<u32, std::vector<u8>>> changed;
+
+    for (auto& [net_id_val, ent] : entities_) {
+        auto state = ent.serialize_state(schemas_);
+        auto it = baseline_states.find(net_id_val);
+        if (it == baseline_states.end() || it->second != state) {
+            changed.emplace_back(net_id_val, std::move(state));
+        }
+    }
+
+    writer.write_u32(static_cast<u32>(changed.size()));
+    for (auto& [id, state] : changed) {
+        writer.write_bytes(state.data(), static_cast<u32>(state.size()));
+    }
+
+    writer.flush();
+    return writer.data();
+}
+
+void ReplicationManager::apply_delta_snapshot(const std::vector<u8>& baseline,
+                                               const std::vector<u8>& delta) {
+    // First apply baseline to restore full state
+    if (!baseline.empty()) {
+        apply_snapshot(baseline);
+    }
+
+    // Then apply delta on top (overwriting changed entities)
+    if (!delta.empty()) {
+        apply_snapshot(delta);
+    }
+}
+
 NetworkId ReplicationManager::next_id() {
     return NetworkId(next_net_id_++);
 }

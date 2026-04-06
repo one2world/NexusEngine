@@ -104,7 +104,29 @@ std::vector<u8> InterpolationBuffer::sample(f32 render_time) const {
                 return interpolate_(from.state, to.state, t);
             }
 
-            // Default: return the closer state
+            // Default interpolation: byte-wise lerp for equal-sized states
+            if (from.state.size() == to.state.size() && !from.state.empty()) {
+                std::vector<u8> result(from.state.size());
+                // Treat data as array of floats if size is aligned, otherwise byte lerp
+                if (from.state.size() % sizeof(float) == 0) {
+                    size_t count = from.state.size() / sizeof(float);
+                    const float* a = reinterpret_cast<const float*>(from.state.data());
+                    const float* b = reinterpret_cast<const float*>(to.state.data());
+                    float* out = reinterpret_cast<float*>(result.data());
+                    for (size_t j = 0; j < count; ++j) {
+                        out[j] = a[j] + (b[j] - a[j]) * t;
+                    }
+                } else {
+                    for (size_t j = 0; j < result.size(); ++j) {
+                        result[j] = static_cast<u8>(
+                            static_cast<float>(from.state[j]) +
+                            (static_cast<float>(to.state[j]) - static_cast<float>(from.state[j])) * t);
+                    }
+                }
+                return result;
+            }
+
+            // Fallback: return the closer state
             return (t < 0.5f) ? from.state : to.state;
         }
     }

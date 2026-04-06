@@ -412,7 +412,7 @@ std::shared_ptr<AssetData> TextureImporter::import(const std::string& path,
 // ── MeshImporter ────────────────────────────────────────────────────────────
 
 std::vector<std::string> MeshImporter::supported_extensions() const {
-    return {".gltf", ".glb", ".obj", ".fbx"};
+    return {".gltf", ".glb", ".obj"};
 }
 
 std::shared_ptr<AssetData> MeshImporter::import(const std::string& path,

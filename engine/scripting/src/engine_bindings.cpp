@@ -221,11 +221,16 @@ void bind_math_api(ScriptEngine& engine) {
     engine.set_global("Math.RAD2DEG", ScriptValue(math::RAD2DEG));
 }
 
-// ── Input Bindings (stubs — require platform integration) ───────────────────
+// ── Input Bindings (stubs — used when no platform Input is available) ────────
 
 void bind_input_api(ScriptEngine& engine) {
-    // These are stubs that return default values.
-    // In a real integration, they'd query the platform input system.
+    static bool warned = false;
+    if (!warned) {
+        NX_WARN("[Script] Input bindings registered without platform Input — "
+                "all queries will return defaults. Use bind_all() with an Input& "
+                "for live input.");
+        warned = true;
+    }
 
     engine.register_function("Input", "is_key_down",
         [](const std::vector<ScriptValue>&) -> ScriptValue {
@@ -362,9 +367,17 @@ void bind_input_api(ScriptEngine& engine, Input& input) {
     engine.set_global("Input.MOUSE_MIDDLE",  ScriptValue(static_cast<i32>(MouseButton::Middle)));
 }
 
-// ── Audio Bindings (stubs) ──────────────────────────────────────────────────
+// ── Audio Bindings (stubs — used when no AudioEngine is available) ──────────
 
 void bind_audio_api(ScriptEngine& engine) {
+    static bool warned = false;
+    if (!warned) {
+        NX_WARN("[Script] Audio bindings registered without AudioEngine — "
+                "all calls will be no-ops. Use bind_all() with an AudioEngine& "
+                "for live audio.");
+        warned = true;
+    }
+
     engine.register_function("Audio", "play",
         [](const std::vector<ScriptValue>&) -> ScriptValue {
             return ScriptValue(static_cast<i32>(-1)); // voice handle
@@ -508,9 +521,17 @@ void bind_audio_api(ScriptEngine& engine, audio::AudioEngine& audio) {
         }, 0, 0, "Stop all playing sounds");
 }
 
-// ── Physics Bindings (stubs) ────────────────────────────────────────────────
+// ── Physics Bindings (stubs — used when no PhysicsSystem is available) ──────
 
 void bind_physics_api(ScriptEngine& engine) {
+    static bool warned = false;
+    if (!warned) {
+        NX_WARN("[Script] Physics bindings registered without PhysicsSystem — "
+                "all queries will return nil. Use bind_all() with a "
+                "PhysicsSystem& for live physics.");
+        warned = true;
+    }
+
     engine.register_function("Physics", "raycast",
         [](const std::vector<ScriptValue>&) -> ScriptValue {
             return ScriptValue::nil(); // would return hit info table

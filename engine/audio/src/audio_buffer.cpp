@@ -431,7 +431,7 @@ static bool parse_setup_header(const u8* data, size_t size, VorbisDecoder& dec) 
         }
     }
 
-    // Time domain transforms (placeholder, always 0)
+    // Vorbis I spec §4.2.4: time-domain transforms are always type 0 (reserved)
     u32 time_count = br.read_bits(6) + 1;
     for (u32 i = 0; i < time_count; ++i) {
         br.read_bits(16); // always 0

@@ -84,10 +84,12 @@ CookResult AssetCooker::cook_asset(const std::string& input_path,
         // 3. Resize if larger than profile_.max_texture_size
         // 4. Compress with profile_.texture_compression
         // 5. Write to output
-        NX_INFO("Cook texture: {} → {} (compression: {})",
+        // TODO(1.1): integrate GPU texture compression (BCn/ASTC/ETC2)
+        // Currently passes through uncompressed; mipmap generation pending.
+        NX_INFO("Cook texture: {} → {} (compression: {}, pass-through)",
                 input_path, result.output_path,
                 static_cast<int>(profile_.texture_compression));
-        result.cooked_size = file_size; // placeholder
+        result.cooked_size = file_size;
     }
     // For other asset types, copy or process
     else if (ext == ".obj" || ext == ".gltf" || ext == ".glb") {

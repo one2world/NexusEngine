@@ -549,9 +549,11 @@ void WebGLRHI::set_cull_mode(CullMode mode) {
 
 #if WEBGL_REAL
 static GLint get_location(WebGLRHI::WGLShader& s, const std::string& name) {
-    // This can't be accessed from outside; use a free helper
-    (void)s; (void)name;
-    return -1; // placeholder — actual implementation in the class
+    auto it = s.uniform_cache.find(name);
+    if (it != s.uniform_cache.end()) return it->second;
+    GLint loc = glGetUniformLocation(s.program, name.c_str());
+    s.uniform_cache[name] = loc;
+    return loc;
 }
 #endif
 

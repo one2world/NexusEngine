@@ -800,21 +800,9 @@ std::shared_ptr<AssetData> MeshImporter::import(const std::string& path,
         NX_INFO("MeshImporter: loaded glTF '{}' ({} verts, {} tris)",
                 data->name, data->vertices.size(), data->indices.size() / 3);
     } else {
-        // FBX: placeholder - full FBX requires a dedicated library
-        NX_WARN("MeshImporter: format '{}' not fully supported, creating placeholder", ext);
-
-        MeshData::Vertex v{};
-        v.normal[2] = 1.0f;
-        v.position[0] = -0.5f; v.position[1] = -0.5f; v.position[2] = 0.0f;
-        data->vertices.push_back(v);
-        v.position[0] =  0.5f; v.texcoord[0] = 1.0f;
-        data->vertices.push_back(v);
-        v.position[1] =  0.5f; v.texcoord[1] = 1.0f;
-        data->vertices.push_back(v);
-        v.position[0] = -0.5f; v.texcoord[0] = 0.0f;
-        data->vertices.push_back(v);
-
-        data->indices = {0, 1, 2, 0, 2, 3};
+        NX_ERROR("MeshImporter: unsupported mesh format '{}' — "
+                 "only .obj, .gltf, and .glb are supported", ext);
+        return nullptr;
     }
 
     return data;

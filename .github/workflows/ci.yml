@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++-13 libgl-dev libxrandr-dev \
+            libxinerama-dev libxcursor-dev libxi-dev libxext-dev \
+            libwayland-dev libxkbcommon-dev
+
+      - name: Configure
+        run: cmake --preset ci -DCMAKE_CXX_COMPILER=g++-13
+
+      - name: Build
+        run: cmake --build build-ci --parallel $(nproc)
+
+      - name: Test
+        run: ctest --test-dir build-ci --output-on-failure --parallel $(nproc)
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake --preset ci
+
+      - name: Build
+        run: cmake --build build-ci --config RelWithDebInfo --parallel
+
+      - name: Test
+        run: ctest --test-dir build-ci -C RelWithDebInfo --output-on-failure --parallel
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake --preset ci
+
+      - name: Build
+        run: cmake --build build-ci --parallel $(sysctl -n hw.logicalcpu)
+
+      - name: Test
+        run: ctest --test-dir build-ci --output-on-failure --parallel $(sysctl -n hw.logicalcpu)

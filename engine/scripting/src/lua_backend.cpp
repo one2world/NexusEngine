@@ -446,7 +446,9 @@ ScriptValue LuaBackend::parse_value(const std::string& token) {
                 if (pos == t.size()) {
                     return ScriptValue(ival);
                 }
-            } catch (...) {}
+            } catch (const std::exception&) {
+                // Not a valid integer literal — fall through to float parse
+            }
 
             // Try float.
             try {
@@ -455,7 +457,9 @@ ScriptValue LuaBackend::parse_value(const std::string& token) {
                 if (pos == t.size()) {
                     return ScriptValue(fval);
                 }
-            } catch (...) {}
+            } catch (const std::exception&) {
+                // Not a valid float literal — fall through to variable lookup
+            }
         }
     }
 

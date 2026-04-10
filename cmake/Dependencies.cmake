@@ -35,6 +35,14 @@ FetchContent_Declare(
     GIT_SHALLOW    TRUE
 )
 
+# miniaudio — Cross-platform audio device output (single-header)
+FetchContent_Declare(
+    miniaudio
+    GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+    GIT_TAG        0.11.21
+    GIT_SHALLOW    TRUE
+)
+
 # Google Test — Unit testing
 if(NEXUS_BUILD_TESTS)
     FetchContent_Declare(
@@ -46,7 +54,7 @@ if(NEXUS_BUILD_TESTS)
 endif()
 
 # Make available
-FetchContent_MakeAvailable(spdlog glm glfw json)
+FetchContent_MakeAvailable(spdlog glm glfw json miniaudio)
 
 if(NEXUS_BUILD_TESTS)
     FetchContent_MakeAvailable(googletest)

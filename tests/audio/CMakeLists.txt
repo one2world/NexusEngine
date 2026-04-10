@@ -1,5 +1,6 @@
 add_executable(nexus-test-audio
     test_audio.cpp
+    test_audio_device.cpp
     test_reverb_zone.cpp
 )
 

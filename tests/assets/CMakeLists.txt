@@ -3,6 +3,7 @@ add_executable(nexus-test-assets
     test_asset_registry.cpp
     test_asset_loader.cpp
     test_asset_package.cpp
+    test_web_streaming.cpp
 )
 
 target_link_libraries(nexus-test-assets

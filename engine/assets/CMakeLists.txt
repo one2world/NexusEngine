@@ -4,6 +4,7 @@ add_library(nexus-assets STATIC
     src/asset_loader.cpp
     src/asset_package.cpp
     src/gltf_importer.cpp
+    src/web_asset_streaming.cpp
 )
 
 target_include_directories(nexus-assets

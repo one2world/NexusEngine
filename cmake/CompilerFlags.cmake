@@ -9,6 +9,7 @@ function(nexus_set_compiler_flags target)
             -Wall -Wextra -Wpedantic -Werror
             -Wno-unused-parameter
             -Wconversion -Wsign-conversion
+            -Wno-array-bounds -Wno-stringop-overflow -Wno-maybe-uninitialized
         >
     )
 

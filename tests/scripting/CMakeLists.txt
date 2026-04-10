@@ -3,6 +3,7 @@ add_executable(nexus-test-scripting
     test_script_engine.cpp
     test_script_component.cpp
     test_engine_bindings.cpp
+    test_lua_stdlib.cpp
 )
 
 target_link_libraries(nexus-test-scripting

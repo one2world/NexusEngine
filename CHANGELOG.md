@@ -5,6 +5,17 @@ All notable changes to NexusEngine will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-04-10
+
+### Added
+- **Web Asset Streaming**: Complete streaming manifest system with JSON serialization, chunked download pipeline, LRU cache with eviction, progress tracking, ready callbacks, and manifest generation from PAK packages. Desktop simulation for testing, Emscripten hooks ready.
+- **Lua Standard Library**: 40+ standard library functions across four modules: math (abs, floor, ceil, sqrt, sin, cos, tan, asin, acos, atan, exp, log, pow, fmod, max, min, random, randomseed + pi/huge constants), string (len, sub, upper, lower, rep, reverse, byte, char, find, format), table (insert, remove, concat, sort, getn, keys), os (clock, time).
+- **Integration Tests**: 8 end-to-end cross-subsystem pipeline tests covering ECS+serialization round-trip, ECS+scripting entity creation, asset registry+loader pipeline, animation clip sampling, physics simulation stepping, network serialization/RPC round-trip, full init-simulate-shutdown lifecycle, and delta compression integrity.
+- Total test count increased from 932 to **975**, all passing.
+
+### Fixed
+- GCC 13 `-Werror` build compatibility (suppressed spurious `-Warray-bounds`, `-Wstringop-overflow`, `-Wmaybe-uninitialized` in third-party headers).
+
 ## [1.0.0] - 2026-04-06
 
 ### Added

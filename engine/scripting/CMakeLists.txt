@@ -4,6 +4,7 @@ add_library(nexus-scripting STATIC
     src/script_component.cpp
     src/engine_bindings.cpp
     src/lua_backend.cpp
+    src/lua_stdlib.cpp
 )
 
 target_include_directories(nexus-scripting

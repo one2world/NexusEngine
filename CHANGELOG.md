@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **AudioDevice wiring**: AudioDevice is now instantiated and opened in `runtime_main.cpp` and `editor_main.cpp`, so audio actually plays through speakers instead of being silently mixed into nowhere.
+- **ImGui GL loader conflict**: Fixed build failure where GLFW's default `<GL/gl.h>` include defined `GL_VERSION_1_0`/`GL_VERSION_1_1`, causing ImGui's built-in GL loader (`imgui_impl_opengl3_loader.h`) to skip its own GL 1.0/1.1 typedefs. Fix: define `GLFW_INCLUDE_NONE` before compiling ImGui GLFW backend.
 - **README.md**: Removed false claims about Box2D, Jolt Physics, and miniaudio. Corrected 2D physics claim (no constraints — those are 3D-only). Now honestly documents all custom implementations.
 - **ROADMAP.md**: Updated technology stack table with "Originally Planned" vs "Actual Implementation" columns.
 

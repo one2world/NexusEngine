@@ -17,11 +17,15 @@
 #include "nexus/editor/editor_state.h"
 #include "nexus/editor/editor_panels.h"
 
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
+
 #include <string>
 #include <vector>
 #include <stdexcept>
 
-// Forward declare GLFW proc address getter
+// Forward declare GLFW proc address getter and window type
 struct GLFWwindow;
 extern "C" {
     typedef void (*GLFWglproc)(void);
@@ -81,6 +85,18 @@ static int run(int argc, char* argv[]) {
             Log::shutdown();
             return 1;
         }
+
+        // ── Initialize Dear ImGui ───────────────────────────────────────
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        ImGui::StyleColorsDark();
+
+        ImGui_ImplGlfw_InitForOpenGL(
+            static_cast<GLFWwindow*>(window.native_handle()), true);
+        ImGui_ImplOpenGL3_Init("#version 150");
+        NX_INFO("Dear ImGui initialized (version {})", IMGUI_VERSION);
 
         // ── Create audio subsystem with device output ───────────────────
         audio::AudioEngine audio;
@@ -151,9 +167,21 @@ static int run(int argc, char* argv[]) {
             rhi->set_viewport(0, 0, window.width(), window.height());
             rhi->clear(Vec4{0.12f, 0.12f, 0.14f, 1.0f});
 
-            // Update and render editor panels
+            // ── ImGui frame begin ──────────────────────────────────────
+            ImGui_ImplOpenGL3_NewFrame();
+            ImGui_ImplGlfw_NewFrame();
+            ImGui::NewFrame();
+
+            // Update and render editor panels (these call ImGui widgets)
             editor_state.panels().update(dt);
             editor_state.panels().render();
+
+            // Show ImGui demo window in debug for verification
+            // ImGui::ShowDemoWindow();
+
+            // ── ImGui frame end + render draw data ─────────────────────
+            ImGui::Render();
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
             rhi->end_frame();
             window.swap_buffers();
@@ -165,6 +193,9 @@ static int run(int argc, char* argv[]) {
         }
 
         // ── Shutdown (reverse init order) ───────────────────────────────
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
         audio_device.close();
         audio.stop_all();
         rhi->shutdown();

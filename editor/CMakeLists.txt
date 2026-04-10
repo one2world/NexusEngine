@@ -18,7 +18,10 @@ target_link_libraries(nexus-editor-lib
         Nexus::Core
         Nexus::Scene
         Nexus::Renderer
+        imgui
 )
+
+target_compile_definitions(nexus-editor-lib PUBLIC NEXUS_HAS_IMGUI=1)
 
 nexus_set_compiler_flags(nexus-editor-lib)
 nexus_set_build_defines(nexus-editor-lib)

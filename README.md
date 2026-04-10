@@ -8,7 +8,7 @@ NexusEngine is designed from the ground up to seamlessly combine 2D and 3D rende
 
 - **Hybrid 2D/3D Rendering** — Batch-optimized 2D sprite renderer and PBR-capable 3D renderer (deferred + forward) in the same scene
 - **Unified ECS** — Sparse-set Entity Component System with generation-based handles for both 2D and 3D game objects
-- **Physics** — Custom 2D physics (spatial hash broadphase, SAT collision, constraints) and custom 3D physics (rigid body, joints, raycasting)
+- **Physics** — Custom 2D physics (spatial hash broadphase, SAT collision, raycasting) and custom 3D physics (rigid body, distance/hinge/ball joints, raycasting, body sleeping)
 - **Scripting** — Lua-like interpreter with standard library (math, string, table, os), hot-reload, coroutines
 - **Audio** — Custom audio mixer with spatial 3D audio, bus system, DSP effects, WAV + OGG Vorbis decoding, platform audio output via miniaudio
 - **Animation** — Sprite animation, skeletal animation with GPU skinning, IK solver, state machines, blend trees
@@ -74,7 +74,7 @@ See [ROADMAP.md](ROADMAP.md) for the complete development plan.
 | Build | CMake 3.21+ |
 | Graphics | OpenGL 4.5 + WebGL 2.0 |
 | Windowing | GLFW 3.4 |
-| 2D Physics | Custom engine (spatial hash, SAT, constraints) |
+| 2D Physics | Custom engine (spatial hash, SAT, raycasting) |
 | 3D Physics | Custom engine (rigid body, joints, raycasting) |
 | Audio | Custom mixer + miniaudio (device output) |
 | Scripting | Custom Lua-like interpreter + standard library |

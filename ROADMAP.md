@@ -330,11 +330,11 @@
 | Build | CMake 3.21+ | CMake 3.21+ with presets | Done |
 | Graphics | Vulkan + OpenGL 4.5 | OpenGL 4.5 + WebGL 2.0 (Vulkan type defs only) | Mostly done |
 | Windowing | GLFW | GLFW 3.4 | Done |
-| 2D Physics | Box2D | Custom engine (spatial hash, SAT, constraints, raycast) | Done (custom) |
+| 2D Physics | Box2D | Custom engine (spatial hash, SAT, raycast) | Done (custom) |
 | 3D Physics | Jolt Physics | Custom engine (rigid body, joints, body sleeping, raycast) | Done (custom) |
-| Audio | miniaudio | Custom mixer + miniaudio device output (WAV+OGG, spatial, DSP, Doppler, reverb zones) | Done |
+| Audio | miniaudio | Custom mixer + miniaudio device output, stb_vorbis OGG decoding (WAV+OGG, spatial, DSP, Doppler, reverb zones) | Done |
 | Scripting | Lua 5.4 (sol2) | Custom Lua-like interpreter + stdlib (math/string/table/os, 40+ functions) | Done (custom) |
-| UI (Editor) | Dear ImGui | ImGui abstraction layer + full panel rendering | Done |
+| UI (Editor) | Dear ImGui | Dear ImGui 1.91 + GLFW/OpenGL3 backends + panel rendering | Done |
 | Math | GLM | GLM 1.0.1 | Done |
 | Model Loading | cgltf + assimp | Custom importers: OBJ + glTF 2.0 (JSON+GLB) + BMP/TGA/PPM | Done (custom) |
 | Font | msdfgen + stb_truetype | Bitmap font (BMFont/glyph atlas) | Partial |

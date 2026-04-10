@@ -8,12 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.2] - 2026-04-10
 
 ### Added
-- **Audio Device Output**: Cross-platform audio output via miniaudio. Callback-based device opens the platform's default playback device (ALSA, PulseAudio, WASAPI, CoreAudio, WebAudio) and feeds samples from the custom mixer. AudioDevice class with open/start/stop/close lifecycle, automatic sample rate sync, backend name reporting.
-- Total test count increased from 975 to **984**, all passing.
+- **Audio Device Output**: Cross-platform audio output via miniaudio. Callback-based device opens the platform's default playback device (ALSA, PulseAudio, WASAPI, CoreAudio, WebAudio) and feeds samples from the custom mixer. AudioDevice wired into both runtime and editor entry points.
+- **Dear ImGui Integration**: Added Dear ImGui 1.91 as a real FetchContent dependency. Editor panels now render with ImGui when `NEXUS_HAS_IMGUI` is defined (enabled by default for editor builds).
+- **Real OGG Vorbis Decoding**: Replaced the previous stub Vorbis decoder (which generated synthetic noise from packet energy estimation) with stb_vorbis — a battle-tested single-header decoder that produces correct PCM output.
+- Total test count: **984**, all passing.
 
 ### Fixed
-- **README.md**: Removed false claims about Box2D, Jolt Physics, and miniaudio being the primary implementations. Now honestly documents custom physics engines, custom audio mixer, and custom Lua-like scripting interpreter.
-- **ROADMAP.md**: Updated technology stack table with "Originally Planned" vs "Actual Implementation" columns. Changed misleading "Diverged" status to "Done (custom)" for custom implementations.
+- **AudioDevice wiring**: AudioDevice is now instantiated and opened in `runtime_main.cpp` and `editor_main.cpp`, so audio actually plays through speakers instead of being silently mixed into nowhere.
+- **README.md**: Removed false claims about Box2D, Jolt Physics, and miniaudio. Corrected 2D physics claim (no constraints — those are 3D-only). Now honestly documents all custom implementations.
+- **ROADMAP.md**: Updated technology stack table with "Originally Planned" vs "Actual Implementation" columns.
 
 ## [1.0.1] - 2026-04-10
 

@@ -18,6 +18,7 @@
 #include "nexus/renderer/camera.h"
 #include "nexus/physics/physics_system.h"
 #include "nexus/audio/audio_engine.h"
+#include "nexus/audio/audio_device.h"
 #include "nexus/scripting/script_engine.h"
 #include "nexus/scripting/engine_bindings.h"
 #include "nexus/ui/ui_system.h"
@@ -120,6 +121,12 @@ int main(int argc, char* argv[]) {
         auto& registry = scene.registry();
         nexus::physics::PhysicsSystem physics;
         nexus::audio::AudioEngine audio;
+
+        // ── Open audio device for speaker output ────────────────────────
+        nexus::audio::AudioDevice audio_device;
+        if (!audio_device.open(&audio)) {
+            NX_WARN("Audio device failed to open — audio will be silent");
+        }
 
         // ── Initialize renderers ────────────────────────────────────────
         nexus::BatchRenderer2D renderer_2d;
@@ -347,6 +354,7 @@ int main(int argc, char* argv[]) {
         }
 
         // ── Shutdown (reverse init order) ───────────────────────────────
+        audio_device.close();
         if (font_atlas_tex != nexus::rhi::INVALID_HANDLE) {
             rhi->destroy_texture(font_atlas_tex);
         }

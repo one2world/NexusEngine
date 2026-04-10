@@ -35,6 +35,22 @@ FetchContent_Declare(
     GIT_SHALLOW    TRUE
 )
 
+# stb — Single-header libraries (stb_vorbis for OGG Vorbis decoding)
+FetchContent_Declare(
+    stb
+    GIT_REPOSITORY https://github.com/nothings/stb.git
+    GIT_TAG        master
+    GIT_SHALLOW    TRUE
+)
+
+# Dear ImGui — Immediate-mode GUI for editor panels
+FetchContent_Declare(
+    imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG        v1.91.8
+    GIT_SHALLOW    TRUE
+)
+
 # miniaudio — Cross-platform audio device output (single-header)
 FetchContent_Declare(
     miniaudio
@@ -54,7 +70,29 @@ if(NEXUS_BUILD_TESTS)
 endif()
 
 # Make available
-FetchContent_MakeAvailable(spdlog glm glfw json miniaudio)
+FetchContent_MakeAvailable(spdlog glm glfw json stb imgui miniaudio)
+
+# Dear ImGui doesn't have a CMakeLists.txt — build as a static library manually
+if(imgui_POPULATED)
+    # ImGui core library (no backends — those need GL context from the app)
+    add_library(imgui STATIC
+        ${imgui_SOURCE_DIR}/imgui.cpp
+        ${imgui_SOURCE_DIR}/imgui_demo.cpp
+        ${imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_SOURCE_DIR}/imgui_tables.cpp
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    )
+    target_include_directories(imgui PUBLIC
+        ${imgui_SOURCE_DIR}
+        ${imgui_SOURCE_DIR}/backends
+    )
+    # Suppress warnings from third-party code
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(imgui PRIVATE -w)
+    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+        target_compile_options(imgui PRIVATE /w)
+    endif()
+endif()
 
 if(NEXUS_BUILD_TESTS)
     FetchContent_MakeAvailable(googletest)

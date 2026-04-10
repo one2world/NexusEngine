@@ -12,6 +12,8 @@
 #include "nexus/scene/scene.h"
 #include "nexus/renderer/forward_renderer_3d.h"
 #include "nexus/renderer/batch_renderer_2d.h"
+#include "nexus/audio/audio_engine.h"
+#include "nexus/audio/audio_device.h"
 #include "nexus/editor/editor_state.h"
 #include "nexus/editor/editor_panels.h"
 
@@ -78,6 +80,13 @@ static int run(int argc, char* argv[]) {
             NX_ERROR("Failed to initialize RHI");
             Log::shutdown();
             return 1;
+        }
+
+        // ── Create audio subsystem with device output ───────────────────
+        audio::AudioEngine audio;
+        audio::AudioDevice audio_device;
+        if (!audio_device.open(&audio)) {
+            NX_WARN("Audio device failed to open — audio will be silent");
         }
 
         // ── Create scene ────────────────────────────────────────────────
@@ -156,6 +165,8 @@ static int run(int argc, char* argv[]) {
         }
 
         // ── Shutdown (reverse init order) ───────────────────────────────
+        audio_device.close();
+        audio.stop_all();
         rhi->shutdown();
         NX_INFO("NexusEngine Editor shutting down...");
 

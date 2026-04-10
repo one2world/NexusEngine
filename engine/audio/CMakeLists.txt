@@ -16,6 +16,11 @@ target_include_directories(nexus-audio
     PRIVATE ${miniaudio_SOURCE_DIR}
 )
 
+# stb_vorbis for OGG Vorbis decoding
+target_include_directories(nexus-audio
+    PRIVATE ${stb_SOURCE_DIR}
+)
+
 target_link_libraries(nexus-audio
     PUBLIC Nexus::Core
 )

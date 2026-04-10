@@ -13,6 +13,10 @@
 #include <string>
 #include <functional>
 
+#ifdef NEXUS_HAS_IMGUI
+#include "imgui.h"
+#endif
+
 namespace nexus::editor::imgui {
 
 // ── ImGui state (set by application layer each frame) ───────────────────────
@@ -190,7 +194,8 @@ inline void set_scroll_here_y() {
 
 inline bool begin_child(const char* id, float height = 0.0f, bool border = true) {
 #ifdef NEXUS_HAS_IMGUI
-    return ImGui::BeginChild(id, ImVec2(0, height), border);
+    ImGuiChildFlags flags = border ? ImGuiChildFlags_Borders : ImGuiChildFlags_None;
+    return ImGui::BeginChild(id, ImVec2(0, height), flags);
 #else
     (void)id; (void)height; (void)border;
     return true;

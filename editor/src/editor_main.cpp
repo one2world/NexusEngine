@@ -27,6 +27,7 @@
 #include "nexus/editor/material_asset.h"
 #include "nexus/editor/prefab_asset.h"
 #include "nexus/editor/animation_asset.h"
+#include "nexus/editor/audio_asset.h"
 #include "nexus/animation/animator_system.h"
 #include "nexus/perf/profiler.h"
 #include "nexus/assets/asset_registry.h"
@@ -579,6 +580,13 @@ static int run(int /*argc*/, char* /*argv*/[]) {
         nexus::editor::AnimationAssetCache animation_cache;
         animation_cache.set_asset_registry(&editor_assets);
 
+        // Audio asset cache — bridges drag-dropped .wav/.ogg files to
+        // AudioEngine's clip registry and exposes a stable AudioClipId
+        // for AudioSourceComponent.clip_id binding.
+        nexus::editor::AudioAssetCache audio_cache;
+        audio_cache.set_audio_engine(&audio);
+        audio_cache.set_asset_registry(&editor_assets);
+
         // Animator system — drives AnimatorComponent playback every Play
         // mode tick.  Resolver hands the system a way to look up the
         // engine-side AnimationClip from the editor cache's stable id.
@@ -947,6 +955,32 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                             editor_state.set_status("Mesh: " +
                                                     fs::path(path).filename().string());
                         }
+                    } else if (ext == ".wav" || ext == ".ogg") {
+                        // Audio drop loads the clip into AudioEngine and
+                        // binds to the selection's AudioSourceComponent
+                        // (auto-adds when missing).  No selection just
+                        // leaves the clip cached for later reuse.
+                        const auto clip_id = audio_cache.import(path);
+                        if (clip_id == nexus::editor::INVALID_CLIP_ID) {
+                            editor_state.set_status("Audio decode failed: " +
+                                fs::path(path).filename().string());
+                        } else {
+                            const auto& sel = editor_state.selection();
+                            if (sel.has_selection()) {
+                                Entity e = static_cast<Entity>(sel.primary());
+                                auto& r = scene.registry();
+                                if (!r.has_component<AudioSourceComponent>(e)) {
+                                    r.add_component<AudioSourceComponent>(
+                                        e, AudioSourceComponent{});
+                                }
+                                r.get_component<AudioSourceComponent>(e).clip_id = clip_id;
+                                editor_state.set_status("Bound audio: " +
+                                    fs::path(path).filename().string());
+                            } else {
+                                editor_state.set_status("Audio loaded: " +
+                                    fs::path(path).filename().string());
+                            }
+                        }
                     } else if (ext == ".anim") {
                         // Animation drop loads the clip and binds it to
                         // the currently-selected entity's AnimatorComponent
@@ -1100,6 +1134,26 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                                     fs::path(path).filename().string());
                             } else {
                                 editor_state.set_status("Material loaded: " +
+                                    fs::path(path).filename().string());
+                            }
+                        }
+                    } else if (ext == ".wav" || ext == ".ogg") {
+                        const auto clip_id = audio_cache.import(path);
+                        if (clip_id == nexus::editor::INVALID_CLIP_ID) {
+                            editor_state.set_status("Audio decode failed: " +
+                                fs::path(path).filename().string());
+                        } else {
+                            Entity e = static_cast<Entity>(target_entity);
+                            if (e != INVALID_ENTITY && reg.alive(e)) {
+                                if (!reg.has_component<AudioSourceComponent>(e)) {
+                                    reg.add_component<AudioSourceComponent>(
+                                        e, AudioSourceComponent{});
+                                }
+                                reg.get_component<AudioSourceComponent>(e).clip_id = clip_id;
+                                editor_state.set_status("Bound audio: " +
+                                    fs::path(path).filename().string());
+                            } else {
+                                editor_state.set_status("Audio loaded: " +
                                     fs::path(path).filename().string());
                             }
                         }

@@ -10,6 +10,7 @@ add_executable(nexus-test-editor
     test_material_asset.cpp
     test_prefab_asset.cpp
     test_animation_asset.cpp
+    test_audio_asset.cpp
 )
 
 target_link_libraries(nexus-test-editor

@@ -26,6 +26,7 @@
 #include "nexus/editor/layer_registry.h"
 #include "nexus/editor/material_asset.h"
 #include "nexus/editor/prefab_asset.h"
+#include "nexus/editor/animation_asset.h"
 #include "nexus/perf/profiler.h"
 #include "nexus/assets/asset_registry.h"
 
@@ -571,6 +572,12 @@ static int run(int /*argc*/, char* /*argv*/[]) {
         nexus::editor::PrefabAssetCache prefab_cache;
         prefab_cache.set_asset_registry(&editor_assets);
 
+        // Animation asset cache — owns AnimationClip JSON by path.  Drop a
+        // .anim file to register it for later binding to an AnimatorComponent
+        // (component slot wiring lands when AnimatorComponent itself does).
+        nexus::editor::AnimationAssetCache animation_cache;
+        animation_cache.set_asset_registry(&editor_assets);
+
         EditorState editor_state;
         register_default_panels(editor_state);
         editor_state.set_status("Ready");
@@ -923,6 +930,18 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                             editor_state.set_status("Mesh: " +
                                                     fs::path(path).filename().string());
                         }
+                    } else if (ext == ".anim") {
+                        // Animation drop loads the clip into the cache.
+                        // Component binding (AnimatorComponent) will land
+                        // alongside the runtime animator system; for now
+                        // the cache makes the asset discoverable.
+                        if (!animation_cache.load(path)) {
+                            editor_state.set_status("Animation parse failed: " +
+                                fs::path(path).filename().string());
+                        } else {
+                            editor_state.set_status("Animation loaded: " +
+                                fs::path(path).filename().string());
+                        }
                     } else if (ext == ".prefab" || ext == ".nexusprefab") {
                         // Prefab drop on viewport spawns an instance into
                         // the live scene at world origin (the editor camera
@@ -1052,6 +1071,14 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                                 editor_state.set_status("Material loaded: " +
                                     fs::path(path).filename().string());
                             }
+                        }
+                    } else if (ext == ".anim") {
+                        if (!animation_cache.load(path)) {
+                            editor_state.set_status("Animation parse failed: " +
+                                fs::path(path).filename().string());
+                        } else {
+                            editor_state.set_status("Animation loaded: " +
+                                fs::path(path).filename().string());
                         }
                     } else if (ext == ".prefab" || ext == ".nexusprefab") {
                         // Hierarchy drop instantiates the prefab.  Target

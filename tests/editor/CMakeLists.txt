@@ -9,6 +9,7 @@ add_executable(nexus-test-editor
     test_layer_registry.cpp
     test_material_asset.cpp
     test_prefab_asset.cpp
+    test_animation_asset.cpp
 )
 
 target_link_libraries(nexus-test-editor

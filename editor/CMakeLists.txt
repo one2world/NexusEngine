@@ -13,6 +13,7 @@ add_library(nexus-editor-lib STATIC
     src/layer_registry.cpp
     src/material_asset.cpp
     src/prefab_asset.cpp
+    src/animation_asset.cpp
 )
 
 # stb_image is a third-party single-header that emits sign/cast warnings
@@ -46,6 +47,7 @@ target_link_libraries(nexus-editor-lib
         Nexus::Platform
         Nexus::Perf
         Nexus::Assets
+        Nexus::Animation
         imgui
         imguizmo
 )

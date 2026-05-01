@@ -221,3 +221,86 @@ TEST(UndoRedoManager, RedoEmptyReturnsFalse) {
     UndoRedoManager mgr;
     EXPECT_FALSE(mgr.redo());
 }
+
+// =============================================================================
+// jump_to_undo — Unity-style Undo History random-access navigation
+// =============================================================================
+
+namespace {
+struct JumpFixture {
+    UndoRedoManager mgr;
+    int value = 0;
+    void push(int new_v) {
+        const int prev = value;
+        mgr.execute(std::make_unique<LambdaCommand>(
+            std::to_string(new_v),
+            [this, new_v]() { value = new_v; },
+            [this, prev]()  { value = prev; }));
+    }
+};
+}
+
+TEST(UndoRedoManager, JumpToUndo_Rewinds) {
+    JumpFixture fx;
+    fx.push(1);
+    fx.push(2);
+    fx.push(3);
+    EXPECT_EQ(fx.value, 3);
+
+    // Rewind to "1 command applied" — only A still executed.
+    const i32 steps = fx.mgr.jump_to_undo(1);
+    EXPECT_EQ(steps, 2);
+    EXPECT_EQ(fx.mgr.undo_count(), 1u);
+    EXPECT_EQ(fx.mgr.redo_count(), 2u);
+    EXPECT_EQ(fx.value, 1);
+}
+
+TEST(UndoRedoManager, JumpToUndo_Advances) {
+    JumpFixture fx;
+    fx.push(1);
+    fx.push(2);
+    fx.push(3);
+    fx.mgr.undo();
+    fx.mgr.undo();
+    fx.mgr.undo();
+    EXPECT_EQ(fx.value, 0);
+
+    const i32 steps = fx.mgr.jump_to_undo(2);
+    EXPECT_EQ(steps, -2);
+    EXPECT_EQ(fx.mgr.undo_count(), 2u);
+    EXPECT_EQ(fx.mgr.redo_count(), 1u);
+    EXPECT_EQ(fx.value, 2);
+}
+
+TEST(UndoRedoManager, JumpToUndo_Zero_RevertsAll) {
+    JumpFixture fx;
+    fx.push(1);
+    fx.push(2);
+
+    fx.mgr.jump_to_undo(0);
+    EXPECT_EQ(fx.mgr.undo_count(), 0u);
+    EXPECT_EQ(fx.mgr.redo_count(), 2u);
+    EXPECT_EQ(fx.value, 0);
+}
+
+TEST(UndoRedoManager, JumpToUndo_ClampsHigh) {
+    JumpFixture fx;
+    fx.push(1);
+    fx.push(2);
+
+    // Asking for more commands than exist is clamped — the call never
+    // over-redoes into nonexistent history.
+    fx.mgr.jump_to_undo(999);
+    EXPECT_EQ(fx.mgr.undo_count(), 2u);
+    EXPECT_EQ(fx.mgr.redo_count(), 0u);
+    EXPECT_EQ(fx.value, 2);
+}
+
+TEST(UndoRedoManager, JumpToUndo_Same_IsNoop) {
+    JumpFixture fx;
+    fx.push(1);
+    fx.push(2);
+    const i32 steps = fx.mgr.jump_to_undo(2);
+    EXPECT_EQ(steps, 0);
+    EXPECT_EQ(fx.value, 2);
+}

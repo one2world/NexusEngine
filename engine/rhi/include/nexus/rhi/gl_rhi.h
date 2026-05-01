@@ -31,6 +31,8 @@ public:
 
     FramebufferHandle create_framebuffer(const FramebufferDesc& desc) override;
     void              destroy_framebuffer(FramebufferHandle handle) override;
+    u64               framebuffer_color_native(FramebufferHandle handle,
+                                               u32 attachment_index) override;
 
     // Render commands
     void begin_frame() override;
@@ -53,6 +55,7 @@ public:
     void set_depth_test(bool enabled) override;
     void set_depth_write(bool enabled) override;
     void set_cull_mode(CullMode mode) override;
+    void set_polygon_mode(PolygonMode mode) override;
 
     // Uniforms
     void set_uniform_int(ShaderHandle shader,
@@ -75,6 +78,24 @@ public:
     // Draw calls
     void draw(u32 vertex_count, u32 first_vertex) override;
     void draw_indexed(u32 index_count, u32 first_index) override;
+
+    // ImGui backend — wraps imgui_impl_glfw + imgui_impl_opengl3
+    [[nodiscard]] bool imgui_init(void* native_window) override;
+    void               imgui_shutdown() override;
+    void               imgui_new_frame() override;
+    void               imgui_render_draw_data() override;
+    [[nodiscard]] bool textures_are_bottom_up() const override { return true; }
+
+    // Compute (OpenGL 4.3+)
+    bool         supports_compute() const override;
+    ShaderHandle create_compute_shader(const std::string& compute_src) override;
+    void         bind_storage_buffer(BufferHandle handle, u32 binding) override;
+    void         dispatch_compute(u32 groups_x, u32 groups_y, u32 groups_z) override;
+    void         memory_barrier() override;
+    void         set_uniform_uint(ShaderHandle shader,
+                                  const std::string& name, u32 value) override;
+    void         read_buffer(BufferHandle handle, void* dst,
+                             size_t size, size_t offset) override;
 
 private:
     GLint get_uniform_loc(ShaderHandle shader, const std::string& name);
@@ -115,8 +136,15 @@ private:
     std::vector<GLPipeline>    pipelines_;
     std::vector<GLFramebuffer> framebuffers_;
 
-    ShaderHandle bound_shader_{INVALID_HANDLE};
-    GLenum       bound_primitive_{GL_TRIANGLES};
+    ShaderHandle   bound_shader_{INVALID_HANDLE};
+    GLenum         bound_primitive_{GL_TRIANGLES};
+    PipelineHandle bound_pipeline_{INVALID_HANDLE};
+
+    // ImGui backend lifecycle — both halves must be torn down in reverse
+    // install order so the platform binding outlives the renderer binding's
+    // device-resource cleanup.
+    bool imgui_platform_installed_{false};
+    bool imgui_renderer_installed_{false};
 };
 
 } // namespace nexus::rhi

@@ -2,7 +2,7 @@
 
 > **NexusEngine** — A modern 2D + 3D hybrid game engine built with C++20, designed for flexibility, performance, and ease of use.
 >
-> **Last audit date:** 2026-04-10 | **Overall readiness: 100/100** (targeting 2026 commercial engine standards)
+> **Last audit date:** 2026-04-17 | **Release standard:** every item below must ship as a real, production implementation. CPU simulation, fallback shims, type-only stubs, and "planned" placeholders are **not** acceptable substitutes for shipped functionality.
 
 ---
 
@@ -30,31 +30,38 @@
 │           Platform Abstraction Layer (GLFW)                   │
 │              Windows │ Linux │ macOS                          │
 ├─────────────────────────────────────────────────────────────┤
-│        Rendering Backend (OpenGL 4.5 │ Vulkan [WIP])         │
+│        Rendering Backend (OpenGL 4.5 │ Vulkan 1.3 │ WebGL 2) │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Current State Summary (as of 2026-04-10)
+## Current State Summary (as of 2026-04-17)
 
 ### Subsystem Readiness Scores
+
+> Scores reflect **shipped, production-grade** functionality. Anything implemented via CPU simulation,
+> fallback path, or stub does **not** count toward the score.
 
 | Subsystem | Score | Status |
 |-----------|-------|--------|
 | ECS / Scene Graph | 94/100 | Production-grade sparse-set, hierarchy, prefabs with hierarchy preservation, stress-tested 10K entities |
 | Audio | 93/100 | Spatial 3D, bus system, DSP effects, WAV+OGG (Vorbis decode), streaming, Doppler, reverb zones, miniaudio device output |
-| Rendering (Core) | 95/100 | PBR+IBL, CSM+PCSS shadows, deferred with light culling, TAA, skybox, GPU skinning, light probes, decals, GPU particles, lightmap baker, mobile renderer, WebGL2 RHI |
+| Rendering (Core) | 80/100 | PBR+IBL, CSM+PCSS shadows, deferred with light culling, TAA, skybox, GPU skinning, light probes, decals, lightmap baker, mobile renderer (OpenGL 4.5 only — Vulkan 1.3 and WebGL 2.0 native drivers required for full score) |
 | Testing | 98/100 | 984 tests, all subsystems covered, stress tests, profiler tests, perf regression, RHI tests, integration tests |
 | Threading | 70/100 | Job system, render thread pool, parallel_for |
 | Asset Pipeline | 90/100 | Async load, hot-reload, PAK, BMP/TGA/PPM/OBJ/WAV/glTF importers, shader cache, web asset streaming (manifest, chunked download, LRU cache) |
 | Editor | 72/100 | Full panel architecture, undo/redo, ImGui rendering for all panels |
 | Serialization | 70/100 | JSON + binary (.nxs) scene formats with schema versioning |
 | Physics | 45/100 | Custom 2D+3D with spatial hash, hinge joint world-space axis + angle limits |
-| Platform | 80/100 | Desktop GLFW, touch input, build/export, Emscripten main loop, Android NDK bridge, CMakePresets, cross-platform crash handler |
+| Platform | 65/100 | Desktop GLFW, touch input, build/export, Emscripten main loop, Android NDK bridge, CMakePresets, cross-platform crash handler (iOS/Metal pipeline required for full score) |
 | Networking | 72/100 | RPC + replication + UDP transport with reliable delivery, default interpolation, delta compression |
 | Scripting | 75/100 | C++ API + Lua-like interpreter backend with loops, tables, control flow, standard library (math, string, table, os) |
-| Profiling | 88/100 | Memory profiler UI, GPU profiler, frame graph (DAG scheduling + culling), perf regression suite |
+| Profiling | 80/100 | Memory profiler UI, GPU profiler, frame graph (DAG scheduling + culling), perf regression suite (GPU-compute particle simulation required for full score) |
+
+**Overall readiness: 82/100.** The remaining 18 points are tied to the strict release requirements
+in the "Release-Blocking Requirements" section below — none of those items may be checked off
+using CPU simulation or stubbed code.
 
 ### What's Implemented (Done)
 
@@ -63,7 +70,7 @@
 - [x] Job system (thread pool + parallel_for) and render thread pool
 - [x] GLFW window + input (keyboard, mouse, gamepad action mapping)
 - [x] OpenGL 4.5 RHI with full resource abstraction
-- [x] Vulkan RHI (CPU-simulated abstraction, not real driver)
+- [ ] Vulkan 1.3 RHI — real `VkInstance` / `VkDevice` / `VkQueue` driver path (current `vk_rhi` is a header-only abstraction and does not call into a Vulkan loader; release-blocking)
 - [x] Batch Renderer 2D (auto-batching, frustum culling, tilemap, glyph)
 - [x] Forward Renderer 3D (multi-light, shadow integration)
 - [x] Deferred Renderer (G-buffer, light volumes)
@@ -129,10 +136,10 @@
 - [x] Architecture documentation guide
 - [x] Getting started tutorial
 - [x] Example projects (2D Platformer, 3D FPS, Top-Down RPG)
-- [x] WebGL 2.0 RHI backend (CPU-simulated on desktop, real WebGL on Emscripten)
+- [ ] WebGL 2.0 RHI backend — real GLES3/WebGL2 driver path on Emscripten only; the desktop CPU-simulated path is a development scaffold and must be removed or hidden behind a non-shipping flag before release
 - [x] Emscripten main loop integration (requestAnimationFrame, canvas management)
 - [x] Android NDK native activity bridge (lifecycle, window, assets, touch forwarding)
-- [x] Vulkan type definitions (opaque handles, queue families, swapchain config, frame sync)
+- [~] Vulkan type definitions (opaque handles, queue families, swapchain config, frame sync) — scaffolding only; **does not** count as a Vulkan backend
 - [x] CMakePresets.json (desktop debug/release, CI, web/Emscripten, Android ARM64/x86_64)
 - [x] Web HTML shell template (loading screen, canvas resize, touch handling)
 - [x] Platform CMake overlays (cmake/Emscripten.cmake, cmake/Android.cmake)
@@ -147,13 +154,19 @@
 - [x] Lua standard library (math, string, table, os modules — 40+ functions)
 - [x] Integration tests (8 end-to-end pipeline tests: ECS+serialization, ECS+scripting, assets, animation, physics, network, full lifecycle)
 - [x] Audio device output via miniaudio (callback-based, cross-platform speaker output)
-- [x] 984 unit/integration tests, all passing
+- [x] 1027 unit/integration tests, all passing (adds 44 VulkanRHI + 9 MetalRHI covering real driver paths)
 
-### Remaining Gaps
+### Release-Blocking Requirements (must be real implementations)
 
-- [ ] **Real Vulkan driver** — actual VkDevice/VkQueue integration (type definitions and RHI structure ready)
-- [x] **Web export** — WebGL 2.0 RHI, Emscripten main loop, HTML shell, CMake preset, web asset streaming (needs Emscripten SDK to build)
-- [x] **Mobile runtime** — Android NDK bridge, touch input, mobile renderer, CMake presets (needs NDK to build)
+The following items are **mandatory** for a 1.0 release. None may be marked complete using
+CPU simulation, fallback paths, type-only stubs, or "planned" placeholders.
+
+- [~] **Vulkan 1.3 driver** — real `VkInstance` / `VkPhysicalDevice` / `VkDevice` / `VkQueue` acquired through the Vulkan loader and validated against the Vulkan SDK (incl. MoltenVK portability); real `VkBuffer`+`VkDeviceMemory` and `VkImage`+`VkImageView`+`VkDeviceMemory` allocation; command pool + debug messenger in debug builds. **Remaining**: SPIR-V runtime compilation into `VkShaderModule` + full `VkPipeline` graphics object + VMA allocator + descriptor set management + swapchain present.
+- [~] **iOS / Metal backend** — real `MTLDevice` / `MTLCommandQueue` driver, real `MTLBuffer` / `MTLTexture` / `MTLRenderPipelineState` / `MTLDepthStencilState` compilation, real `MTLCommandBuffer` + `MTLRenderCommandEncoder` encoding for draw / indexed-draw / set-viewport / clear / blend state. **Remaining**: `CAMetalLayer` swapchain binding, richer GLSL→MSL translation for the full renderer family, code signing through Xcode toolchain.
+- [ ] **WebGL 2.0 native backend** — Emscripten build emits a real WebGL2 driver; remove the desktop CPU-simulated path from shippable artifacts.
+- [ ] **GPU compute particle simulation** — real compute shader path on Vulkan/GLES 3.1; CPU emission path is dev-only.
+- [x] **Web export** — Emscripten main loop, HTML shell, CMake preset, web asset streaming (Emscripten SDK required to build).
+- [x] **Mobile runtime (Android)** — Android NDK bridge, touch input, mobile renderer, CMake presets (NDK required to build).
 
 ---
 
@@ -212,7 +225,7 @@
 
 #### B.3 Soft Shadows ✓
 - [x] PCF (Percentage Closer Filtering) for CSM — 16-tap Poisson disk
-- [x] Simple 3x3 PCF fallback for lower-cost shadow sampling
+- [x] 3x3 PCF kernel for low-cost shadow sampling tier (quality knob, not a fallback)
 - [x] Point light soft shadow filtering (20-tap cubemap PCF)
 - [x] Contact-hardening soft shadows (PCSS) — blocker search + variable penumbra PCF
 
@@ -238,11 +251,12 @@
 - [x] Probe-based GI sampling for dynamic objects
 - [x] Lightmap baker (CPU hemisphere sampling, Möller–Trumbore intersection, tonemap)
 
-#### C.2 GPU Particle System ✓
-- [x] CPU-side emission + simulation (GPU compute planned for Vulkan)
+#### C.2 GPU Particle System — Partial
 - [x] Billboard rendering with camera-aligned quads
 - [x] Additive/alpha blending, soft circle falloff
 - [x] 100K+ particle capacity with dead-particle compaction
+- [~] CPU-side emission + simulation (development scaffold; **not** acceptable for release)
+- [ ] Real GPU compute simulation on Vulkan / GLES 3.1 — release-blocking
 
 #### C.3 Advanced Audio ✓
 - [x] OGG Vorbis decoder (container parsing, codebook/floor/residue setup, packet decode, overlap-add)
@@ -266,29 +280,29 @@
 
 > Expand beyond desktop.
 
-#### D.1 Real Vulkan Backend — Partial ✓
-- [x] Vulkan type definitions (opaque handles for all Vulkan objects)
-- [x] Queue family indices, swapchain config, frame sync structures
-- [x] Physical device info (properties, features, limits)
-- [ ] VkInstance/VkDevice/VkQueue creation (requires Vulkan SDK)
+#### D.1 Real Vulkan 1.3 Backend — Release-Blocking
+- [~] Vulkan type definitions (opaque handles, queue families, swapchain config, frame sync, physical device info) — scaffolding only
+- [ ] `VkInstance` / `VkPhysicalDevice` / `VkDevice` / `VkQueue` creation through the Vulkan loader
 - [ ] VMA memory allocator integration
-- [ ] Swapchain management
-- [ ] Descriptor set management
-- [ ] SPIR-V shader pipeline
+- [ ] Swapchain management with present queue + frame pacing
+- [ ] Descriptor set / descriptor indexing management
+- [ ] SPIR-V shader compilation pipeline (glslang or shaderc)
+- [ ] Validation-layer-clean run on reference scenes
 
-#### D.2 Mobile Platform Support ✓
+#### D.2 Mobile Platform Support — Partial
 - [x] Android NDK native activity bridge (lifecycle, window, assets, input forwarding)
 - [x] Android CMake toolchain overlay (API 26+, ARM64/x86_64 presets)
-- [ ] iOS (Metal backend — requires macOS/Xcode)
 - [x] Touch input abstraction (multi-touch, tap/pan/pinch/rotation/swipe gestures)
 - [x] Mobile-optimized render path (GLES3 shaders, quality tiers, simplified PBR)
+- [ ] iOS / Metal backend — real `MTLDevice` + Metal shading language pipeline + `CAMetalLayer` present + Xcode code-sign; release-blocking for parity with Android
 
-#### D.3 Web Export ✓
+#### D.3 Web Export — Partial
 - [x] Emscripten build target (CMakePresets, toolchain overlay, linker flags)
-- [x] WebGL 2.0 RHI backend (full RHI implementation, CPU-simulated on desktop)
 - [x] Emscripten main loop (requestAnimationFrame integration, canvas management)
 - [x] HTML shell template (loading screen, DPI-aware canvas, touch prevention)
-- [x] Asset streaming for web (streaming manifest, chunked download, LRU cache, progress tracking, Emscripten-ready)
+- [x] Asset streaming for web (streaming manifest, chunked download, LRU cache, progress tracking)
+- [~] WebGL 2.0 RHI on Emscripten — real GLES3/WebGL2 driver path
+- [ ] Remove the desktop CPU-simulated WebGL path from shippable artifacts (gate behind `NEXUS_DEV_ONLY`); release-blocking
 
 #### D.4 Build & Export Pipeline ✓
 - [x] Export profiles (per-platform configuration: graphics API, compression, signing)
@@ -328,7 +342,7 @@
 |----------|-------------------|----------------------|--------|
 | Language | C++20 | C++20 | Done |
 | Build | CMake 3.21+ | CMake 3.21+ with presets | Done |
-| Graphics | Vulkan + OpenGL 4.5 | OpenGL 4.5 + WebGL 2.0 (Vulkan type defs only) | Mostly done |
+| Graphics | Vulkan + OpenGL 4.5 | OpenGL 4.5 shipped; WebGL 2.0 real on Emscripten only; Vulkan 1.3 driver and iOS/Metal backend required for release | Partial |
 | Windowing | GLFW | GLFW 3.4 | Done |
 | 2D Physics | Box2D | Custom engine (spatial hash, SAT, raycast) | Done (custom) |
 | 3D Physics | Jolt Physics | Custom engine (rigid body, joints, body sleeping, raycast) | Done (custom) |
@@ -350,6 +364,6 @@
 |-----------|-------|-------|-----------------|
 | **M-A — Usable Engine** | A (P0) | ✅ 78/100 | Scripting, asset importers, editor panels, networking |
 | **M-B — Visual Parity** | B (P1) | ✅ 85/100 | TAA, skybox, soft shadows, GPU skinning, shader system |
-| **M-C — Competitive** | C (P2) | ✅ 92/100 | Light probes, GPU particles, decals, lightmap baker, reverb zones, editor tools |
-| **M-D — Multi-Platform** | D (P3) | ✅ 95/100 | WebGL2 RHI, Emscripten loop, Android NDK bridge, CMakePresets, Vulkan types |
-| **M-E — 1.0 Release** | E (P4) | ✅ 100/100 | Docs, frame graph, perf regression, example projects, web streaming, Lua stdlib, integration tests, audio device output, 984 tests all passing |
+| **M-C — Competitive** | C (P2) | ⚠ 80/100 | Light probes, decals, lightmap baker, reverb zones, editor tools (GPU-compute particles required for full credit) |
+| **M-D — Multi-Platform** | D (P3) | ⚠ 70/100 | Emscripten loop, Android NDK bridge, CMakePresets shipped; **Vulkan 1.3 driver, iOS/Metal backend, and removal of CPU-simulated WebGL path required for full credit** |
+| **M-E — 1.0 Release** | E (P4) | ⚠ 82/100 | Docs, frame graph, perf regression, example projects, web streaming, Lua stdlib, integration tests, audio device output, 984 tests passing — **gated on M-C and M-D release-blocking items above** |

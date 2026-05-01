@@ -3,12 +3,17 @@ add_executable(nexus-test-editor
     test_editor_panels.cpp
     test_undo_redo.cpp
     test_editor_state.cpp
+    test_asset_thumbnail_cache.cpp
+    test_component_registry.cpp
+    test_asset_drop_importer.cpp
+    test_layer_registry.cpp
 )
 
 target_link_libraries(nexus-test-editor
     PRIVATE
         Nexus::Core
         Nexus::EditorLib
+        Nexus::Perf
         gtest
         gtest_main
 )

@@ -43,11 +43,13 @@ FetchContent_Declare(
     GIT_SHALLOW    TRUE
 )
 
-# Dear ImGui — Immediate-mode GUI for editor panels
+# Dear ImGui — Immediate-mode GUI for editor panels.
+# Uses the `docking` branch so the editor can dock/dragd/float panels like
+# Unity / Unreal.  Pinned to a known-good commit on docking for repro.
 FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        v1.91.8
+    GIT_TAG        v1.91.8-docking
     GIT_SHALLOW    TRUE
 )
 
@@ -59,18 +61,40 @@ FetchContent_Declare(
     GIT_SHALLOW    TRUE
 )
 
-# Google Test — Unit testing
+# ImGuizmo — Translate/rotate/scale 3D gizmo built on top of Dear ImGui.
+# The 1.83 tag predates ImGui 1.89 / 1.91 (which removed
+# `CaptureMouseFromApp` and now requires consumers to opt into the math
+# operator overloads via `IMGUI_DEFINE_MATH_OPERATORS`).  Track the upstream
+# `master` branch which has both fixes.  Header + single .cpp.
+FetchContent_Declare(
+    imguizmo
+    GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo.git
+    GIT_TAG        master
+)
+
+# Google Test — Unit testing.  Version kept in sync with Homebrew so ABI matches
+# when Homebrew's gtest header is transitively picked up via Vulkan SDK include
+# paths (e.g. /opt/homebrew/include).
 if(NEXUS_BUILD_TESTS)
     FetchContent_Declare(
         googletest
         GIT_REPOSITORY https://github.com/google/googletest.git
-        GIT_TAG        v1.14.0
+        GIT_TAG        v1.17.0
         GIT_SHALLOW    TRUE
     )
 endif()
 
 # Make available
-FetchContent_MakeAvailable(spdlog glm glfw json stb imgui miniaudio)
+FetchContent_MakeAvailable(spdlog glm glfw json stb imgui miniaudio imguizmo)
+
+# spdlog 1.13's bundled fmt uses `consteval` format-string validation that
+# trips a Clang 17+ "not a constant expression" diagnostic when compile-time
+# format-string parsing meets certain int-pad helpers.  Empty-defining
+# FMT_CONSTEVAL falls back to runtime validation, restoring clean builds
+# without touching spdlog's logging API or runtime format checking.
+if(TARGET spdlog)
+    target_compile_definitions(spdlog PUBLIC FMT_CONSTEVAL=)
+endif()
 
 # Dear ImGui doesn't have a CMakeLists.txt — build as a static library manually
 if(imgui_POPULATED)
@@ -91,6 +115,24 @@ if(imgui_POPULATED)
         target_compile_options(imgui PRIVATE -w)
     elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         target_compile_options(imgui PRIVATE /w)
+    endif()
+endif()
+
+# ImGuizmo — single .cpp/.h static library linked against our `imgui` target.
+# IMGUI_DEFINE_MATH_OPERATORS is propagated PUBLICly: ImGuizmo.cpp uses
+# `ImVec2 - ImVec2` etc., and any consumer that includes <ImGuizmo.h> needs
+# the same operators visible to compile.
+if(imguizmo_POPULATED)
+    add_library(imguizmo STATIC
+        ${imguizmo_SOURCE_DIR}/ImGuizmo.cpp
+    )
+    target_include_directories(imguizmo PUBLIC ${imguizmo_SOURCE_DIR})
+    target_compile_definitions(imguizmo PUBLIC IMGUI_DEFINE_MATH_OPERATORS)
+    target_link_libraries(imguizmo PUBLIC imgui)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(imguizmo PRIVATE -w)
+    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+        target_compile_options(imguizmo PRIVATE /w)
     endif()
 endif()
 

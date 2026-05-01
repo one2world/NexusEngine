@@ -59,6 +59,30 @@ struct SceneSnapshot {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SceneBridge — inversion-of-control callbacks so EditorState owns the full
+// play/step lifecycle without depending on Scene or SceneSerializer directly.
+// The host wires these once at startup, and EditorState uses them to snapshot,
+// restore, and simulate — eliminating the "external snapshot + internal state"
+// two-sources-of-truth bug that made Step lose data when fired from Editing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct SceneBridge {
+    /// Capture a full scene snapshot.  Return true on success.
+    std::function<bool()> take_snapshot;
+    /// Restore the most recent snapshot.  Return true on success.
+    std::function<bool()> restore_snapshot;
+    /// Drop the current snapshot (freeing memory, no restore after this).
+    std::function<void()> clear_snapshot;
+    /// Run one simulation step with the given dt.
+    std::function<void(f32)> simulate;
+    /// Emitted when the editor transitions into Play.  Hosts use this to e.g.
+    /// clear the console when the user entered play and "Clear on Play" is on.
+    std::function<void()> on_play;
+    /// Emitted when the editor leaves Play and is back in Editing.
+    std::function<void()> on_stop;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EditorState — central editor state management
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -70,7 +94,13 @@ public:
 
     PlayState play_state() const { return play_state_; }
 
-    /// Enter play mode (saves scene snapshot).
+    /// Host wires scene snapshot/simulate/lifecycle hooks here.  All four are
+    /// optional, but omitting `take_snapshot`/`restore_snapshot` turns Play
+    /// into a destructive operation and is expected only in tests.
+    void set_scene_bridge(SceneBridge bridge) { bridge_ = std::move(bridge); }
+
+    /// Enter play mode (takes scene snapshot via bridge).  Safe from any
+    /// state: if we're already Playing or Paused it's a no-op.
     void play();
 
     /// Pause the running game.
@@ -79,18 +109,33 @@ public:
     /// Resume from pause.
     void resume();
 
-    /// Stop play mode (restores scene snapshot).
+    /// Stop play mode (restores scene snapshot via bridge).
     void stop();
 
-    /// Step one frame while paused.
+    /// Step one simulation frame.  If currently Editing, enters Play-Paused
+    /// (with snapshot) then steps once.  If currently Playing, pauses and
+    /// queues one step.  If Paused, queues one step.
     void step();
+
+    /// Advance the simulation.  Call once per frame from the host loop after
+    /// tick().  Internally handles Play (continuous), Paused (no sim),
+    /// Paused-with-pending-steps (fixed-dt simulation for each queued step).
+    /// Returns true if the scene was simulated this frame.
+    bool advance_simulation(f32 real_dt);
+
+    /// Fixed simulation dt used for step() and configurable for physics-bound
+    /// play modes.  Unity's default is 1/50 for physics; we use 1/60 to match
+    /// common display refresh.  Set to 0 to use real-time dt during Playing.
+    f32 fixed_dt() const { return fixed_dt_; }
+    void set_fixed_dt(f32 dt) { fixed_dt_ = dt; }
 
     bool is_playing() const { return play_state_ == PlayState::Playing; }
     bool is_paused() const { return play_state_ == PlayState::Paused; }
     bool is_editing() const { return play_state_ == PlayState::Editing; }
 
-    /// Number of step requests (consumed by the runtime loop).
-    u32 consume_step_requests();
+    /// Pending step count — read by tests and the status bar; users
+    /// generally don't need to call this directly (advance_simulation does).
+    u32 pending_steps() const { return step_requests_; }
 
     // ── Scene management ───────────────────────────────────────────────
 
@@ -122,6 +167,8 @@ public:
 private:
     PlayState play_state_{PlayState::Editing};
     u32 step_requests_{0};
+    f32 fixed_dt_{1.0f / 60.0f};
+    SceneBridge bridge_;
     std::string scene_path_;
     SceneSnapshot snapshot_;
     EditorSelection selection_;

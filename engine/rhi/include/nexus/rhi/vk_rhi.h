@@ -5,23 +5,36 @@
 #include <unordered_map>
 #include <string>
 
+#if defined(NEXUS_ENABLE_VULKAN)
+  #include <vulkan/vulkan.h>
+#endif
+
 namespace nexus::rhi {
 
 // ---------------------------------------------------------------------------
-// VulkanRHI — Vulkan-style RHI backend
+// VulkanRHI — Vulkan 1.3 RHI backend (real driver, not CPU simulation).
 //
-// This backend emulates Vulkan's resource and command model using CPU-side
-// data structures.  It tracks all state, validates usage, and records draw
-// commands for later playback.  It does not link against the Vulkan SDK so
-// that the engine can build and test on machines without a Vulkan driver.
-// When a real Vulkan driver is available, the recorded commands can be
-// translated to vkCmd* calls.
+//   init()     -> creates a real VkInstance, selects a VkPhysicalDevice,
+//                 creates a VkDevice and acquires a VkQueue through the
+//                 Vulkan loader.  If no Vulkan runtime is present on the host
+//                 init() returns false — there is no CPU fallback.
+//   buffers    -> real VkBuffer + VkDeviceMemory (host-visible coherent).
+//   textures   -> real VkImage + VkImageView + VkDeviceMemory.
+//   shaders    -> real VkShaderModule when glslang is linked in, otherwise
+//                 an empty module placeholder (still tracked for lifecycle).
+//   pipelines  -> metadata records; full graphics pipeline object creation
+//                 requires a render pass + render target description that is
+//                 not expressed in the public RHI::PipelineDesc yet.
+//   framebuffers -> metadata records; same reason.
+//
+// The design is explicit about what is GPU-backed today vs what is still a
+// thin tracking wrapper.  There is no CPU emulation path.
 // ---------------------------------------------------------------------------
 
 class VulkanRHI : public RHI {
 public:
     VulkanRHI() = default;
-    ~VulkanRHI() override = default;
+    ~VulkanRHI() override;
 
     NEXUS_NON_COPYABLE(VulkanRHI)
     NEXUS_NON_MOVABLE(VulkanRHI)
@@ -92,67 +105,116 @@ public:
     void draw(u32 vertex_count, u32 first_vertex) override;
     void draw_indexed(u32 index_count, u32 first_index) override;
 
-    // ── Vulkan-specific queries ─────────────────────────────────────────────
+    // ── Introspection ───────────────────────────────────────────────────────
 
-    /// Total draw calls recorded this frame.
-    [[nodiscard]] u32 draw_call_count() const { return draw_call_count_; }
+    [[nodiscard]] u32  draw_call_count()     const { return draw_call_count_; }
+    [[nodiscard]] u32  state_change_count()  const { return state_change_count_; }
+    [[nodiscard]] bool is_initialized()      const { return initialized_; }
 
-    /// Total state changes recorded this frame.
-    [[nodiscard]] u32 state_change_count() const { return state_change_count_; }
-
-    /// Whether the backend is initialized.
-    [[nodiscard]] bool is_initialized() const { return initialized_; }
-
-    /// Total resources currently alive.
-    [[nodiscard]] u32 live_buffer_count() const;
-    [[nodiscard]] u32 live_texture_count() const;
-    [[nodiscard]] u32 live_shader_count() const;
-    [[nodiscard]] u32 live_pipeline_count() const;
+    [[nodiscard]] u32 live_buffer_count()      const;
+    [[nodiscard]] u32 live_texture_count()     const;
+    [[nodiscard]] u32 live_shader_count()      const;
+    [[nodiscard]] u32 live_pipeline_count()    const;
     [[nodiscard]] u32 live_framebuffer_count() const;
 
+#if defined(NEXUS_ENABLE_VULKAN)
+    [[nodiscard]] VkInstance       instance()        const { return instance_; }
+    [[nodiscard]] VkPhysicalDevice physical_device() const { return physical_device_; }
+    [[nodiscard]] VkDevice         device()          const { return device_; }
+    [[nodiscard]] VkQueue          graphics_queue()  const { return graphics_queue_; }
+    [[nodiscard]] u32              graphics_queue_family() const { return graphics_queue_family_; }
+#endif
+
 private:
-    // Internal resource records — CPU-side simulation of Vulkan objects.
-    struct VkBuffer {
-        bool        alive{false};
-        BufferType  type{BufferType::Vertex};
-        BufferUsage usage{BufferUsage::Static};
-        std::vector<u8> data;
+#if defined(NEXUS_ENABLE_VULKAN)
+    // ── Real Vulkan driver handles ──────────────────────────────────────────
+    VkInstance       instance_{VK_NULL_HANDLE};
+    VkPhysicalDevice physical_device_{VK_NULL_HANDLE};
+    VkDevice         device_{VK_NULL_HANDLE};
+    VkQueue          graphics_queue_{VK_NULL_HANDLE};
+    u32              graphics_queue_family_{0xFFFFFFFFu};
+    VkPhysicalDeviceMemoryProperties mem_props_{};
+    VkCommandPool    command_pool_{VK_NULL_HANDLE};
+    VkCommandBuffer  upload_cmd_{VK_NULL_HANDLE};
+    VkFence          upload_fence_{VK_NULL_HANDLE};
+    VkDebugUtilsMessengerEXT debug_messenger_{VK_NULL_HANDLE};
+    bool             validation_enabled_{false};
+
+    // ── Resource records ────────────────────────────────────────────────────
+    // Each struct owns real Vulkan objects where applicable.
+    struct BufferRec {
+        bool         alive{false};
+        BufferType   type{BufferType::Vertex};
+        BufferUsage  usage{BufferUsage::Static};
+        VkBuffer     buffer{VK_NULL_HANDLE};
+        VkDeviceMemory memory{VK_NULL_HANDLE};
+        VkDeviceSize capacity{0};     // bytes allocated
+        VkDeviceSize size{0};         // current logical size
+        void*        mapped{nullptr}; // persistent map when host-visible
     };
 
-    struct VkTexture {
+    struct TextureRec {
         bool          alive{false};
         u32           width{0};
         u32           height{0};
         TextureFormat format{TextureFormat::RGBA8};
-        std::vector<u8> pixels;
+        VkImage       image{VK_NULL_HANDLE};
+        VkImageView   view{VK_NULL_HANDLE};
+        VkDeviceMemory memory{VK_NULL_HANDLE};
     };
 
-    struct VkShader {
-        bool        alive{false};
-        std::string vertex_src;
-        std::string fragment_src;
-        std::unordered_map<std::string, i32> uniform_ints;
+    struct ShaderRec {
+        bool          alive{false};
+        VkShaderModule vertex_module{VK_NULL_HANDLE};
+        VkShaderModule fragment_module{VK_NULL_HANDLE};
+        std::unordered_map<std::string, i32>   uniform_ints;
         std::unordered_map<std::string, float> uniform_floats;
-        std::unordered_map<std::string, Vec2> uniform_vec2s;
-        std::unordered_map<std::string, Vec3> uniform_vec3s;
-        std::unordered_map<std::string, Vec4> uniform_vec4s;
-        std::unordered_map<std::string, Mat4> uniform_mat4s;
+        std::unordered_map<std::string, Vec2>  uniform_vec2s;
+        std::unordered_map<std::string, Vec3>  uniform_vec3s;
+        std::unordered_map<std::string, Vec4>  uniform_vec4s;
+        std::unordered_map<std::string, Mat4>  uniform_mat4s;
     };
 
-    struct VkPipeline {
+    struct PipelineRec {
         bool         alive{false};
         PipelineDesc desc;
     };
 
-    struct VkFramebuffer {
-        bool alive{false};
-        u32  width{0};
-        u32  height{0};
+    struct FramebufferRec {
+        bool                       alive{false};
+        u32                        width{0};
+        u32                        height{0};
         std::vector<TextureFormat> color_formats;
-        bool has_depth{false};
+        bool                       has_depth{false};
     };
 
-    // Bound state for validation.
+    // Helpers (all no-ops when device_ is null)
+    bool create_vk_instance();
+    bool pick_physical_device();
+    bool create_logical_device();
+    bool create_command_pool();
+    void destroy_debug_messenger();
+    u32  find_memory_type(u32 type_filter, VkMemoryPropertyFlags props) const;
+    bool alloc_host_visible_buffer(VkDeviceSize size,
+                                   VkBufferUsageFlags usage,
+                                   VkBuffer* out_buffer,
+                                   VkDeviceMemory* out_memory,
+                                   void** out_mapped);
+#else
+    // No Vulkan SDK at compile time → these fields do not exist; init()
+    // will fail.  The engine factory `RHI::create(Backend::Vulkan)` returns
+    // nullptr in that case, so this path is unreachable in release builds.
+#endif
+
+    // CPU-side tracking (lifecycle & validation counters)
+#if defined(NEXUS_ENABLE_VULKAN)
+    std::vector<BufferRec>      buffers_;
+    std::vector<TextureRec>     textures_;
+    std::vector<ShaderRec>      shaders_;
+    std::vector<PipelineRec>    pipelines_;
+    std::vector<FramebufferRec> framebuffers_;
+#endif
+
     struct BoundState {
         PipelineHandle    pipeline{INVALID_HANDLE};
         ShaderHandle      shader{INVALID_HANDLE};
@@ -164,14 +226,8 @@ private:
         bool              depth_write{true};
         CullMode          cull{CullMode::Back};
         i32 viewport_x{0}, viewport_y{0}, viewport_w{0}, viewport_h{0};
-        i32 scissor_x{0}, scissor_y{0}, scissor_w{0}, scissor_h{0};
+        i32 scissor_x{0},  scissor_y{0},  scissor_w{0},  scissor_h{0};
     };
-
-    std::vector<VkBuffer>      buffers_;
-    std::vector<VkTexture>     textures_;
-    std::vector<VkShader>      shaders_;
-    std::vector<VkPipeline>    pipelines_;
-    std::vector<VkFramebuffer> framebuffers_;
 
     BoundState state_;
     bool       initialized_{false};

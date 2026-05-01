@@ -91,6 +91,7 @@ void (*DepthFunc_)(GLenum)                                                      
 void (*DepthMask)(GLboolean)                                                           = nullptr;
 void (*CullFace)(GLenum)                                                               = nullptr;
 void (*FrontFace)(GLenum)                                                              = nullptr;
+void (*PolygonMode)(GLenum, GLenum)                                                    = nullptr;
 
 // Draw
 void (*DrawArrays)(GLenum, GLint, GLsizei)                                            = nullptr;
@@ -100,6 +101,16 @@ void (*DrawElements)(GLenum, GLsizei, GLenum, const void*)                      
 GLenum        (*GetError)()                                                            = nullptr;
 const GLubyte* (*GetString)(GLenum)                                                    = nullptr;
 void          (*GetIntegerv)(GLenum, GLint*)                                           = nullptr;
+
+// Compute & SSBO
+void  (*DispatchCompute)(GLuint, GLuint, GLuint)                                       = nullptr;
+void  (*MemoryBarrier)(GLbitfield)                                                     = nullptr;
+void  (*BindBufferBase)(GLenum, GLuint, GLuint)                                        = nullptr;
+void  (*BindBufferRange)(GLenum, GLuint, GLuint, GLintptr, GLsizeiptr)                 = nullptr;
+void* (*MapBufferRange)(GLenum, GLintptr, GLsizeiptr, GLbitfield)                      = nullptr;
+GLboolean (*UnmapBuffer)(GLenum)                                                       = nullptr;
+void  (*Uniform1ui)(GLint, GLuint)                                                     = nullptr;
+void  (*GetBufferSubData)(GLenum, GLintptr, GLsizeiptr, void*)                         = nullptr;
 
 // ---------------------------------------------------------------------------
 // Loader helper
@@ -113,6 +124,14 @@ static bool load_fn(GLLoadProc proc, T& fn_ptr, const char* name) {
         return false;
     }
     return true;
+}
+
+// Same as load_fn() but silent on miss — for optional entry points such as
+// GL 4.3+ compute that are simply absent on macOS (Apple capped GL at 4.1).
+template <typename T>
+static bool load_fn_optional(GLLoadProc proc, T& fn_ptr, const char* name) {
+    fn_ptr = reinterpret_cast<T>(proc(name));
+    return fn_ptr != nullptr;
 }
 
 bool load(GLLoadProc proc) {
@@ -205,6 +224,7 @@ bool load(GLLoadProc proc) {
     LOAD(DepthFunc_,     glDepthFunc);
     LOAD(DepthMask,      glDepthMask);
     LOAD(CullFace,       glCullFace);
+    LOAD(PolygonMode,    glPolygonMode);
     LOAD(FrontFace,      glFrontFace);
 
     // Draw
@@ -215,6 +235,28 @@ bool load(GLLoadProc proc) {
     LOAD(GetError,    glGetError);
     LOAD(GetString,   glGetString);
     LOAD(GetIntegerv, glGetIntegerv);
+
+    // Compute & SSBO (4.3+). Track separately — availability is reported but
+    // absence is not fatal so older contexts can still load the rest of GL.
+    bool compute_ok = true;
+    #define LOAD_COMPUTE(fn, glName) compute_ok = load_fn_optional(proc, fn, #glName) && compute_ok
+    LOAD_COMPUTE(DispatchCompute,   glDispatchCompute);
+    LOAD_COMPUTE(MemoryBarrier,     glMemoryBarrier);
+    LOAD_COMPUTE(BindBufferBase,    glBindBufferBase);
+    LOAD_COMPUTE(BindBufferRange,   glBindBufferRange);
+    LOAD_COMPUTE(MapBufferRange,    glMapBufferRange);
+    LOAD_COMPUTE(UnmapBuffer,       glUnmapBuffer);
+    LOAD_COMPUTE(Uniform1ui,        glUniform1ui);
+    LOAD_COMPUTE(GetBufferSubData,  glGetBufferSubData);
+    #undef LOAD_COMPUTE
+
+    if (!compute_ok) {
+        // Demote to debug-level: macOS will *always* hit this since Apple
+        // never shipped GL 4.3+.  Renderer subsystems that need compute
+        // (e.g. GPU particles) check the function pointers themselves and
+        // gracefully fall back to CPU paths.
+        NX_TRACE("OpenGL compute-shader entry points unavailable (requires GL 4.3+)");
+    }
 
     #undef LOAD
 

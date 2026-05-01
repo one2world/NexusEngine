@@ -63,7 +63,8 @@ u8 BinarySceneSerializer::ReadCursor::read_u8() {
 }
 
 u16 BinarySceneSerializer::ReadCursor::read_u16() {
-    u16 v = static_cast<u16>(data[pos]) | (static_cast<u16>(data[pos + 1]) << 8);
+    u16 v = static_cast<u16>(static_cast<u16>(data[pos])
+                          | (static_cast<u16>(data[pos + 1]) << 8));
     pos += 2;
     return v;
 }
@@ -283,6 +284,19 @@ void BinarySceneSerializer::serialize_entity(const Registry& reg, Entity e,
         }
     }
 
+    // Editor-presentation markers — emit only when non-default so legacy
+    // scenes round-trip without size growth.
+    if (reg.has_component<ActiveComponent>(e)) {
+        const auto& a = reg.get_component<ActiveComponent>(e);
+        if (!a.active) {
+            write_component(CT_Active, [&](WriteBuffer& d) { d.write_u8(0); });
+        }
+    }
+    if (reg.has_component<LockedComponent>(e)) {
+        // Locked is a marker — payload is one byte sentinel for forward compat.
+        write_component(CT_Locked, [&](WriteBuffer& d) { d.write_u8(1); });
+    }
+
     // Now write to main buffer: comp_count + entity_data
     buf.write_u16(comp_count);
     buf.data.insert(buf.data.end(), entity_buf.data.begin(), entity_buf.data.end());
@@ -447,9 +461,20 @@ Entity BinarySceneSerializer::deserialize_entity(Registry& reg, ReadCursor& curs
             // Deferred — hierarchy restored in second pass
             cursor.skip(data_size);
             break;
-        case CT_Active:
-            cursor.skip(data_size);
+        case CT_Active: {
+            // Sentinel byte = active flag.  Default-active entities skip the
+            // marker entirely on save, so the absence of CT_Active means
+            // active=true; presence with payload=0 means active=false.
+            const u8 v = cursor.read_u8();
+            reg.add_component<ActiveComponent>(e, ActiveComponent{v != 0});
             break;
+        }
+        case CT_Locked: {
+            // Marker — payload byte is consumed for forward compat but unused.
+            (void)cursor.read_u8();
+            reg.add_component<LockedComponent>(e, LockedComponent{});
+            break;
+        }
         default:
             // Unknown component type — skip for forward compatibility
             NX_WARN("BinarySerializer: skipping unknown component type {}", type_id);

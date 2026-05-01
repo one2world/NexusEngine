@@ -11,18 +11,30 @@ Window::Window(const WindowConfig& config)
       fullscreen_(config.fullscreen),
       windowed_width_(config.width), windowed_height_(config.height) {
 
+    // Capture GLFW errors so we can surface the real reason a window fails
+    // to open instead of swallowing it inside libglfw.
+    glfwSetErrorCallback([](int code, const char* description) {
+        NX_ERROR("GLFW error {}: {}", code, description ? description : "(null)");
+    });
+
     if (!glfwInit()) {
         throw std::runtime_error("Failed to initialize GLFW");
     }
 
+    // macOS caps OpenGL at 4.1 Core (Apple deprecated GL after that and never
+    // shipped 4.2+).  Requesting 4.5 on Cocoa makes glfwCreateWindow return
+    // null with NSGL: "OpenGL profile requested but OpenGL 3.2 or higher
+    // required".  Use the highest profile each platform actually exposes.
+#ifdef __APPLE__
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+#else
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
+#endif
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_RESIZABLE, config.resizable ? GLFW_TRUE : GLFW_FALSE);
-
-#ifdef __APPLE__
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
-#endif
 
     GLFWmonitor* monitor = config.fullscreen ? glfwGetPrimaryMonitor() : nullptr;
     window_ = glfwCreateWindow(width_, height_, config.title.c_str(), monitor, nullptr);

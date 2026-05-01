@@ -62,7 +62,7 @@ private:
     i32 selected_tile_{0};
     u32 brush_size_{1};
     bool show_grid_{true};
-    float zoom_{1.0f};
+    [[maybe_unused]] float zoom_{1.0f};
     Vec2 scroll_offset_{0.0f, 0.0f};
 };
 
@@ -128,9 +128,9 @@ private:
     bool playing_{false};
     TimelineMode mode_{TimelineMode::Dopesheet};
     float zoom_{100.0f};  // pixels per second
-    float scroll_x_{0.0f};
+    [[maybe_unused]] float scroll_x_{0.0f};
     i32 selected_track_{-1};
-    i32 selected_keyframe_{-1};
+    [[maybe_unused]] i32 selected_keyframe_{-1};
 };
 
 // ============================================================================

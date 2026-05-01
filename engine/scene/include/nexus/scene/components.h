@@ -16,11 +16,22 @@ struct ActiveComponent {
 };
 
 // ---------------------------------------------------------------------------
-// TagComponent - human-readable name for an entity
+// TagComponent - human-readable name for an entity, plus Unity-style
+// category Tag (e.g. "Player", "MainCamera") and Layer index for game-side
+// filtering. Defaults preserve scenes that pre-date these fields.
 // ---------------------------------------------------------------------------
 struct TagComponent {
     std::string name;
+    std::string category{"Untagged"};
+    i32 layer{0};
 };
+
+// ---------------------------------------------------------------------------
+// LockedComponent — marker. Editor forbids transform gizmo + inspector edits
+// on any entity carrying this component. Matches Unity's "SceneVis Lock"
+// behavior. Presence alone is meaningful — no data is stored.
+// ---------------------------------------------------------------------------
+struct LockedComponent {};
 
 // ---------------------------------------------------------------------------
 // Transform2DComponent
@@ -69,11 +80,36 @@ struct SpriteRendererComponent {
 };
 
 // ---------------------------------------------------------------------------
-// MeshRendererComponent
+// MeshRendererComponent — Unity-parity surface for mesh rendering knobs.
+//   Lighting:           cast/receive shadows toggles
+//   Probes:             light + reflection probe blending modes
+//   Additional:         dynamic occlusion (frustum / hi-Z culling)
+// All defaults match Unity's "lit mesh" out-of-box behavior so existing
+// scenes round-trip without surprise.
 // ---------------------------------------------------------------------------
+enum class LightProbesMode : u8 {
+    Off = 0,
+    BlendProbes,
+    UseProxyVolume,
+    Custom,
+};
+
+enum class ReflectionProbesMode : u8 {
+    Off = 0,
+    BlendProbes,
+    BlendProbesAndSkybox,
+    Simple,
+};
+
 struct MeshRendererComponent {
-    u32 mesh_id     = 0;
-    u32 material_id = 0;
+    u32  mesh_id     = 0;
+    u32  material_id = 0;
+    Vec4 tint{1.0f, 1.0f, 1.0f, 1.0f};  // multiplied with the material's albedo
+    bool cast_shadows{true};
+    bool receive_shadows{true};
+    LightProbesMode      light_probes{LightProbesMode::BlendProbes};
+    ReflectionProbesMode reflection_probes{ReflectionProbesMode::BlendProbes};
+    bool dynamic_occlusion{true};
 };
 
 // ---------------------------------------------------------------------------

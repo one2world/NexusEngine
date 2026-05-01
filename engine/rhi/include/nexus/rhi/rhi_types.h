@@ -49,6 +49,11 @@ enum class PrimitiveType : u8 {
 enum class BlendMode : u8 { None, Alpha, Additive, Multiply };
 enum class CullMode : u8 { None, Front, Back };
 
+/// Polygon fill mode.  `Fill` is the default; `Line` is the editor's
+/// wireframe mode.  Backends that don't support GL_LINE polygon fill
+/// (WebGL, Metal-without-emulation) treat `Line` as a no-op.
+enum class PolygonMode : u8 { Fill, Line };
+
 enum class DepthFunc : u8 {
     Less,
     LessEqual,

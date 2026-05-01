@@ -10,6 +10,7 @@ enum class Backend : u8 {
     OpenGL,
     Vulkan,
     WebGL,
+    Metal,
 };
 
 class RHI {
@@ -41,6 +42,17 @@ public:
     virtual FramebufferHandle create_framebuffer(const FramebufferDesc& desc) = 0;
     virtual void              destroy_framebuffer(FramebufferHandle handle)   = 0;
 
+    /// Return the backend-native handle for a framebuffer's color attachment.
+    /// For the OpenGL backend this is the GL texture name; ImGui editors can
+    /// pass it to `ImGui::Image()` as `(ImTextureID)(intptr_t)native`.  Returns
+    /// 0 if the handle is invalid or the attachment doesn't exist.
+    virtual u64 framebuffer_color_native(FramebufferHandle handle,
+                                         u32 attachment_index = 0) {
+        (void)handle;
+        (void)attachment_index;
+        return 0;
+    }
+
     // ── Render commands ───────────────────────────────────────────────
     virtual void begin_frame() = 0;
     virtual void end_frame()   = 0;
@@ -62,6 +74,10 @@ public:
     virtual void set_depth_test(bool enabled)   = 0;
     virtual void set_depth_write(bool enabled)  = 0;
     virtual void set_cull_mode(CullMode mode)   = 0;
+    /// Set the polygon fill mode (Fill / Line).  Default no-op so backends
+    /// without `glPolygonMode` (WebGL, Metal) ignore wireframe requests
+    /// gracefully — the editor's Wireframe toggle still works on GL desktop.
+    virtual void set_polygon_mode(PolygonMode mode) { (void)mode; }
 
     // ── Uniforms ──────────────────────────────────────────────────────
     virtual void set_uniform_int(ShaderHandle shader,
@@ -84,6 +100,78 @@ public:
     // ── Draw calls ────────────────────────────────────────────────────
     virtual void draw(u32 vertex_count, u32 first_vertex = 0)   = 0;
     virtual void draw_indexed(u32 index_count, u32 first_index = 0) = 0;
+
+    // ── Compute (GPU-driven work) ─────────────────────────────────────
+    // Backends that lack compute-shader support return false for
+    // supports_compute() and treat the other compute calls as no-ops.
+    virtual bool         supports_compute() const { return false; }
+    virtual ShaderHandle create_compute_shader(const std::string& compute_src) {
+        (void)compute_src;
+        return INVALID_HANDLE;
+    }
+    virtual void bind_storage_buffer(BufferHandle handle, u32 binding) {
+        (void)handle;
+        (void)binding;
+    }
+    virtual void dispatch_compute(u32 groups_x, u32 groups_y, u32 groups_z) {
+        (void)groups_x;
+        (void)groups_y;
+        (void)groups_z;
+    }
+    virtual void memory_barrier() {}
+    virtual void set_uniform_uint(ShaderHandle shader,
+                                  const std::string& name, u32 value) {
+        (void)shader;
+        (void)name;
+        (void)value;
+    }
+    /// Copy `size` bytes from a GPU buffer into CPU memory.  Synchronous —
+    /// only call when a result is actually needed (e.g. debug / telemetry).
+    virtual void read_buffer(BufferHandle handle, void* dst,
+                             size_t size, size_t offset = 0) {
+        (void)handle;
+        (void)dst;
+        (void)size;
+        (void)offset;
+    }
+
+    // ── ImGui backend abstraction ─────────────────────────────────────
+    // Each RHI implementation is responsible for wrapping the matching
+    // `ImGui_Impl<Platform>_*` and `ImGui_Impl<Renderer>_*` backends so that
+    // host applications (the editor, tools, debugger overlays) never include
+    // any `imgui_impl_*.h` header directly and never assume a particular
+    // graphics API.  This is what makes the editor truly backend-agnostic.
+    //
+    //   imgui_init(window)        — install the platform + renderer backend.
+    //                                `native_window` is the host window handle
+    //                                (e.g. `GLFWwindow*` on desktop) — the RHI
+    //                                knows what concrete type to expect.
+    //   imgui_shutdown()          — tear both halves down in the right order.
+    //   imgui_new_frame()         — call between `ImGui::NewFrame()` set-ups;
+    //                                must invoke both renderer and platform
+    //                                NewFrame in the order required by the
+    //                                concrete backend.
+    //   imgui_render_draw_data()  — submit the current ImDrawData with
+    //                                `ImGui::GetDrawData()`.  Must run inside
+    //                                an active frame / render pass owned by
+    //                                the host (the RHI does not begin/end the
+    //                                pass — only emits draw commands).
+    //
+    // Returns false from imgui_init() when the backend lacks a working ImGui
+    // renderer binding on the current build (e.g. Vulkan without a real
+    // surface).  Callers must treat that as a hard error rather than silently
+    // skipping ImGui submission.
+    [[nodiscard]] virtual bool imgui_init(void* native_window)  = 0;
+    virtual void               imgui_shutdown()                 = 0;
+    virtual void               imgui_new_frame()                = 0;
+    virtual void               imgui_render_draw_data()         = 0;
+
+    /// Whether sampled framebuffer textures store rows bottom-up (the OpenGL
+    /// / WebGL convention).  Editor / tooling that draws an offscreen color
+    /// attachment into ImGui must flip the V coordinate when this returns
+    /// true.  Returns false for Metal and Vulkan, whose render-target memory
+    /// layout already matches ImGui's top-left origin.
+    [[nodiscard]] virtual bool textures_are_bottom_up() const   = 0;
 
     // ── Factory ───────────────────────────────────────────────────────
     /// Create the default RHI backend (OpenGL).

@@ -80,6 +80,7 @@ private:
         CT_Tilemap = 15,
         CT_Hierarchy = 16,
         CT_Active = 17,
+        CT_Locked = 18,
     };
 
     // Writer helpers

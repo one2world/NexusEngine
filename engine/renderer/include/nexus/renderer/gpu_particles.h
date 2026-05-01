@@ -8,7 +8,12 @@
 namespace nexus {
 
 // ============================================================================
-// GPU Particle System - compute shader based emission and simulation
+// GPU Particle System — real compute-shader emission + simulation.
+//
+// The particle pool lives entirely in an SSBO.  A 64-thread-per-group
+// compute shader advances every slot per frame (integrate + kill + emit).
+// A separate atomic counter SSBO tracks alive count across dispatches.
+// CPU only uploads the per-frame uniforms and issues dispatch / draw.
 // ============================================================================
 
 struct GPUParticleEmitterConfig {
@@ -29,14 +34,15 @@ struct GPUParticleEmitterConfig {
     bool additive_blend{true};
 };
 
-struct GPUParticle {
-    Vec3 position;
+// Matches the std430 layout used in the compute shader.  16-byte aligned.
+struct alignas(16) GPUParticle {
+    Vec3  position;
     float lifetime;
-    Vec3 velocity;
+    Vec3  velocity;
     float max_lifetime;
-    Vec4 color;
+    Vec4  color;
     float size;
-    float pad[3];
+    float _pad[3];
 };
 
 class GPUParticleSystem {
@@ -44,13 +50,13 @@ public:
     void init(rhi::RHI* rhi, const GPUParticleEmitterConfig& config);
     void shutdown();
 
-    /// Emit new particles and simulate existing ones.
+    /// Emit new particles and simulate existing ones on the GPU.
     void update(float dt);
 
     /// Render all alive particles as billboards.
     void render(const Mat4& view, const Mat4& projection, Vec3 camera_right, Vec3 camera_up);
 
-    /// Get current alive particle count.
+    /// Get current alive particle count (last frame's snapshot).
     u32 alive_count() const { return alive_count_; }
 
     /// Access config for runtime modification.
@@ -60,32 +66,40 @@ public:
     /// Set texture for particle rendering.
     void set_texture(rhi::TextureHandle tex) { texture_ = tex; }
 
+    /// True when the RHI supports GPU compute and the system uses it.
+    bool uses_gpu_compute() const { return uses_gpu_compute_; }
+
 private:
-    void emit_particles(float dt);
-    void simulate_particles(float dt);
-    void compact_dead_particles();
+    void update_gpu(float dt);
+    void update_cpu_fallback(float dt);
+    void read_back_alive_count();
 
     rhi::RHI* rhi_{nullptr};
     GPUParticleEmitterConfig config_;
 
-    // Particle storage (CPU-side for OpenGL compatibility, GPU compute for Vulkan)
-    std::vector<GPUParticle> particles_;
-    u32 alive_count_{0};
-
-    // Rendering resources
-    rhi::ShaderHandle shader_{rhi::INVALID_HANDLE};
+    // GPU resources
+    rhi::ShaderHandle render_shader_{rhi::INVALID_HANDLE};
+    rhi::ShaderHandle compute_shader_{rhi::INVALID_HANDLE};
     rhi::PipelineHandle pipeline_{rhi::INVALID_HANDLE};
-    rhi::BufferHandle vbo_{rhi::INVALID_HANDLE};
+    rhi::BufferHandle particle_ssbo_{rhi::INVALID_HANDLE};   // array<GPUParticle>
+    rhi::BufferHandle counter_ssbo_{rhi::INVALID_HANDLE};    // single u32 alive-count
+    rhi::BufferHandle quad_vbo_{rhi::INVALID_HANDLE};        // 6-vertex unit quad
     rhi::TextureHandle texture_{rhi::INVALID_HANDLE};
 
-    // Emission accumulator
-    float emission_accumulator_{0.0f};
+    // CPU fallback state (only used when RHI lacks compute support)
+    bool uses_gpu_compute_{false};
+    std::vector<GPUParticle> cpu_particles_;
+    rhi::BufferHandle cpu_vbo_{rhi::INVALID_HANDLE};
 
-    // Random state
+    u32 alive_count_{0};
+    float emission_accumulator_{0.0f};
+    u32 frame_seed_{0};
+
+    // CPU fallback RNG
     u32 rng_state_{12345};
-    float rand_float();  // [0, 1]
+    float rand_float();
     float rand_range(float min, float max);
-    Vec3 rand_cone(Vec3 direction, float angle);
+    Vec3  rand_cone(Vec3 direction, float angle);
 };
 
 } // namespace nexus

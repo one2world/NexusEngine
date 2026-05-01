@@ -37,6 +37,24 @@ static json serialize_entity(const Registry& reg, Entity e) {
     if (reg.has_component<TagComponent>(e)) {
         auto& tag = reg.get_component<TagComponent>(e);
         entity_json["tag"] = tag.name;
+        // Optional Unity-style category and layer — only emitted when
+        // non-default so legacy scenes round-trip without bloat.
+        if (tag.category != "Untagged") {
+            entity_json["tag_category"] = tag.category;
+        }
+        if (tag.layer != 0) {
+            entity_json["tag_layer"] = tag.layer;
+        }
+    }
+
+    // Editor-authored presentation markers — active/visibility and lock.
+    // Active defaults to true; only emit when false so clean scenes stay tidy.
+    if (reg.has_component<ActiveComponent>(e)) {
+        const auto& ac = reg.get_component<ActiveComponent>(e);
+        if (!ac.active) entity_json["active"] = false;
+    }
+    if (reg.has_component<LockedComponent>(e)) {
+        entity_json["locked"] = true;
     }
 
     if (reg.has_component<Transform2DComponent>(e)) {
@@ -70,10 +88,28 @@ static json serialize_entity(const Registry& reg, Entity e) {
 
     if (reg.has_component<MeshRendererComponent>(e)) {
         auto& m = reg.get_component<MeshRendererComponent>(e);
-        entity_json["mesh_renderer"] = {
+        json mr = {
             {"mesh_id", m.mesh_id},
             {"material_id", m.material_id}
         };
+        // Lighting / probes / additional settings — emit only when they
+        // diverge from defaults so common scenes stay tidy on disk.
+        if (!m.cast_shadows)        mr["cast_shadows"] = false;
+        if (!m.receive_shadows)     mr["receive_shadows"] = false;
+        if (!m.dynamic_occlusion)   mr["dynamic_occlusion"] = false;
+        if (m.light_probes != LightProbesMode::BlendProbes) {
+            mr["light_probes"] = static_cast<int>(m.light_probes);
+        }
+        if (m.reflection_probes != ReflectionProbesMode::BlendProbes) {
+            mr["reflection_probes"] = static_cast<int>(m.reflection_probes);
+        }
+        // Tint is editable from the Inspector and stored per-entity, so it
+        // must persist.  Default white is the common case and is elided.
+        if (m.tint.x != 1.0f || m.tint.y != 1.0f ||
+            m.tint.z != 1.0f || m.tint.w != 1.0f) {
+            mr["tint"] = {m.tint.x, m.tint.y, m.tint.z, m.tint.w};
+        }
+        entity_json["mesh_renderer"] = std::move(mr);
     }
 
     if (reg.has_component<CameraComponent>(e)) {
@@ -217,7 +253,23 @@ static Entity deserialize_entity(Registry& reg, const json& j,
     id_map[original_id] = e;
 
     if (j.contains("tag")) {
-        reg.add_component<TagComponent>(e, TagComponent{j["tag"].get<std::string>()});
+        TagComponent tag;
+        tag.name = j["tag"].get<std::string>();
+        if (j.contains("tag_category")) {
+            tag.category = j["tag_category"].get<std::string>();
+        }
+        if (j.contains("tag_layer")) {
+            tag.layer = j["tag_layer"].get<i32>();
+        }
+        reg.add_component<TagComponent>(e, std::move(tag));
+    }
+
+    // Editor presentation markers — symmetric with serialize_entity.
+    if (j.contains("active") && !j["active"].get<bool>()) {
+        reg.add_component<ActiveComponent>(e, ActiveComponent{false});
+    }
+    if (j.contains("locked") && j["locked"].get<bool>()) {
+        reg.add_component<LockedComponent>(e, LockedComponent{});
     }
 
     if (j.contains("transform2d")) {
@@ -254,6 +306,20 @@ static Entity deserialize_entity(Registry& reg, const json& j,
         MeshRendererComponent comp;
         comp.mesh_id = m["mesh_id"].get<u32>();
         comp.material_id = m["material_id"].get<u32>();
+        if (m.contains("cast_shadows"))      comp.cast_shadows      = m["cast_shadows"].get<bool>();
+        if (m.contains("receive_shadows"))   comp.receive_shadows   = m["receive_shadows"].get<bool>();
+        if (m.contains("dynamic_occlusion")) comp.dynamic_occlusion = m["dynamic_occlusion"].get<bool>();
+        if (m.contains("light_probes")) {
+            comp.light_probes = static_cast<LightProbesMode>(m["light_probes"].get<int>());
+        }
+        if (m.contains("reflection_probes")) {
+            comp.reflection_probes =
+                static_cast<ReflectionProbesMode>(m["reflection_probes"].get<int>());
+        }
+        if (m.contains("tint") && m["tint"].is_array() && m["tint"].size() == 4) {
+            comp.tint = Vec4(m["tint"][0].get<f32>(), m["tint"][1].get<f32>(),
+                             m["tint"][2].get<f32>(), m["tint"][3].get<f32>());
+        }
         reg.add_component<MeshRendererComponent>(e, comp);
     }
 
@@ -511,6 +577,74 @@ bool SceneSerializer::load(const std::string& filepath) {
     std::string content((std::istreambuf_iterator<char>(file)),
                          std::istreambuf_iterator<char>());
     return from_json(content);
+}
+
+Entity SceneSerializer::duplicate_entity(Entity src) {
+    auto& reg = scene_.registry();
+    if (!reg.alive(src)) return INVALID_ENTITY;
+
+    // Snapshot the source subtree (root + descendants) through the same
+    // serialize_entity path used by save()/to_json(), guaranteeing feature
+    // parity with scene files: every component the serializer knows round-trips
+    // cleanly into the duplicate.
+    std::vector<Entity> subtree;
+    subtree.reserve(8);
+    subtree.push_back(src);
+    auto descendants = Hierarchy::get_descendants(reg, src);
+    subtree.insert(subtree.end(), descendants.begin(), descendants.end());
+
+    std::vector<json> snapshot;
+    snapshot.reserve(subtree.size());
+    for (Entity e : subtree) {
+        snapshot.push_back(serialize_entity(reg, e));
+    }
+
+    // Recreate each entity; id_map is keyed on the original id so the second
+    // pass can restore child → parent wiring inside the duplicated subtree.
+    std::unordered_map<u32, Entity> id_map;
+    Entity duplicated_root = INVALID_ENTITY;
+    for (std::size_t i = 0; i < snapshot.size(); ++i) {
+        Entity new_e = deserialize_entity(reg, snapshot[i], id_map);
+        if (i == 0) duplicated_root = new_e;
+    }
+    if (duplicated_root == INVALID_ENTITY) return INVALID_ENTITY;
+
+    // Restore internal hierarchy (only for non-root nodes — the root gets its
+    // parent rewritten below so the duplicate becomes a sibling of `src`).
+    for (std::size_t i = 1; i < snapshot.size(); ++i) {
+        const json& ej = snapshot[i];
+        if (!ej.contains("parent")) continue;
+        auto child_it  = id_map.find(ej["id"].get<u32>());
+        auto parent_it = id_map.find(ej["parent"].get<u32>());
+        if (child_it != id_map.end() && parent_it != id_map.end()) {
+            Hierarchy::set_parent(reg, child_it->second, parent_it->second);
+        }
+    }
+
+    // Parent the duplicated root where the source lives (same sibling level).
+    if (reg.has_component<HierarchyComponent>(src)) {
+        Entity src_parent = reg.get_component<HierarchyComponent>(src).parent;
+        if (src_parent != INVALID_ENTITY && reg.alive(src_parent)) {
+            Hierarchy::set_parent(reg, duplicated_root, src_parent);
+        }
+    }
+
+    // Append "(N)" to the root tag — find first unused suffix so repeated
+    // duplications stay distinguishable instead of colliding.
+    if (reg.has_component<TagComponent>(duplicated_root)) {
+        auto& tag = reg.get_component<TagComponent>(duplicated_root);
+        const std::string base = tag.name;
+        for (int n = 1; n < 10000; ++n) {
+            std::string candidate = base + " (" + std::to_string(n) + ")";
+            bool collision = false;
+            reg.each<TagComponent>([&](Entity e, TagComponent& other) {
+                if (e != duplicated_root && other.name == candidate) collision = true;
+            });
+            if (!collision) { tag.name = candidate; break; }
+        }
+    }
+
+    return duplicated_root;
 }
 
 } // namespace nexus

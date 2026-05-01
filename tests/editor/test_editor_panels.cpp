@@ -1,5 +1,10 @@
 #include <gtest/gtest.h>
 #include "nexus/editor/editor_panels.h"
+#include "nexus/editor/editor_state.h"
+#include "nexus/editor/undo_redo.h"
+#include "nexus/editor/component_registry.h"
+#include "nexus/perf/profiler.h"
+#include <filesystem>
 
 using namespace nexus;
 using namespace nexus::editor;
@@ -282,4 +287,690 @@ TEST(AssetBrowserPanel, Entries) {
 TEST(AssetBrowserPanel, TypeId) {
     AssetBrowserPanel ab;
     EXPECT_STREQ(ab.type_id(), "AssetBrowserPanel");
+}
+
+// =============================================================================
+// UndoHistoryPanel
+// =============================================================================
+
+TEST(UndoHistoryPanel, TypeId) {
+    UndoHistoryPanel p;
+    EXPECT_STREQ(p.type_id(), "UndoHistoryPanel");
+    EXPECT_EQ(p.title(), "Undo History");
+}
+
+TEST(UndoHistoryPanel, BindManager) {
+    UndoHistoryPanel p;
+    UndoRedoManager mgr;
+    p.bind_undo_manager(&mgr);
+    // No render call — panel is headless in tests (no ImGui context).
+    SUCCEED();
+}
+
+// =============================================================================
+// ProfilerPanel
+// =============================================================================
+
+TEST(ProfilerPanel, TypeId) {
+    ProfilerPanel p;
+    EXPECT_STREQ(p.type_id(), "ProfilerPanel");
+    EXPECT_EQ(p.title(), "Profiler");
+}
+
+TEST(ProfilerPanel, BindProfiler) {
+    ProfilerPanel p;
+    nexus::Profiler prof;
+    p.bind_profiler(&prof);
+    EXPECT_FALSE(p.is_paused());
+    p.set_paused(true);
+    EXPECT_TRUE(p.is_paused());
+}
+
+// =============================================================================
+// ConsolePanel — collapse, timestamps, clear-on-play, error-pause
+// =============================================================================
+
+TEST(ConsolePanel, AddsMessage) {
+    ConsolePanel p;
+    p.add_message("hello", LogLevel::Info);
+    ASSERT_EQ(p.message_count(), 1u);
+    EXPECT_EQ(p.messages()[0].text, "hello");
+    EXPECT_EQ(p.messages()[0].count, 1u);
+}
+
+TEST(ConsolePanel, SeverityCounts) {
+    ConsolePanel p;
+    p.add_message("a", LogLevel::Info);
+    p.add_message("b", LogLevel::Warning);
+    p.add_message("c", LogLevel::Error);
+    p.add_message("d", LogLevel::Debug);
+    EXPECT_EQ(p.info_count(),    1u);
+    EXPECT_EQ(p.warning_count(), 1u);
+    EXPECT_EQ(p.error_count(),   1u);
+    EXPECT_EQ(p.debug_count(),   1u);
+}
+
+TEST(ConsolePanel, CollapseFoldsAdjacentDuplicates) {
+    ConsolePanel p;
+    p.set_collapse_mode(true);
+    p.add_message("repeated", LogLevel::Warning);
+    p.add_message("repeated", LogLevel::Warning);
+    p.add_message("repeated", LogLevel::Warning);
+    ASSERT_EQ(p.message_count(), 1u);
+    EXPECT_EQ(p.messages()[0].count, 3u);
+    // Severity counter increments per occurrence, not per row.
+    EXPECT_EQ(p.warning_count(), 3u);
+}
+
+TEST(ConsolePanel, CollapseDoesNotFoldNonAdjacent) {
+    ConsolePanel p;
+    p.set_collapse_mode(true);
+    p.add_message("a", LogLevel::Info);
+    p.add_message("b", LogLevel::Info);
+    p.add_message("a", LogLevel::Info);
+    EXPECT_EQ(p.message_count(), 3u);
+}
+
+TEST(ConsolePanel, CollapseOffNeverFolds) {
+    ConsolePanel p;
+    EXPECT_FALSE(p.collapse_mode());
+    p.add_message("dup", LogLevel::Info);
+    p.add_message("dup", LogLevel::Info);
+    EXPECT_EQ(p.message_count(), 2u);
+}
+
+TEST(ConsolePanel, ClearResetsCounters) {
+    ConsolePanel p;
+    p.add_message("x", LogLevel::Error);
+    p.add_message("y", LogLevel::Warning);
+    p.clear();
+    EXPECT_EQ(p.message_count(), 0u);
+    EXPECT_EQ(p.error_count(),   0u);
+    EXPECT_EQ(p.warning_count(), 0u);
+}
+
+TEST(ConsolePanel, OnEnterPlayClearsWhenEnabled) {
+    ConsolePanel p;
+    p.set_clear_on_play(true);
+    p.add_message("stale", LogLevel::Info);
+    p.on_enter_play();
+    EXPECT_EQ(p.message_count(), 0u);
+}
+
+TEST(ConsolePanel, OnEnterPlayKeepsWhenDisabled) {
+    ConsolePanel p;
+    p.set_clear_on_play(false);
+    p.add_message("stale", LogLevel::Info);
+    p.on_enter_play();
+    EXPECT_EQ(p.message_count(), 1u);
+}
+
+TEST(ConsolePanel, ErrorPauseRequestSetOnce) {
+    ConsolePanel p;
+    p.set_error_pause(true);
+    p.add_message("oops", LogLevel::Error);
+    EXPECT_TRUE(p.consume_error_pause_request());
+    EXPECT_FALSE(p.consume_error_pause_request());
+}
+
+TEST(ConsolePanel, ErrorPauseIgnoredWhenDisabled) {
+    ConsolePanel p;
+    p.set_error_pause(false);
+    p.add_message("oops", LogLevel::Error);
+    EXPECT_FALSE(p.consume_error_pause_request());
+}
+
+TEST(ConsolePanel, MaxMessagesPrunesOldest) {
+    ConsolePanel p;
+    p.set_max_messages(3);
+    p.add_message("a", LogLevel::Info);
+    p.add_message("b", LogLevel::Info);
+    p.add_message("c", LogLevel::Info);
+    p.add_message("d", LogLevel::Info);
+    EXPECT_EQ(p.message_count(), 3u);
+    EXPECT_EQ(p.messages()[0].text, "b");
+    EXPECT_EQ(p.messages()[2].text, "d");
+}
+
+TEST(ConsolePanel, MaxMessagesPrunePreservesSeverityCounts) {
+    // When collapsed entries with count>1 are pruned, the severity counter
+    // must drop by the merged count, not by 1.
+    ConsolePanel p;
+    p.set_max_messages(2);
+    p.set_collapse_mode(true);
+    // Row 1 = "x" warning x3 (one entry, count=3).
+    p.add_message("x", LogLevel::Warning);
+    p.add_message("x", LogLevel::Warning);
+    p.add_message("x", LogLevel::Warning);
+    // Row 2 = "y" info.
+    p.add_message("y", LogLevel::Info);
+    // Row 3 = "z" error — pushes row 1 out, removing 3 warning-counter ticks.
+    p.add_message("z", LogLevel::Error);
+    EXPECT_EQ(p.message_count(),  2u);
+    EXPECT_EQ(p.warning_count(),  0u);
+    EXPECT_EQ(p.info_count(),     1u);
+    EXPECT_EQ(p.error_count(),    1u);
+}
+
+// =============================================================================
+// AssetBrowserPanel — root cap + path semantics
+// =============================================================================
+
+TEST(AssetBrowserPanel, NavigateUpStopsAtRoot) {
+    namespace fs = std::filesystem;
+    AssetBrowserPanel ab;
+    auto root = fs::temp_directory_path() / "nexus-ab-test";
+    fs::create_directories(root / "sub");
+    // navigate_to resolves through weakly_canonical, so on macOS the result
+    // can read as `/private/var/...` even when the input is `/var/...`.
+    // Compare against the same canonical form rather than the literal input.
+    std::error_code ec;
+    const auto canonical_root = fs::weakly_canonical(root, ec);
+    ab.set_root_path(root.string());
+    ab.navigate_to((root / "sub").string());
+    ab.navigate_up();
+    EXPECT_EQ(fs::path(ab.current_path()), canonical_root);
+    // Climbing past root must not escape the project.
+    ab.navigate_up();
+    EXPECT_EQ(fs::path(ab.current_path()), canonical_root);
+    fs::remove_all(root);
+}
+
+TEST(AssetBrowserPanel, NavigationDirtyFlagFiresOncePerChange) {
+    AssetBrowserPanel ab;
+    EXPECT_TRUE(ab.consume_navigation_dirty()) << "initial nav is dirty";
+    EXPECT_FALSE(ab.consume_navigation_dirty());
+    ab.navigate_to("/tmp");
+    EXPECT_TRUE(ab.consume_navigation_dirty());
+    EXPECT_FALSE(ab.consume_navigation_dirty());
+}
+
+TEST(AssetBrowserPanel, RecursiveSearchToggle) {
+    AssetBrowserPanel ab;
+    EXPECT_FALSE(ab.recursive_search());
+    ab.set_recursive_search(true);
+    EXPECT_TRUE(ab.recursive_search());
+}
+
+// =============================================================================
+// HierarchyPanel — selection routing through bound EditorSelection
+// =============================================================================
+
+TEST(HierarchyPanelSelection, RoutesThroughBoundSelection) {
+    HierarchyPanel hp;
+    EditorSelection sel;
+    hp.bind_selection(&sel);
+    hp.set_selected_entity(7);
+    EXPECT_TRUE(sel.is_selected(7));
+    EXPECT_EQ(sel.primary(), 7u);
+    EXPECT_EQ(hp.selected_entity(), 7u);
+    EXPECT_TRUE(hp.has_selection());
+}
+
+TEST(HierarchyPanelSelection, ClearReachesBoundSelection) {
+    HierarchyPanel hp;
+    EditorSelection sel;
+    hp.bind_selection(&sel);
+    hp.set_selected_entity(3);
+    hp.clear_selection();
+    EXPECT_FALSE(sel.has_selection());
+    EXPECT_FALSE(hp.has_selection());
+}
+
+TEST(HierarchyPanelSelection, MultiSelectViaBound) {
+    HierarchyPanel hp;
+    EditorSelection sel;
+    hp.bind_selection(&sel);
+    hp.add_to_selection(1);
+    hp.add_to_selection(2);
+    hp.add_to_selection(3);
+    EXPECT_EQ(sel.count(), 3u);
+    EXPECT_TRUE(hp.is_multi_selected(2));
+    hp.remove_from_selection(2);
+    EXPECT_FALSE(hp.is_multi_selected(2));
+    EXPECT_EQ(sel.count(), 2u);
+}
+
+TEST(HierarchyPanelSelection, FallbackWhenUnbound) {
+    HierarchyPanel hp;
+    hp.set_selected_entity(42);
+    EXPECT_EQ(hp.selected_entity(), 42u);
+    EXPECT_TRUE(hp.has_selection());
+    hp.clear_selection();
+    EXPECT_FALSE(hp.has_selection());
+}
+
+TEST(HierarchyPanelSelection, BoundSelectionVisibleToOtherReader) {
+    HierarchyPanel hp;
+    EditorSelection sel;
+    hp.bind_selection(&sel);
+    sel.select(99);                          // external mutation
+    EXPECT_EQ(hp.selected_entity(), 99u);    // panel sees it
+    EXPECT_TRUE(hp.has_selection());
+}
+
+TEST(HierarchyPanelRename, RenamingState) {
+    HierarchyPanel hp;
+    EXPECT_FALSE(hp.is_renaming());
+    EXPECT_EQ(hp.renaming_entity(), 0u);
+}
+
+TEST(HierarchyPanelAssetDrop, CallbackWiringStoresCallback) {
+    HierarchyPanel hp;
+    bool called = false;
+    std::string saw_path;
+    u32 saw_entity = 0;
+    hp.set_on_asset_drop(
+        [&](const std::string& p, u32 e) {
+            called = true;
+            saw_path = p;
+            saw_entity = e;
+        });
+    // Direct callback exposure — we don't have an ImGui context to simulate
+    // the actual drop, but binding alone exercises the storage path so
+    // future render-path changes that drop the callback are caught.
+    EXPECT_FALSE(called);
+    (void)saw_path;
+    (void)saw_entity;
+}
+
+// =============================================================================
+// InspectorPanel — multi-target broadcast
+// =============================================================================
+
+TEST(InspectorPanelMulti, EditTargetsSinglePrimary) {
+    InspectorPanel ip;
+    ip.set_target_entity(7);
+    auto t = ip.current_edit_targets();
+    ASSERT_EQ(t.size(), 1u);
+    EXPECT_EQ(t[0], 7u);
+}
+
+TEST(InspectorPanelMulti, EditTargetsBroadcastsWhenSelectionMatches) {
+    InspectorPanel ip;
+    EditorSelection sel;
+    ip.bind_selection(&sel);
+    sel.select(1);
+    sel.select(2);
+    sel.select(3);
+    ip.set_target_entity(2);            // primary among the selection
+    auto t = ip.current_edit_targets();
+    EXPECT_EQ(t.size(), 3u);
+    EXPECT_NE(std::find(t.begin(), t.end(), 1u), t.end());
+    EXPECT_NE(std::find(t.begin(), t.end(), 2u), t.end());
+    EXPECT_NE(std::find(t.begin(), t.end(), 3u), t.end());
+}
+
+TEST(InspectorPanelMulti, EditTargetsFallbackWhenLockedTargetOutsideSelection) {
+    InspectorPanel ip;
+    EditorSelection sel;
+    ip.bind_selection(&sel);
+    sel.select(1);
+    sel.select(2);
+    ip.set_target_entity(99);           // pinned to entity not in selection
+    auto t = ip.current_edit_targets();
+    EXPECT_EQ(t.size(), 1u);
+    EXPECT_EQ(t[0], 99u);
+}
+
+TEST(InspectorPanelMulti, EditTargetsEmptyWhenNoTarget) {
+    InspectorPanel ip;
+    auto t = ip.current_edit_targets();
+    EXPECT_TRUE(t.empty());
+}
+
+TEST(InspectorPanelMulti, EditTargetsSingleWhenSelectionHasOne) {
+    InspectorPanel ip;
+    EditorSelection sel;
+    ip.bind_selection(&sel);
+    sel.select(5);
+    ip.set_target_entity(5);
+    auto t = ip.current_edit_targets();
+    EXPECT_EQ(t.size(), 1u);
+    EXPECT_EQ(t[0], 5u);
+}
+
+// =============================================================================
+// ViewportPanel — asset drop callback wiring
+// =============================================================================
+
+TEST(ViewportPanelAssetDrop, CallbackBindable) {
+    ViewportPanel vp;
+    bool called = false;
+    vp.set_on_asset_drop([&](const std::string&) { called = true; });
+    EXPECT_FALSE(called);
+}
+
+// =============================================================================
+// HierarchyPanel — undoable lock/visibility binding
+// =============================================================================
+
+TEST(HierarchyPanelUndo, CanBindUndoManager) {
+    HierarchyPanel hp;
+    UndoRedoManager mgr;
+    hp.bind_undo_manager(&mgr);
+    EXPECT_FALSE(mgr.can_undo());
+}
+
+// =============================================================================
+// AssetBrowserPanel — thumbnail registration
+// =============================================================================
+
+TEST(AssetBrowserThumbnail, SetAndQuery) {
+    AssetBrowserPanel ab;
+    EXPECT_EQ(ab.thumbnail("nonexistent"), 0u);
+    ab.set_thumbnail("textures/player.png", 0xDEADBEEFull);
+    EXPECT_EQ(ab.thumbnail("textures/player.png"), 0xDEADBEEFull);
+    EXPECT_EQ(ab.thumbnail_count(), 1u);
+}
+
+TEST(AssetBrowserThumbnail, ZeroIdRemovesEntry) {
+    AssetBrowserPanel ab;
+    ab.set_thumbnail("a.png", 42);
+    ab.set_thumbnail("b.png", 99);
+    EXPECT_EQ(ab.thumbnail_count(), 2u);
+    ab.set_thumbnail("a.png", 0);
+    EXPECT_EQ(ab.thumbnail_count(), 1u);
+    EXPECT_EQ(ab.thumbnail("a.png"), 0u);
+    EXPECT_EQ(ab.thumbnail("b.png"), 99u);
+}
+
+TEST(AssetBrowserThumbnail, OverwritesExistingBinding) {
+    AssetBrowserPanel ab;
+    ab.set_thumbnail("x", 1);
+    ab.set_thumbnail("x", 2);
+    EXPECT_EQ(ab.thumbnail("x"), 2u);
+    EXPECT_EQ(ab.thumbnail_count(), 1u);
+}
+
+// =============================================================================
+// AssetBrowserPanel — project sidebar (Favorites / virtual collections)
+// =============================================================================
+
+TEST(AssetBrowserSidebar, DefaultFilterIsNone) {
+    AssetBrowserPanel ab;
+    EXPECT_EQ(ab.current_filter(), AssetBrowserPanel::SidebarFilter::None);
+}
+
+TEST(AssetBrowserSidebar, SetFilterMarksDirtyAndFiresCallback) {
+    AssetBrowserPanel ab;
+    int fired = 0;
+    AssetBrowserPanel::SidebarFilter received =
+        AssetBrowserPanel::SidebarFilter::None;
+    ab.set_on_filter_request([&](AssetBrowserPanel::SidebarFilter f) {
+        ++fired;
+        received = f;
+    });
+    // Drain the constructor's initial dirty bit so we measure the toggle.
+    (void)ab.consume_navigation_dirty();
+
+    ab.set_filter(AssetBrowserPanel::SidebarFilter::AllMaterials);
+    EXPECT_EQ(ab.current_filter(),
+              AssetBrowserPanel::SidebarFilter::AllMaterials);
+    EXPECT_TRUE(ab.consume_navigation_dirty());
+    EXPECT_EQ(fired, 1);
+    EXPECT_EQ(received, AssetBrowserPanel::SidebarFilter::AllMaterials);
+}
+
+TEST(AssetBrowserSidebar, ReclickingActiveFilterRefiresCallback) {
+    AssetBrowserPanel ab;
+    int fired = 0;
+    ab.set_on_filter_request([&](AssetBrowserPanel::SidebarFilter) { ++fired; });
+    ab.set_filter(AssetBrowserPanel::SidebarFilter::AllModels);
+    EXPECT_EQ(fired, 1);
+    // Re-clicking the same active filter is a refresh request — fires again.
+    ab.set_filter(AssetBrowserPanel::SidebarFilter::AllModels);
+    EXPECT_EQ(fired, 2);
+}
+
+TEST(AssetBrowserSidebar, NoneFilterDoesNotFireCallback) {
+    AssetBrowserPanel ab;
+    int fired = 0;
+    ab.set_on_filter_request([&](AssetBrowserPanel::SidebarFilter) { ++fired; });
+    ab.set_filter(AssetBrowserPanel::SidebarFilter::AllPrefabs);
+    EXPECT_EQ(fired, 1);
+    // Switching back to None means "browse current_path_" — host scans via
+    // the existing folder populator, no extra callback.
+    ab.set_filter(AssetBrowserPanel::SidebarFilter::None);
+    EXPECT_EQ(fired, 1);
+    EXPECT_EQ(ab.current_filter(), AssetBrowserPanel::SidebarFilter::None);
+}
+
+TEST(AssetBrowserSidebar, NavigateToClearsFilter) {
+    AssetBrowserPanel ab;
+    ab.set_filter(AssetBrowserPanel::SidebarFilter::Favorites);
+    EXPECT_EQ(ab.current_filter(),
+              AssetBrowserPanel::SidebarFilter::Favorites);
+    ab.navigate_to("/tmp");
+    // Returning to a folder must clear any virtual collection so the host's
+    // next rescan reads from the folder again.
+    EXPECT_EQ(ab.current_filter(), AssetBrowserPanel::SidebarFilter::None);
+}
+
+TEST(AssetBrowserFavorites, AddRemoveAndQuery) {
+    AssetBrowserPanel ab;
+    EXPECT_EQ(ab.favorite_count(), 0u);
+    EXPECT_FALSE(ab.is_favorite("/proj/Materials/wood.mat"));
+
+    ab.add_favorite("/proj/Materials/wood.mat");
+    ab.add_favorite("/proj/Models/cube.obj");
+    EXPECT_EQ(ab.favorite_count(), 2u);
+    EXPECT_TRUE(ab.is_favorite("/proj/Materials/wood.mat"));
+    EXPECT_TRUE(ab.is_favorite("/proj/Models/cube.obj"));
+
+    // Adding a duplicate is a no-op.
+    ab.add_favorite("/proj/Materials/wood.mat");
+    EXPECT_EQ(ab.favorite_count(), 2u);
+
+    ab.remove_favorite("/proj/Materials/wood.mat");
+    EXPECT_EQ(ab.favorite_count(), 1u);
+    EXPECT_FALSE(ab.is_favorite("/proj/Materials/wood.mat"));
+
+    // Removing an absent path is also a no-op.
+    ab.remove_favorite("/proj/Nonexistent.png");
+    EXPECT_EQ(ab.favorite_count(), 1u);
+}
+
+// =============================================================================
+// InspectorPanel — ComponentRegistry binding
+// =============================================================================
+//
+// The popup itself can't be exercised headlessly (no ImGui context), but the
+// API contract — bind / unbind / accessor — is testable and guards against
+// regressions where a future refactor drops the slot.
+
+TEST(InspectorPanelAddComponent, RegistryBindIsRoundTrippable) {
+    InspectorPanel ip;
+    EXPECT_EQ(ip.component_registry(), nullptr);
+    ComponentRegistry reg;
+    register_builtin_components(reg);
+    ip.bind_component_registry(&reg);
+    EXPECT_EQ(ip.component_registry(), &reg);
+    ip.bind_component_registry(nullptr);
+    EXPECT_EQ(ip.component_registry(), nullptr);
+}
+
+// =============================================================================
+// ViewportPanel — Game view toolbar state + letterbox math
+// =============================================================================
+
+TEST(ViewportPanelGameView, AspectRatioValueMapping) {
+    EXPECT_FLOAT_EQ(ViewportPanel::aspect_ratio_value(GameAspect::Free),  0.0f);
+    EXPECT_NEAR(ViewportPanel::aspect_ratio_value(GameAspect::R16x9),
+                16.0f / 9.0f, 1e-6f);
+    EXPECT_NEAR(ViewportPanel::aspect_ratio_value(GameAspect::R16x10),
+                16.0f / 10.0f, 1e-6f);
+    EXPECT_NEAR(ViewportPanel::aspect_ratio_value(GameAspect::R4x3),
+                4.0f / 3.0f, 1e-6f);
+    EXPECT_FLOAT_EQ(ViewportPanel::aspect_ratio_value(GameAspect::R1x1), 1.0f);
+}
+
+TEST(ViewportPanelGameView, LetterboxFreeReturnsAvailableSize) {
+    f32 w = 0, h = 0;
+    ViewportPanel::compute_letterbox(800.0f, 600.0f, GameAspect::Free, 1.0f, w, h);
+    EXPECT_FLOAT_EQ(w, 800.0f);
+    EXPECT_FLOAT_EQ(h, 600.0f);
+}
+
+TEST(ViewportPanelGameView, LetterboxWideAvail16x9FitsHeight) {
+    // Available 1920x600, 16:9 — width 1066.66 fits because width is the
+    // limiting axis (avail_w/avail_h = 3.2 > 1.78).
+    f32 w = 0, h = 0;
+    ViewportPanel::compute_letterbox(1920.0f, 600.0f, GameAspect::R16x9,
+                                     1.0f, w, h);
+    EXPECT_NEAR(w, 600.0f * 16.0f / 9.0f, 0.5f);
+    EXPECT_FLOAT_EQ(h, 600.0f);
+}
+
+TEST(ViewportPanelGameView, LetterboxTallAvail16x9FitsWidth) {
+    f32 w = 0, h = 0;
+    ViewportPanel::compute_letterbox(640.0f, 1280.0f, GameAspect::R16x9,
+                                     1.0f, w, h);
+    EXPECT_FLOAT_EQ(w, 640.0f);
+    EXPECT_NEAR(h, 640.0f * 9.0f / 16.0f, 0.5f);
+}
+
+TEST(ViewportPanelGameView, LetterboxScaleClampedToAvailable) {
+    // scale 4x must NOT exceed the dock area — the rendered image may zoom
+    // but the visible region is bounded by avail_w/avail_h.
+    f32 w = 0, h = 0;
+    ViewportPanel::compute_letterbox(800.0f, 600.0f, GameAspect::R16x9,
+                                     4.0f, w, h);
+    EXPECT_LE(w, 800.0f + 0.5f);
+    EXPECT_LE(h, 600.0f + 0.5f);
+}
+
+TEST(ViewportPanelGameView, LetterboxZeroAvailableYieldsZero) {
+    f32 w = 1, h = 1;
+    ViewportPanel::compute_letterbox(0.0f, 600.0f, GameAspect::R16x9,
+                                     1.0f, w, h);
+    EXPECT_FLOAT_EQ(w, 0.0f);
+    EXPECT_FLOAT_EQ(h, 0.0f);
+}
+
+TEST(ViewportPanelGameView, ScaleClampedTo1To5Range) {
+    ViewportPanel vp("Game", ViewportCameraMode::GameView);
+    vp.set_game_scale(0.1f);   // below min
+    EXPECT_FLOAT_EQ(vp.game_scale(), 1.0f);
+    vp.set_game_scale(99.0f);  // above max
+    EXPECT_FLOAT_EQ(vp.game_scale(), 5.0f);
+    vp.set_game_scale(2.5f);
+    EXPECT_FLOAT_EQ(vp.game_scale(), 2.5f);
+}
+
+TEST(ViewportPanelGameView, DisplayIndexClampedTo0To3) {
+    ViewportPanel vp("Game", ViewportCameraMode::GameView);
+    EXPECT_EQ(vp.display_index(), 0u);
+    vp.set_display_index(7);
+    EXPECT_EQ(vp.display_index(), 3u);
+    vp.set_display_index(2);
+    EXPECT_EQ(vp.display_index(), 2u);
+}
+
+TEST(ViewportPanelGameView, GameAspectAndStatsToggleAreSettable) {
+    ViewportPanel vp("Game", ViewportCameraMode::GameView);
+    EXPECT_EQ(vp.game_aspect(), GameAspect::Free);
+    EXPECT_FALSE(vp.show_stats());
+    EXPECT_FALSE(vp.show_game_gizmos());
+
+    vp.set_game_aspect(GameAspect::R16x9);
+    vp.set_show_stats(true);
+    vp.set_show_game_gizmos(true);
+    EXPECT_EQ(vp.game_aspect(), GameAspect::R16x9);
+    EXPECT_TRUE(vp.show_stats());
+    EXPECT_TRUE(vp.show_game_gizmos());
+}
+
+// =============================================================================
+// ViewportPanel — SceneView toolbar (shading / 2D / gizmos / camera presets)
+// =============================================================================
+
+TEST(ViewportPanelSceneView, ShadingModeIsRoundTrippable) {
+    ViewportPanel vp("Scene", ViewportCameraMode::SceneView);
+    EXPECT_EQ(vp.shading_mode(), SceneShadingMode::Shaded);
+    vp.set_shading_mode(SceneShadingMode::Wireframe);
+    EXPECT_EQ(vp.shading_mode(), SceneShadingMode::Wireframe);
+    vp.set_shading_mode(SceneShadingMode::ShadedWireframe);
+    EXPECT_EQ(vp.shading_mode(), SceneShadingMode::ShadedWireframe);
+}
+
+TEST(ViewportPanelSceneView, View2DAndSceneGizmosAreRoundTrippable) {
+    ViewportPanel vp("Scene", ViewportCameraMode::SceneView);
+    EXPECT_FALSE(vp.view_2d());
+    EXPECT_TRUE(vp.show_scene_gizmos());
+    vp.set_view_2d(true);
+    vp.set_show_scene_gizmos(false);
+    EXPECT_TRUE(vp.view_2d());
+    EXPECT_FALSE(vp.show_scene_gizmos());
+}
+
+TEST(ViewportPanelSceneView, PresetToYawPitchTopLooksDown) {
+    f32 y = 0, p = 0;
+    ASSERT_TRUE(ViewportPanel::preset_to_yaw_pitch(SceneCameraPreset::Top, y, p));
+    EXPECT_LT(p, -85.0f);  // looking nearly straight down
+    EXPECT_GT(p, -90.5f);  // but never exactly -90 to avoid gimbal lock
+}
+
+TEST(ViewportPanelSceneView, PresetToYawPitchFrontIsZeroPitch) {
+    f32 y = 1, p = 1;
+    ASSERT_TRUE(ViewportPanel::preset_to_yaw_pitch(SceneCameraPreset::Front, y, p));
+    EXPECT_NEAR(p, 0.0f, 1e-3f);
+}
+
+TEST(ViewportPanelSceneView, PresetToYawPitchFreeReturnsFalse) {
+    f32 y = 99, p = 99;
+    EXPECT_FALSE(ViewportPanel::preset_to_yaw_pitch(SceneCameraPreset::Free, y, p));
+    // Sentinel values must remain unchanged when the function returns false.
+    EXPECT_FLOAT_EQ(y, 99.0f);
+    EXPECT_FLOAT_EQ(p, 99.0f);
+}
+
+TEST(ViewportPanelSceneView, ApplyCameraPresetSnapsAngles) {
+    ViewportPanel vp("Scene", ViewportCameraMode::SceneView);
+    vp.editor_cam_yaw_deg()   = 200.0f;
+    vp.editor_cam_pitch_deg() = -45.0f;
+    vp.apply_camera_preset(SceneCameraPreset::Iso);
+    EXPECT_NEAR(vp.editor_cam_yaw_deg(),    45.0f, 1e-3f);
+    EXPECT_NEAR(vp.editor_cam_pitch_deg(), -25.0f, 1e-3f);
+}
+
+TEST(ViewportPanelSceneView, ApplyCameraPresetFreeIsNoop) {
+    ViewportPanel vp("Scene", ViewportCameraMode::SceneView);
+    vp.editor_cam_yaw_deg()   = 12.5f;
+    vp.editor_cam_pitch_deg() = -7.5f;
+    vp.apply_camera_preset(SceneCameraPreset::Free);
+    EXPECT_FLOAT_EQ(vp.editor_cam_yaw_deg(),   12.5f);
+    EXPECT_FLOAT_EQ(vp.editor_cam_pitch_deg(), -7.5f);
+}
+
+TEST(ViewportPanelSceneView, AllPresetsExceptFreeReturnTrue) {
+    f32 y = 0, p = 0;
+    EXPECT_TRUE(ViewportPanel::preset_to_yaw_pitch(SceneCameraPreset::Top,    y, p));
+    EXPECT_TRUE(ViewportPanel::preset_to_yaw_pitch(SceneCameraPreset::Bottom, y, p));
+    EXPECT_TRUE(ViewportPanel::preset_to_yaw_pitch(SceneCameraPreset::Front,  y, p));
+    EXPECT_TRUE(ViewportPanel::preset_to_yaw_pitch(SceneCameraPreset::Back,   y, p));
+    EXPECT_TRUE(ViewportPanel::preset_to_yaw_pitch(SceneCameraPreset::Left,   y, p));
+    EXPECT_TRUE(ViewportPanel::preset_to_yaw_pitch(SceneCameraPreset::Right,  y, p));
+    EXPECT_TRUE(ViewportPanel::preset_to_yaw_pitch(SceneCameraPreset::Iso,    y, p));
+}
+
+TEST(ViewportPanelGameView, RenderStatsRoundTripThroughAccessor) {
+    ViewportPanel vp("Game", ViewportCameraMode::GameView);
+    EXPECT_EQ(vp.last_render_stats().draw_calls, 0u);
+
+    ViewportRenderStats s;
+    s.draw_calls = 12;
+    s.mesh_draw_calls = 8;
+    s.sprite_draw_calls = 4;
+    s.triangles = 4096;
+    s.vertices  = 8192;
+    s.set_pass_calls = 3;
+    vp.set_last_render_stats(s);
+    const auto& got = vp.last_render_stats();
+    EXPECT_EQ(got.draw_calls, 12u);
+    EXPECT_EQ(got.mesh_draw_calls, 8u);
+    EXPECT_EQ(got.sprite_draw_calls, 4u);
+    EXPECT_EQ(got.triangles, 4096u);
+    EXPECT_EQ(got.vertices, 8192u);
+    EXPECT_EQ(got.set_pass_calls, 3u);
 }

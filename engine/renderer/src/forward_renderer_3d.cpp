@@ -314,6 +314,21 @@ void ForwardRenderer3D::add_spot_light(const SpotLight& light) {
 // ── Mesh management ─────────────────────────────────────────────────────────
 
 void ForwardRenderer3D::upload_mesh(Mesh& mesh) {
+    // Local-space AABB — derived once from CPU vertices so frustum culling
+    // can use a real bounding volume per mesh instead of a one-size-fits-all
+    // unit-cube assumption.  Critical for large meshes (planes, terrain,
+    // pre-scaled imports) whose authored extent dwarfs the pivot.
+    if (!mesh.vertices.empty()) {
+        Vec3 lo = mesh.vertices[0].position;
+        Vec3 hi = lo;
+        for (const auto& v : mesh.vertices) {
+            lo = glm::min(lo, v.position);
+            hi = glm::max(hi, v.position);
+        }
+        mesh.local_aabb_min = lo;
+        mesh.local_aabb_max = hi;
+    }
+
     // VBO
     rhi::BufferDesc vbo_desc;
     vbo_desc.type  = rhi::BufferType::Vertex;
@@ -362,14 +377,34 @@ void ForwardRenderer3D::draw_mesh(const Mesh& mesh, const Mat4& transform,
                                   Vec4 color, rhi::TextureHandle texture) {
     if (!in_frame_) return;
 
-    // Frustum culling — compute bounding sphere from mesh transform
-    Vec3 center = Vec3(transform[3]); // translation column
-    float scale_max = std::max({glm::length(Vec3(transform[0])),
-                                glm::length(Vec3(transform[1])),
-                                glm::length(Vec3(transform[2]))});
-    // Conservative radius estimate (unit cube diagonal ~0.866)
-    float radius = scale_max * 0.866f;
-    if (!is_visible(center, radius)) return;
+    // Frustum culling — derive the world-space bounding sphere from the
+    // mesh's actual local AABB.  Transforming all eight corners then taking
+    // the AABB → sphere conversion handles arbitrary rotation, non-uniform
+    // scale, and meshes whose pivot is offset from their geometric center
+    // (the previous heuristic dropped large meshes — planes, terrain — as
+    // soon as the pivot left the frustum even though the geometry stayed
+    // visible).  An empty local AABB (min == max) means upload_mesh never
+    // ran for this mesh; in that case skip culling rather than guess.
+    if (mesh.local_aabb_min != mesh.local_aabb_max) {
+        const Vec3& lo = mesh.local_aabb_min;
+        const Vec3& hi = mesh.local_aabb_max;
+        const Vec3 corners[8] = {
+            {lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z},
+            {lo.x, hi.y, lo.z}, {hi.x, hi.y, lo.z},
+            {lo.x, lo.y, hi.z}, {hi.x, lo.y, hi.z},
+            {lo.x, hi.y, hi.z}, {hi.x, hi.y, hi.z},
+        };
+        Vec3 wlo = Vec3(transform * Vec4(corners[0], 1.0f));
+        Vec3 whi = wlo;
+        for (u32 i = 1; i < 8; ++i) {
+            Vec3 w = Vec3(transform * Vec4(corners[i], 1.0f));
+            wlo = glm::min(wlo, w);
+            whi = glm::max(whi, w);
+        }
+        Vec3 center = (wlo + whi) * 0.5f;
+        float radius = glm::length(whi - center);
+        if (!is_visible(center, radius)) return;
+    }
 
     rhi_->bind_shader(shader_);
     rhi_->set_uniform_mat4(shader_, "u_Model", transform);

@@ -44,10 +44,7 @@ std::string ShaderLibrary::read_shader_file(const std::string& path,
 
     std::stringstream result;
     std::string line;
-    u32 line_num = 0;
     while (std::getline(file, line)) {
-        ++line_num;
-
         // Handle #include "filename"
         if (line.find("#include") == 0) {
             auto quote1 = line.find('"');

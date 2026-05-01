@@ -155,6 +155,12 @@ using GLvoid     = void;
 // Cull face
 #define GL_FRONT                 0x0404
 #define GL_BACK                  0x0405
+#define GL_FRONT_AND_BACK        0x0408
+
+// Polygon mode (desktop GL only — WebGL/GLES expose no enum)
+#define GL_POINT                 0x1B00
+#define GL_LINE                  0x1B01
+#define GL_FILL                  0x1B02
 
 // Front face
 #define GL_CW                    0x0900
@@ -173,6 +179,29 @@ using GLvoid     = void;
 // GetIntegerv
 #define GL_MAX_TEXTURE_SIZE      0x0D33
 #define GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS 0x8B4D
+#define GL_MAX_COMPUTE_WORK_GROUP_COUNT     0x91BE
+#define GL_MAX_COMPUTE_WORK_GROUP_SIZE      0x91BF
+#define GL_MAX_SHADER_STORAGE_BUFFER_BINDINGS 0x90DD
+
+// Memory barrier bits
+#define GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT   0x00000001
+#define GL_ELEMENT_ARRAY_BARRIER_BIT         0x00000002
+#define GL_UNIFORM_BARRIER_BIT               0x00000004
+#define GL_TEXTURE_FETCH_BARRIER_BIT         0x00000008
+#define GL_SHADER_IMAGE_ACCESS_BARRIER_BIT   0x00000020
+#define GL_COMMAND_BARRIER_BIT               0x00000040
+#define GL_PIXEL_BUFFER_BARRIER_BIT          0x00000080
+#define GL_TEXTURE_UPDATE_BARRIER_BIT        0x00000100
+#define GL_BUFFER_UPDATE_BARRIER_BIT         0x00000200
+#define GL_FRAMEBUFFER_BARRIER_BIT           0x00000400
+#define GL_TRANSFORM_FEEDBACK_BARRIER_BIT    0x00000800
+#define GL_ATOMIC_COUNTER_BARRIER_BIT        0x00001000
+#define GL_SHADER_STORAGE_BARRIER_BIT        0x00002000
+#define GL_ALL_BARRIER_BITS                  0xFFFFFFFF
+
+// MapBufferRange access
+#define GL_MAP_READ_BIT                      0x0001
+#define GL_MAP_WRITE_BIT                     0x0002
 
 // ---------------------------------------------------------------------------
 // Function pointer types
@@ -268,6 +297,7 @@ extern void (*DepthFunc_)(GLenum func);  // Trailing underscore to avoid macro c
 extern void (*DepthMask)(GLboolean flag);
 extern void (*CullFace)(GLenum mode);
 extern void (*FrontFace)(GLenum mode);
+extern void (*PolygonMode)(GLenum face, GLenum mode);
 
 // Draw functions
 extern void (*DrawArrays)(GLenum mode, GLint first, GLsizei count);
@@ -277,6 +307,19 @@ extern void (*DrawElements)(GLenum mode, GLsizei count, GLenum type, const void*
 extern GLenum        (*GetError)();
 extern const GLubyte* (*GetString)(GLenum name);
 extern void          (*GetIntegerv)(GLenum pname, GLint* data);
+
+// Compute & SSBO functions (OpenGL 4.3+)
+extern void  (*DispatchCompute)(GLuint num_groups_x, GLuint num_groups_y, GLuint num_groups_z);
+extern void  (*MemoryBarrier)(GLbitfield barriers);
+extern void  (*BindBufferBase)(GLenum target, GLuint index, GLuint buffer);
+extern void  (*BindBufferRange)(GLenum target, GLuint index, GLuint buffer,
+                                GLintptr offset, GLsizeiptr size);
+extern void* (*MapBufferRange)(GLenum target, GLintptr offset, GLsizeiptr length,
+                               GLbitfield access);
+extern GLboolean (*UnmapBuffer)(GLenum target);
+extern void  (*Uniform1ui)(GLint location, GLuint v0);
+extern void  (*GetBufferSubData)(GLenum target, GLintptr offset,
+                                 GLsizeiptr size, void* data);
 
 // ---------------------------------------------------------------------------
 // Loader: call once after creating an OpenGL context

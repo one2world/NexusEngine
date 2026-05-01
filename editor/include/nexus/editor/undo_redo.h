@@ -130,6 +130,14 @@ public:
     u32 undo_count() const { return static_cast<u32>(undo_stack_.size()); }
     u32 redo_count() const { return static_cast<u32>(redo_stack_.size()); }
 
+    /// Revert/advance until exactly `target_undo_count` commands remain on the
+    /// undo stack.  Fewer than current ⇒ pops and invokes undo() on each
+    /// popped command; more than current ⇒ pulls from the redo stack and
+    /// re-executes each.  Out-of-range values are clamped.  Returns the
+    /// number of commands actually stepped (positive for undo, negative for
+    /// redo).  This is the backend for Unity's Undo History click-to-revert.
+    i32 jump_to_undo(u32 target_undo_count);
+
     /// Mark the current state as "saved" (clean).
     void mark_saved() { saved_index_ = static_cast<i32>(undo_stack_.size()); }
 

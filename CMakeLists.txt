@@ -17,6 +17,66 @@ option(NEXUS_BUILD_SANDBOX   "Build the sandbox demo project"   ON)
 option(NEXUS_BUILD_TESTS     "Build unit tests"                 ON)
 option(NEXUS_ENABLE_VULKAN   "Enable Vulkan rendering backend"  ON)
 option(NEXUS_ENABLE_OPENGL   "Enable OpenGL rendering backend"  ON)
+if(APPLE)
+    option(NEXUS_ENABLE_METAL "Enable Metal rendering backend" ON)
+else()
+    option(NEXUS_ENABLE_METAL "Enable Metal rendering backend" OFF)
+endif()
+
+# ----------------------------------------------------------------------------
+# Real SDK detection — release standard forbids CPU-simulated backends.
+# Vulkan / Metal backends are compiled ONLY when a real SDK/framework is
+# available on this machine.  Otherwise the corresponding backend is
+# compiled out entirely; RHI::create(Backend::X) returns nullptr and callers
+# fall back to OpenGL.
+# ----------------------------------------------------------------------------
+
+if(NEXUS_ENABLE_VULKAN)
+    find_package(Vulkan 1.3 QUIET COMPONENTS glslang)
+    if(NOT Vulkan_FOUND)
+        find_package(Vulkan QUIET)
+    endif()
+    if(Vulkan_FOUND)
+        message(STATUS "Vulkan SDK found: ${Vulkan_LIBRARY} (version ${Vulkan_VERSION})")
+        set(NEXUS_HAVE_VULKAN_SDK ON)
+    else()
+        message(STATUS "Vulkan SDK not found — Vulkan backend will be excluded")
+        set(NEXUS_ENABLE_VULKAN OFF CACHE BOOL "Enable Vulkan rendering backend" FORCE)
+        set(NEXUS_HAVE_VULKAN_SDK OFF)
+    endif()
+
+    # glslang for runtime GLSL→SPIR-V compilation.
+    find_library(NEXUS_GLSLANG_LIB      NAMES glslang)
+    find_library(NEXUS_GLSLANG_SPV_LIB  NAMES SPIRV)
+    find_library(NEXUS_GLSLANG_MGR_LIB  NAMES glslang-default-resource-limits)
+    find_path(NEXUS_GLSLANG_INCLUDE_DIR glslang/Public/ShaderLang.h)
+    if(NEXUS_GLSLANG_LIB AND NEXUS_GLSLANG_SPV_LIB AND NEXUS_GLSLANG_INCLUDE_DIR)
+        message(STATUS "glslang found: ${NEXUS_GLSLANG_LIB}")
+        set(NEXUS_HAVE_GLSLANG ON)
+    else()
+        message(STATUS "glslang not found — SPIR-V runtime compile disabled")
+        set(NEXUS_HAVE_GLSLANG OFF)
+    endif()
+endif()
+
+if(NEXUS_ENABLE_METAL AND APPLE)
+    find_library(NEXUS_METAL_FRAMEWORK        Metal)
+    find_library(NEXUS_QUARTZCORE_FRAMEWORK   QuartzCore)
+    find_library(NEXUS_FOUNDATION_FRAMEWORK   Foundation)
+    if(NEXUS_METAL_FRAMEWORK AND NEXUS_QUARTZCORE_FRAMEWORK AND NEXUS_FOUNDATION_FRAMEWORK)
+        message(STATUS "Metal frameworks found")
+        set(NEXUS_HAVE_METAL ON)
+    else()
+        message(STATUS "Metal frameworks not found — Metal backend excluded")
+        set(NEXUS_ENABLE_METAL OFF CACHE BOOL "Enable Metal rendering backend" FORCE)
+        set(NEXUS_HAVE_METAL OFF)
+    endif()
+elseif(NEXUS_ENABLE_METAL)
+    message(STATUS "Metal backend requires APPLE — disabling")
+    set(NEXUS_ENABLE_METAL OFF CACHE BOOL "Enable Metal rendering backend" FORCE)
+    set(NEXUS_HAVE_METAL OFF)
+endif()
+
 
 # Build type defaults
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)

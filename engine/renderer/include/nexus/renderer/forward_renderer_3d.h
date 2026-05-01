@@ -28,6 +28,16 @@ struct Mesh {
     rhi::BufferHandle   vbo{rhi::INVALID_HANDLE};
     rhi::BufferHandle   ibo{rhi::INVALID_HANDLE};
     rhi::PipelineHandle pipeline{rhi::INVALID_HANDLE};
+
+    // Local-space axis-aligned bounding box.  Computed automatically by
+    // ForwardRenderer3D::upload_mesh from `vertices`.  Frustum culling in
+    // draw_mesh transforms the eight corners into world space and tests the
+    // resulting bounding sphere against the camera frustum.  Leaving the
+    // bounds empty (min == max) disables culling for that mesh, so a mesh
+    // that is built and submitted without going through upload_mesh still
+    // renders correctly (just unculled).
+    Vec3 local_aabb_min{0.0f};
+    Vec3 local_aabb_max{0.0f};
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

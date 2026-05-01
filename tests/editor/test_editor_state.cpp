@@ -134,7 +134,7 @@ TEST(EditorState, StepFromEditing) {
     EditorState state;
     state.step();
     EXPECT_TRUE(state.is_paused()); // Should enter play then pause
-    EXPECT_EQ(state.consume_step_requests(), 1u);
+    EXPECT_EQ(state.pending_steps(), 1u);
 }
 
 TEST(EditorState, StepFromPaused) {
@@ -143,8 +143,110 @@ TEST(EditorState, StepFromPaused) {
     state.pause();
     state.step();
     state.step();
-    EXPECT_EQ(state.consume_step_requests(), 2u);
-    EXPECT_EQ(state.consume_step_requests(), 0u); // Consumed
+    EXPECT_EQ(state.pending_steps(), 2u);
+}
+
+// =============================================================================
+// EditorState — SceneBridge
+// =============================================================================
+
+namespace {
+struct BridgeFixture {
+    EditorState state;
+    int snapshot_calls = 0;
+    int restore_calls = 0;
+    int clear_calls = 0;
+    int simulate_calls = 0;
+    int play_hooks = 0;
+    int stop_hooks = 0;
+    f32 last_dt = 0.0f;
+
+    BridgeFixture() {
+        SceneBridge b;
+        b.take_snapshot    = [this]() { ++snapshot_calls; return true; };
+        b.restore_snapshot = [this]() { ++restore_calls;  return true; };
+        b.clear_snapshot   = [this]() { ++clear_calls;    };
+        b.simulate         = [this](f32 dt) { ++simulate_calls; last_dt = dt; };
+        b.on_play          = [this]() { ++play_hooks; };
+        b.on_stop          = [this]() { ++stop_hooks; };
+        state.set_scene_bridge(std::move(b));
+    }
+};
+}
+
+TEST(EditorStateBridge, PlayCallsTakeSnapshotAndOnPlay) {
+    BridgeFixture fx;
+    fx.state.play();
+    EXPECT_EQ(fx.snapshot_calls, 1);
+    EXPECT_EQ(fx.play_hooks, 1);
+    EXPECT_TRUE(fx.state.is_playing());
+}
+
+TEST(EditorStateBridge, StopCallsRestoreThenClear) {
+    BridgeFixture fx;
+    fx.state.play();
+    fx.state.stop();
+    EXPECT_EQ(fx.restore_calls, 1);
+    EXPECT_EQ(fx.clear_calls, 1);
+    EXPECT_EQ(fx.stop_hooks, 1);
+    EXPECT_TRUE(fx.state.is_editing());
+}
+
+TEST(EditorStateBridge, StepFromEditingTakesSnapshotOncePauses) {
+    BridgeFixture fx;
+    fx.state.step();
+    EXPECT_EQ(fx.snapshot_calls, 1);   // <-- this was the data-loss bug
+    EXPECT_TRUE(fx.state.is_paused());
+    EXPECT_EQ(fx.state.pending_steps(), 1u);
+}
+
+TEST(EditorStateBridge, AdvanceWhilePlayingUsesFixedDt) {
+    BridgeFixture fx;
+    fx.state.set_fixed_dt(1.0f / 50.0f);
+    fx.state.play();
+    EXPECT_TRUE(fx.state.advance_simulation(0.123f));
+    EXPECT_EQ(fx.simulate_calls, 1);
+    EXPECT_FLOAT_EQ(fx.last_dt, 1.0f / 50.0f);
+}
+
+TEST(EditorStateBridge, AdvanceWhilePausedDrainsSteps) {
+    BridgeFixture fx;
+    fx.state.play();
+    fx.state.pause();
+    fx.state.step();
+    fx.state.step();
+    fx.state.step();
+    EXPECT_TRUE(fx.state.advance_simulation(0.0f));
+    EXPECT_EQ(fx.simulate_calls, 3);
+    EXPECT_EQ(fx.state.pending_steps(), 0u);
+    // Subsequent advance with no pending steps does nothing.
+    EXPECT_FALSE(fx.state.advance_simulation(0.016f));
+    EXPECT_EQ(fx.simulate_calls, 3);
+}
+
+TEST(EditorStateBridge, AdvanceWhileEditingIsNoop) {
+    BridgeFixture fx;
+    EXPECT_FALSE(fx.state.advance_simulation(0.016f));
+    EXPECT_EQ(fx.simulate_calls, 0);
+}
+
+TEST(EditorStateBridge, StopRestoresSelectionFromSnapshot) {
+    BridgeFixture fx;
+    fx.state.selection().select(7);
+    fx.state.selection().select(13);
+    fx.state.play();
+    fx.state.selection().clear();   // simulate Play-mode wiping selection
+    fx.state.stop();
+    EXPECT_TRUE(fx.state.selection().is_selected(7));
+    EXPECT_TRUE(fx.state.selection().is_selected(13));
+}
+
+TEST(EditorStateBridge, RealDtWhenFixedDtZero) {
+    BridgeFixture fx;
+    fx.state.set_fixed_dt(0.0f);
+    fx.state.play();
+    fx.state.advance_simulation(0.04f);
+    EXPECT_FLOAT_EQ(fx.last_dt, 0.04f);
 }
 
 TEST(EditorState, PlayWhilePlaying) {

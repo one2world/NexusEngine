@@ -145,8 +145,8 @@ private:
     u32 remote_sequence_{0};
     u32 ack_bits_{0};
     f32 time_since_recv_{0.0f};
-    f32 rtt_accumulator_{0.0f};
-    u32 rtt_samples_{0};
+    [[maybe_unused]] f32 rtt_accumulator_{0.0f};
+    [[maybe_unused]] u32 rtt_samples_{0};
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

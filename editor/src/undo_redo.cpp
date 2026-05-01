@@ -61,6 +61,31 @@ std::vector<std::string> UndoRedoManager::redo_history() const {
     return result;
 }
 
+i32 UndoRedoManager::jump_to_undo(u32 target_undo_count) {
+    // Clamp target into the valid total-history range [0, undo+redo].
+    const u32 total = static_cast<u32>(undo_stack_.size() + redo_stack_.size());
+    if (target_undo_count > total) target_undo_count = total;
+
+    i32 steps = 0;
+    // Too many commands applied — undo down to target.
+    while (undo_stack_.size() > target_undo_count) {
+        auto cmd = std::move(undo_stack_.back());
+        undo_stack_.pop_back();
+        cmd->undo();
+        redo_stack_.push_back(std::move(cmd));
+        ++steps;
+    }
+    // Too few — redo up to target.
+    while (undo_stack_.size() < target_undo_count && !redo_stack_.empty()) {
+        auto cmd = std::move(redo_stack_.back());
+        redo_stack_.pop_back();
+        cmd->execute();
+        undo_stack_.push_back(std::move(cmd));
+        --steps;
+    }
+    return steps;
+}
+
 void UndoRedoManager::clear() {
     undo_stack_.clear();
     redo_stack_.clear();

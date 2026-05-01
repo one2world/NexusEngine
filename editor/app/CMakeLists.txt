@@ -1,17 +1,13 @@
-# Editor executable
+# Editor executable.  All ImGui platform/renderer wiring lives inside the RHI
+# library (see engine/rhi/src/imgui_backend_*.{cpp,mm}); the editor never
+# includes imgui_impl_*.h directly so it stays backend-agnostic.
 add_executable(nexus-editor
     ../src/editor_main.cpp
-    ../src/imgui_backends.cpp
 )
 
 target_include_directories(nexus-editor
     PRIVATE ../include ../src
 )
-
-# ImGui backends need these flags — suppress third-party warnings
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    set_source_files_properties(../src/imgui_backends.cpp PROPERTIES COMPILE_FLAGS "-w")
-endif()
 
 target_link_libraries(nexus-editor
     PRIVATE

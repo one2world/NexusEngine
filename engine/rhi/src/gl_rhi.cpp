@@ -9,6 +9,9 @@
 #if NEXUS_ENABLE_WEBGL
 #include <nexus/rhi/webgl_rhi.h>
 #endif
+#if NEXUS_ENABLE_METAL
+#include <nexus/rhi/metal_rhi.h>
+#endif
 #include <nexus/core/log.h>
 #include <glm/gtc/type_ptr.hpp>
 
@@ -328,17 +331,11 @@ PipelineHandle OpenGLRHI::create_pipeline(const PipelineDesc& desc) {
     gl::GenVertexArrays(1, &pipe.vao);
     gl::BindVertexArray(pipe.vao);
 
-    // Set up vertex attributes from layout
+    // Enable attribute slots now; the actual VBO binding (captured by
+    // glVertexAttribPointer on GL 4.1 core) must happen in bind_vertex_buffer
+    // once a real VBO is bound — see the comment there.
     for (const auto& attr : desc.vertex_layout.attributes) {
         gl::EnableVertexAttribArray(attr.location);
-        gl::VertexAttribPointer(
-            attr.location,
-            static_cast<GLint>(attr.components),
-            GL_FLOAT,
-            attr.normalized ? GL_TRUE : GL_FALSE,
-            static_cast<GLsizei>(desc.vertex_layout.stride),
-            reinterpret_cast<const void*>(static_cast<uintptr_t>(attr.offset))
-        );
     }
 
     gl::BindVertexArray(0);
@@ -414,6 +411,14 @@ FramebufferHandle OpenGLRHI::create_framebuffer(const FramebufferDesc& desc) {
     return handle;
 }
 
+u64 OpenGLRHI::framebuffer_color_native(FramebufferHandle handle,
+                                        u32 attachment_index) {
+    if (handle == INVALID_HANDLE || handle >= framebuffers_.size()) return 0;
+    const auto& fb = framebuffers_[handle];
+    if (attachment_index >= fb.color_textures.size()) return 0;
+    return static_cast<u64>(fb.color_textures[attachment_index]);
+}
+
 void OpenGLRHI::destroy_framebuffer(FramebufferHandle handle) {
     if (handle == INVALID_HANDLE || handle >= framebuffers_.size()) return;
     auto& fb = framebuffers_[handle];
@@ -450,6 +455,13 @@ void OpenGLRHI::set_scissor(i32 x, i32 y, i32 w, i32 h) {
 }
 
 void OpenGLRHI::clear(Vec4 color, float depth) {
+    // glClear honours the depth write mask — if a prior pipeline left
+    // DepthMask=FALSE (e.g. a transparent pass) glClear(GL_DEPTH_BUFFER_BIT)
+    // wouldn't actually clear the depth buffer, and subsequent draws would
+    // z-test against stale depth, producing "fragmented" output.  Force the
+    // write mask on, and disable scissor so the clear covers the full viewport.
+    gl::DepthMask(GL_TRUE);
+    gl::Disable(GL_SCISSOR_TEST);
     gl::ClearColor(color.r, color.g, color.b, color.a);
     gl::ClearDepth(static_cast<GLdouble>(depth));
     gl::Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -461,6 +473,7 @@ void OpenGLRHI::bind_pipeline(PipelineHandle handle) {
 
     gl::BindVertexArray(pipe.vao);
     bound_primitive_ = to_gl_primitive(pipe.desc.primitive);
+    bound_pipeline_  = handle;
 
     // Apply pipeline state
     if (pipe.desc.depth_test) {
@@ -519,6 +532,26 @@ void OpenGLRHI::unbind_framebuffer() {
 void OpenGLRHI::bind_vertex_buffer(BufferHandle handle) {
     if (handle == INVALID_HANDLE || handle >= buffers_.size()) return;
     gl::BindBuffer(GL_ARRAY_BUFFER, buffers_[handle].id);
+
+    // GL 4.1 core has no separate VertexAttribFormat/BindVertexBuffer pair:
+    // the VAO captures whichever GL_ARRAY_BUFFER is bound *at the moment
+    // glVertexAttribPointer is called*.  Re-apply the pointers now — with
+    // the real VBO bound and the pipeline's VAO already active — so
+    // subsequent draw calls sample from this buffer instead of buffer 0.
+    if (bound_pipeline_ != INVALID_HANDLE &&
+        bound_pipeline_ < pipelines_.size()) {
+        const auto& desc = pipelines_[bound_pipeline_].desc;
+        for (const auto& attr : desc.vertex_layout.attributes) {
+            gl::VertexAttribPointer(
+                attr.location,
+                static_cast<GLint>(attr.components),
+                GL_FLOAT,
+                attr.normalized ? GL_TRUE : GL_FALSE,
+                static_cast<GLsizei>(desc.vertex_layout.stride),
+                reinterpret_cast<const void*>(
+                    static_cast<uintptr_t>(attr.offset)));
+        }
+    }
 }
 
 void OpenGLRHI::bind_index_buffer(BufferHandle handle) {
@@ -569,6 +602,16 @@ void OpenGLRHI::set_cull_mode(CullMode mode) {
         gl::Enable(GL_CULL_FACE);
         gl::CullFace(mode == CullMode::Front ? GL_FRONT : GL_BACK);
     }
+}
+
+void OpenGLRHI::set_polygon_mode(PolygonMode mode) {
+    // glPolygonMode is core in GL 3.3 desktop but absent in WebGL/GLES.
+    // The function pointer can be null on those builds — guard before calling
+    // so a wireframe toggle in the editor degrades to a no-op rather than
+    // crashing when running against a context that doesn't expose it.
+    if (!gl::PolygonMode) return;
+    const GLenum gl_mode = (mode == PolygonMode::Line) ? GL_LINE : GL_FILL;
+    gl::PolygonMode(GL_FRONT_AND_BACK, gl_mode);
 }
 
 // ── Uniforms ────────────────────────────────────────────────────────────────
@@ -644,6 +687,106 @@ void OpenGLRHI::draw_indexed(u32 index_count, u32 first_index) {
     );
 }
 
+// ── Compute (OpenGL 4.3+) ───────────────────────────────────────────────────
+
+bool OpenGLRHI::supports_compute() const {
+    return gl::DispatchCompute != nullptr
+        && gl::MemoryBarrier   != nullptr
+        && gl::BindBufferBase  != nullptr;
+}
+
+ShaderHandle OpenGLRHI::create_compute_shader(const std::string& compute_src) {
+    if (!supports_compute()) {
+        NX_ERROR("create_compute_shader: OpenGL 4.3+ compute shaders not available");
+        return INVALID_HANDLE;
+    }
+
+    GLuint cs = gl::CreateShader(GL_COMPUTE_SHADER);
+    const char* c_str = compute_src.c_str();
+    gl::ShaderSource(cs, 1, &c_str, nullptr);
+    gl::CompileShader(cs);
+
+    GLint status = 0;
+    gl::GetShaderiv(cs, GL_COMPILE_STATUS, &status);
+    if (!status) {
+        GLint len = 0;
+        gl::GetShaderiv(cs, GL_INFO_LOG_LENGTH, &len);
+        std::string log(static_cast<size_t>(len), '\0');
+        gl::GetShaderInfoLog(cs, len, nullptr, log.data());
+        NX_ERROR("Compute shader compile error: {}", log);
+        gl::DeleteShader(cs);
+        return INVALID_HANDLE;
+    }
+
+    GLuint prog = gl::CreateProgram();
+    gl::AttachShader(prog, cs);
+    gl::LinkProgram(prog);
+
+    gl::GetProgramiv(prog, GL_LINK_STATUS, &status);
+    if (!status) {
+        GLint len = 0;
+        gl::GetProgramiv(prog, GL_INFO_LOG_LENGTH, &len);
+        std::string log(static_cast<size_t>(len), '\0');
+        gl::GetProgramInfoLog(prog, len, nullptr, log.data());
+        NX_ERROR("Compute shader link error: {}", log);
+        gl::DeleteProgram(prog);
+        gl::DeleteShader(cs);
+        return INVALID_HANDLE;
+    }
+
+    gl::DeleteShader(cs);
+
+    GLShader shader;
+    shader.program = prog;
+
+    auto handle = static_cast<ShaderHandle>(shaders_.size());
+    shaders_.push_back(std::move(shader));
+    return handle;
+}
+
+void OpenGLRHI::bind_storage_buffer(BufferHandle handle, u32 binding) {
+    if (!gl::BindBufferBase) return;
+    if (handle == INVALID_HANDLE || handle >= buffers_.size()) {
+        gl::BindBufferBase(GL_SHADER_STORAGE_BUFFER, binding, 0);
+        return;
+    }
+    gl::BindBufferBase(GL_SHADER_STORAGE_BUFFER, binding, buffers_[handle].id);
+}
+
+void OpenGLRHI::dispatch_compute(u32 groups_x, u32 groups_y, u32 groups_z) {
+    if (!gl::DispatchCompute) return;
+    gl::DispatchCompute(groups_x, groups_y, groups_z);
+}
+
+void OpenGLRHI::memory_barrier() {
+    if (!gl::MemoryBarrier) return;
+    // SSBO writes are what particles need to flush; include vertex-attrib so
+    // the next draw sees updated buffers regardless of how they are bound.
+    gl::MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT
+                    | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT
+                    | GL_BUFFER_UPDATE_BARRIER_BIT);
+}
+
+void OpenGLRHI::set_uniform_uint(ShaderHandle shader,
+                                 const std::string& name, u32 value) {
+    if (!gl::Uniform1ui) return;
+    GLint loc = get_uniform_loc(shader, name);
+    if (loc >= 0) gl::Uniform1ui(loc, value);
+}
+
+void OpenGLRHI::read_buffer(BufferHandle handle, void* dst,
+                            size_t size, size_t offset) {
+    if (!gl::GetBufferSubData) return;
+    if (handle == INVALID_HANDLE || handle >= buffers_.size()) return;
+    auto& buf = buffers_[handle];
+    gl::BindBuffer(buf.target, buf.id);
+    gl::GetBufferSubData(buf.target,
+                         static_cast<GLintptr>(offset),
+                         static_cast<GLsizeiptr>(size),
+                         dst);
+    gl::BindBuffer(buf.target, 0);
+}
+
 // ── Factory ─────────────────────────────────────────────────────────────────
 
 std::unique_ptr<RHI> RHI::create() {
@@ -663,6 +806,10 @@ std::unique_ptr<RHI> RHI::create(Backend backend) {
 #if NEXUS_ENABLE_WEBGL
         case Backend::WebGL:
             return std::make_unique<WebGLRHI>();
+#endif
+#if NEXUS_ENABLE_METAL
+        case Backend::Metal:
+            return std::make_unique<MetalRHI>();
 #endif
         default:
             NX_ERROR("Requested RHI backend is not available");

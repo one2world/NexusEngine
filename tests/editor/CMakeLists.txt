@@ -8,6 +8,7 @@ add_executable(nexus-test-editor
     test_asset_drop_importer.cpp
     test_layer_registry.cpp
     test_material_asset.cpp
+    test_prefab_asset.cpp
 )
 
 target_link_libraries(nexus-test-editor

@@ -25,6 +25,7 @@
 #include "nexus/editor/asset_drop_importer.h"
 #include "nexus/editor/layer_registry.h"
 #include "nexus/editor/material_asset.h"
+#include "nexus/editor/prefab_asset.h"
 #include "nexus/perf/profiler.h"
 #include "nexus/assets/asset_registry.h"
 
@@ -564,6 +565,12 @@ static int run(int /*argc*/, char* /*argv*/[]) {
         nexus::editor::MaterialAssetCache material_cache;
         material_cache.set_asset_registry(&editor_assets);
 
+        // Prefab asset cache — owns Prefab JSON by path, instantiates on
+        // demand.  Drag a .prefab onto the viewport to spawn an instance;
+        // the editor's "Save as Prefab" path also routes through here.
+        nexus::editor::PrefabAssetCache prefab_cache;
+        prefab_cache.set_asset_registry(&editor_assets);
+
         EditorState editor_state;
         register_default_panels(editor_state);
         editor_state.set_status("Ready");
@@ -916,6 +923,22 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                             editor_state.set_status("Mesh: " +
                                                     fs::path(path).filename().string());
                         }
+                    } else if (ext == ".prefab" || ext == ".nexusprefab") {
+                        // Prefab drop on viewport spawns an instance into
+                        // the live scene at world origin (the editor camera
+                        // target would require gizmo math; spawning at the
+                        // prefab's authored transform is closer to Unity's
+                        // behaviour).  Status reflects success / failure
+                        // without crashing on parse errors.
+                        const Entity root = prefab_cache.instantiate(path, scene);
+                        if (root == INVALID_ENTITY) {
+                            editor_state.set_status("Prefab failed: " +
+                                fs::path(path).filename().string());
+                        } else {
+                            editor_state.selection().select(static_cast<u32>(root));
+                            editor_state.set_status("Instantiated: " +
+                                fs::path(path).filename().string());
+                        }
                     } else if (ext == ".mat" || ext == ".material") {
                         // Materials don't have a position in the scene —
                         // drop binds to the currently-selected entity's
@@ -1029,6 +1052,25 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                                 editor_state.set_status("Material loaded: " +
                                     fs::path(path).filename().string());
                             }
+                        }
+                    } else if (ext == ".prefab" || ext == ".nexusprefab") {
+                        // Hierarchy drop instantiates the prefab.  Target
+                        // entity (when present) is reparented under via
+                        // Hierarchy::set_parent so the user can drop a
+                        // prefab onto a folder/parent entity to nest it.
+                        const Entity root = prefab_cache.instantiate(path, scene);
+                        if (root == INVALID_ENTITY) {
+                            editor_state.set_status("Prefab failed: " +
+                                fs::path(path).filename().string());
+                        } else {
+                            if (target_entity != 0 &&
+                                reg.alive(static_cast<Entity>(target_entity))) {
+                                Hierarchy::set_parent(reg, root,
+                                    static_cast<Entity>(target_entity));
+                            }
+                            editor_state.selection().select(static_cast<u32>(root));
+                            editor_state.set_status("Instantiated: " +
+                                fs::path(path).filename().string());
                         }
                     } else {
                         editor_state.set_status("Asset drop: " +

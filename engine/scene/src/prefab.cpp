@@ -7,33 +7,54 @@
 
 namespace nexus {
 
-// Helper: copy all known components from src entity to dst entity
+// Helper: copy all known components from src entity to dst entity.
+//
+// Must mirror SceneSerializer's component coverage — instantiate() loads a
+// prefab into a temp scene via the serializer (which restores everything),
+// then copies into the target via this helper.  Missing entries here cause
+// silent data loss when a prefab is instantiated.  The TagComponent itself
+// is omitted because callers always set it via `create_entity(name)` first.
+template <typename C>
+static inline void copy_one(const Registry& src_reg, Entity src,
+                             Registry& dst_reg, Entity dst) {
+    if (src_reg.has_component<C>(src)) {
+        dst_reg.add_component<C>(dst, src_reg.get_component<C>(src));
+    }
+}
+
 static void copy_entity_components(const Registry& src_reg, Entity src,
                                     Registry& dst_reg, Entity dst) {
-    if (src_reg.has_component<Transform2DComponent>(src))
-        dst_reg.add_component<Transform2DComponent>(dst, src_reg.get_component<Transform2DComponent>(src));
-    if (src_reg.has_component<Transform3DComponent>(src))
-        dst_reg.add_component<Transform3DComponent>(dst, src_reg.get_component<Transform3DComponent>(src));
-    if (src_reg.has_component<SpriteRendererComponent>(src))
-        dst_reg.add_component<SpriteRendererComponent>(dst, src_reg.get_component<SpriteRendererComponent>(src));
-    if (src_reg.has_component<MeshRendererComponent>(src))
-        dst_reg.add_component<MeshRendererComponent>(dst, src_reg.get_component<MeshRendererComponent>(src));
-    if (src_reg.has_component<CameraComponent>(src))
-        dst_reg.add_component<CameraComponent>(dst, src_reg.get_component<CameraComponent>(src));
-    if (src_reg.has_component<RigidBody2DComponent>(src))
-        dst_reg.add_component<RigidBody2DComponent>(dst, src_reg.get_component<RigidBody2DComponent>(src));
-    if (src_reg.has_component<Collider2DComponent>(src))
-        dst_reg.add_component<Collider2DComponent>(dst, src_reg.get_component<Collider2DComponent>(src));
-    if (src_reg.has_component<RigidBody3DComponent>(src))
-        dst_reg.add_component<RigidBody3DComponent>(dst, src_reg.get_component<RigidBody3DComponent>(src));
-    if (src_reg.has_component<Collider3DComponent>(src))
-        dst_reg.add_component<Collider3DComponent>(dst, src_reg.get_component<Collider3DComponent>(src));
-    if (src_reg.has_component<DirectionalLightComponent>(src))
-        dst_reg.add_component<DirectionalLightComponent>(dst, src_reg.get_component<DirectionalLightComponent>(src));
-    if (src_reg.has_component<PointLightComponent>(src))
-        dst_reg.add_component<PointLightComponent>(dst, src_reg.get_component<PointLightComponent>(src));
-    if (src_reg.has_component<SpotLightComponent>(src))
-        dst_reg.add_component<SpotLightComponent>(dst, src_reg.get_component<SpotLightComponent>(src));
+    // Lifecycle / metadata flags.  ActiveComponent and LockedComponent are
+    // marker components that don't exist on every entity by default.
+    if (src_reg.has_component<ActiveComponent>(src)) {
+        dst_reg.set_active(dst, src_reg.is_active(src));
+    }
+    copy_one<LockedComponent>(src_reg, src, dst_reg, dst);
+
+    // Transforms.
+    copy_one<Transform2DComponent>(src_reg, src, dst_reg, dst);
+    copy_one<Transform3DComponent>(src_reg, src, dst_reg, dst);
+
+    // Renderers.
+    copy_one<SpriteRendererComponent>(src_reg, src, dst_reg, dst);
+    copy_one<MeshRendererComponent>(src_reg, src, dst_reg, dst);
+    copy_one<CameraComponent>(src_reg, src, dst_reg, dst);
+    copy_one<TilemapComponent>(src_reg, src, dst_reg, dst);
+
+    // Lights.
+    copy_one<DirectionalLightComponent>(src_reg, src, dst_reg, dst);
+    copy_one<PointLightComponent>(src_reg, src, dst_reg, dst);
+    copy_one<SpotLightComponent>(src_reg, src, dst_reg, dst);
+
+    // Physics.
+    copy_one<RigidBody2DComponent>(src_reg, src, dst_reg, dst);
+    copy_one<Collider2DComponent>(src_reg, src, dst_reg, dst);
+    copy_one<RigidBody3DComponent>(src_reg, src, dst_reg, dst);
+    copy_one<Collider3DComponent>(src_reg, src, dst_reg, dst);
+
+    // Audio.
+    copy_one<AudioSourceComponent>(src_reg, src, dst_reg, dst);
+    copy_one<AudioListenerComponent>(src_reg, src, dst_reg, dst);
 }
 
 // Recursive helper: copy entity and all descendants into temp scene, preserving hierarchy

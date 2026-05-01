@@ -12,6 +12,7 @@ add_library(nexus-editor-lib STATIC
     src/asset_drop_importer.cpp
     src/layer_registry.cpp
     src/material_asset.cpp
+    src/prefab_asset.cpp
 )
 
 # stb_image is a third-party single-header that emits sign/cast warnings

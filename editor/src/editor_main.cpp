@@ -24,6 +24,7 @@
 #include "nexus/editor/component_registry.h"
 #include "nexus/editor/asset_drop_importer.h"
 #include "nexus/editor/layer_registry.h"
+#include "nexus/editor/material_asset.h"
 #include "nexus/perf/profiler.h"
 #include "nexus/assets/asset_registry.h"
 
@@ -557,6 +558,12 @@ static int run(int /*argc*/, char* /*argv*/[]) {
         nexus::editor::LayoutPreset layout_preset =
             nexus::editor::LayoutPreset::Default;
 
+        // Material asset cache — owns MaterialData by path, JSON read/write,
+        // stable id allocation.  Drop a .mat onto the viewport / hierarchy
+        // and the cache persists the binding across scene save/load.
+        nexus::editor::MaterialAssetCache material_cache;
+        material_cache.set_asset_registry(&editor_assets);
+
         EditorState editor_state;
         register_default_panels(editor_state);
         editor_state.set_status("Ready");
@@ -909,6 +916,34 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                             editor_state.set_status("Mesh: " +
                                                     fs::path(path).filename().string());
                         }
+                    } else if (ext == ".mat" || ext == ".material") {
+                        // Materials don't have a position in the scene —
+                        // drop binds to the currently-selected entity's
+                        // MeshRendererComponent (if any).  A drop with no
+                        // selection just loads the material into the cache
+                        // for later reuse.
+                        if (!material_cache.load(path)) {
+                            editor_state.set_status("Material parse failed: " +
+                                                    fs::path(path).filename().string());
+                        } else {
+                            const u32 mat_id = material_cache.id_for(path);
+                            const auto& sel = editor_state.selection();
+                            if (sel.has_selection()) {
+                                Entity e = static_cast<Entity>(sel.primary());
+                                auto& r = scene.registry();
+                                if (r.has_component<MeshRendererComponent>(e)) {
+                                    r.get_component<MeshRendererComponent>(e).material_id = mat_id;
+                                    editor_state.set_status("Bound material: " +
+                                        fs::path(path).filename().string());
+                                } else {
+                                    editor_state.set_status("Material loaded (no MeshRenderer on selection): " +
+                                        fs::path(path).filename().string());
+                                }
+                            } else {
+                                editor_state.set_status("Material loaded: " +
+                                    fs::path(path).filename().string());
+                            }
+                        }
                     } else {
                         editor_state.set_status("Asset drop: " +
                                                 fs::path(path).filename().string());
@@ -977,6 +1012,23 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                             bind_mesh(e, mesh_id);
                             editor_state.set_status("Mesh: " +
                                                     fs::path(path).filename().string());
+                        }
+                    } else if (ext == ".mat" || ext == ".material") {
+                        if (!material_cache.load(path)) {
+                            editor_state.set_status("Material parse failed: " +
+                                                    fs::path(path).filename().string());
+                        } else {
+                            const u32 mat_id = material_cache.id_for(path);
+                            Entity e = static_cast<Entity>(target_entity);
+                            if (e != INVALID_ENTITY &&
+                                reg.has_component<MeshRendererComponent>(e)) {
+                                reg.get_component<MeshRendererComponent>(e).material_id = mat_id;
+                                editor_state.set_status("Bound material: " +
+                                    fs::path(path).filename().string());
+                            } else {
+                                editor_state.set_status("Material loaded: " +
+                                    fs::path(path).filename().string());
+                            }
                         }
                     } else {
                         editor_state.set_status("Asset drop: " +

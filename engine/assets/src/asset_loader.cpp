@@ -1,5 +1,6 @@
 #include "nexus/assets/asset_loader.h"
 #include "nexus/core/log.h"
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -1009,9 +1010,56 @@ std::shared_ptr<AssetData> MaterialImporter::import(const std::string& path,
 
     auto data = std::make_shared<MaterialData>();
 
-    // Simple key-value parsing (real engine would use JSON)
+    // ── JSON path (preferred) ───────────────────────────────────────────
+    //
+    // The canonical .mat format is JSON — quoted strings, real numbers,
+    // 4-element color arrays, room for future fields (emission, IOR, etc.)
+    // without a parser rewrite.  Legacy key=value files are still accepted
+    // as a fallback so projects on older snapshots keep loading.
+    std::string source((std::istreambuf_iterator<char>(file)),
+                        std::istreambuf_iterator<char>());
+    auto strip_ws = [](std::string& s) {
+        auto first = s.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) { s.clear(); return; }
+        auto last = s.find_last_not_of(" \t\r\n");
+        s = s.substr(first, last - first + 1);
+    };
+    std::string trimmed = source;
+    strip_ws(trimmed);
+
+    if (!trimmed.empty() && trimmed.front() == '{') {
+        try {
+            auto j = nlohmann::json::parse(trimmed);
+            if (j.contains("shader"))    data->shader_path = j["shader"].get<std::string>();
+            if (j.contains("albedo"))    data->albedo_texture = j["albedo"].get<std::string>();
+            if (j.contains("normal"))    data->normal_texture = j["normal"].get<std::string>();
+            if (j.contains("metallic_roughness"))
+                data->metallic_roughness_texture =
+                    j["metallic_roughness"].get<std::string>();
+            if (j.contains("metallic"))  data->metallic  = j["metallic"].get<f32>();
+            if (j.contains("roughness")) data->roughness = j["roughness"].get<f32>();
+            if (j.contains("color") && j["color"].is_array() &&
+                j["color"].size() == 4) {
+                for (size_t i = 0; i < 4; ++i) {
+                    data->color[i] = j["color"][i].get<f32>();
+                }
+            }
+            return data;
+        } catch (const std::exception& e) {
+            NX_ERROR("MaterialImporter: JSON parse failed for '{}': {}",
+                     path, e.what());
+            return nullptr;
+        }
+    }
+
+    // ── Legacy key=value fallback ───────────────────────────────────────
+    //
+    // Pre-Phase-J .mat files used a flat key=value text format.  Kept so
+    // existing scenes don't break; new files written from the editor go
+    // through save_material_json() which always emits JSON.
+    std::istringstream iss(source);
     std::string line;
-    while (std::getline(file, line)) {
+    while (std::getline(iss, line)) {
         if (line.empty() || line[0] == '#') continue;
         auto eq = line.find('=');
         if (eq == std::string::npos) continue;
@@ -1019,7 +1067,6 @@ std::shared_ptr<AssetData> MaterialImporter::import(const std::string& path,
         std::string key = line.substr(0, eq);
         std::string val = line.substr(eq + 1);
 
-        // Trim spaces
         auto trim = [](std::string& s) {
             auto start = s.find_first_not_of(" \t");
             auto end = s.find_last_not_of(" \t");
@@ -1032,8 +1079,13 @@ std::shared_ptr<AssetData> MaterialImporter::import(const std::string& path,
         else if (key == "albedo") data->albedo_texture = val;
         else if (key == "normal") data->normal_texture = val;
         else if (key == "metallic_roughness") data->metallic_roughness_texture = val;
-        else if (key == "metallic") data->metallic = std::stof(val);
-        else if (key == "roughness") data->roughness = std::stof(val);
+        else if (key == "metallic") {
+            try { data->metallic = std::stof(val); }
+            catch (...) { NX_WARN("MaterialImporter: bad metallic value '{}' in {}", val, path); }
+        } else if (key == "roughness") {
+            try { data->roughness = std::stof(val); }
+            catch (...) { NX_WARN("MaterialImporter: bad roughness value '{}' in {}", val, path); }
+        }
     }
 
     return data;

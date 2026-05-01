@@ -425,4 +425,45 @@ TEST(SceneSerializer, TagDefaultsAreElidedAndStillReload) {
     EXPECT_TRUE(saw);
 }
 
+// =============================================================================
+// AnimatorComponent — JSON round-trip
+// =============================================================================
+
+TEST(SceneSerializer, PreservesAnimatorComponentBindings) {
+    Scene scene;
+    Entity e = scene.create_entity_3d("Animated");
+    scene.registry().add_component<AnimatorComponent>(e, AnimatorComponent{});
+    {
+        auto& a = scene.registry().get_component<AnimatorComponent>(e);
+        a.clip_id       = 12345;
+        a.speed         = 1.5f;
+        a.playing       = true;
+        a.looping       = false;
+        a.play_on_start = false;
+        a.time          = 0.42f;  // should NOT round-trip (playback state)
+    }
+
+    SceneSerializer ser(scene);
+    const std::string json = ser.to_json();
+    Scene loaded;
+    SceneSerializer reloader(loaded);
+    ASSERT_TRUE(reloader.from_json(json));
+
+    bool saw = false;
+    loaded.registry().each<TagComponent>(
+        [&](Entity ent, TagComponent& tc) {
+            if (tc.name != "Animated") return;
+            saw = true;
+            ASSERT_TRUE(loaded.registry().has_component<AnimatorComponent>(ent));
+            const auto& a = loaded.registry().get_component<AnimatorComponent>(ent);
+            EXPECT_EQ(a.clip_id, 12345u);
+            EXPECT_NEAR(a.speed, 1.5f, 1e-5f);
+            EXPECT_TRUE(a.playing);
+            EXPECT_FALSE(a.looping);
+            EXPECT_FALSE(a.play_on_start);
+            EXPECT_NEAR(a.time, 0.0f, 1e-5f);  // playback state resets
+        });
+    EXPECT_TRUE(saw);
+}
+
 } // namespace nexus::tests

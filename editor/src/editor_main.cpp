@@ -27,6 +27,7 @@
 #include "nexus/editor/material_asset.h"
 #include "nexus/editor/prefab_asset.h"
 #include "nexus/editor/animation_asset.h"
+#include "nexus/animation/animator_system.h"
 #include "nexus/perf/profiler.h"
 #include "nexus/assets/asset_registry.h"
 
@@ -578,6 +579,14 @@ static int run(int /*argc*/, char* /*argv*/[]) {
         nexus::editor::AnimationAssetCache animation_cache;
         animation_cache.set_asset_registry(&editor_assets);
 
+        // Animator system — drives AnimatorComponent playback every Play
+        // mode tick.  Resolver hands the system a way to look up the
+        // engine-side AnimationClip from the editor cache's stable id.
+        nexus::anim::AnimatorSystem animator_system(
+            [&animation_cache](u32 id) {
+                return animation_cache.get_by_id(id);
+            });
+
         EditorState editor_state;
         register_default_panels(editor_state);
         editor_state.set_status("Ready");
@@ -854,8 +863,16 @@ static int run(int /*argc*/, char* /*argv*/[]) {
             bridge.take_snapshot = [&]() { return scene.take_snapshot(); };
             bridge.restore_snapshot = [&]() { return scene.restore_snapshot(); };
             bridge.clear_snapshot = [&]() { scene.clear_snapshot(); };
-            bridge.simulate = [&](f32 dt) { scene.update(dt); };
+            bridge.simulate = [&](f32 dt) {
+                // Animator system runs BEFORE scene.update so transforms it
+                // writes are visible to physics / rendering this same frame.
+                animator_system.tick(scene.registry(), dt);
+                scene.update(dt);
+            };
             bridge.on_play = [&]() {
+                // Animators with `play_on_start` flip to `playing` when the
+                // scene enters Play mode — Unity convention.
+                nexus::anim::AnimatorSystem::start_autoplay(scene.registry());
                 // Clear transient editor UI state tied to entities that may
                 // have been re-created by snapshot restore (inspector target
                 // holds an Entity id that's invalidated across restore).
@@ -931,16 +948,30 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                                                     fs::path(path).filename().string());
                         }
                     } else if (ext == ".anim") {
-                        // Animation drop loads the clip into the cache.
-                        // Component binding (AnimatorComponent) will land
-                        // alongside the runtime animator system; for now
-                        // the cache makes the asset discoverable.
+                        // Animation drop loads the clip and binds it to
+                        // the currently-selected entity's AnimatorComponent
+                        // (auto-adds if missing).  No selection just leaves
+                        // it cached for later reuse.
                         if (!animation_cache.load(path)) {
                             editor_state.set_status("Animation parse failed: " +
                                 fs::path(path).filename().string());
                         } else {
-                            editor_state.set_status("Animation loaded: " +
-                                fs::path(path).filename().string());
+                            const u32 anim_id = animation_cache.id_for(path);
+                            const auto& sel = editor_state.selection();
+                            if (sel.has_selection()) {
+                                Entity e = static_cast<Entity>(sel.primary());
+                                auto& r = scene.registry();
+                                if (!r.has_component<AnimatorComponent>(e)) {
+                                    r.add_component<AnimatorComponent>(
+                                        e, AnimatorComponent{});
+                                }
+                                r.get_component<AnimatorComponent>(e).clip_id = anim_id;
+                                editor_state.set_status("Bound animation: " +
+                                    fs::path(path).filename().string());
+                            } else {
+                                editor_state.set_status("Animation loaded: " +
+                                    fs::path(path).filename().string());
+                            }
                         }
                     } else if (ext == ".prefab" || ext == ".nexusprefab") {
                         // Prefab drop on viewport spawns an instance into
@@ -1077,8 +1108,20 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                             editor_state.set_status("Animation parse failed: " +
                                 fs::path(path).filename().string());
                         } else {
-                            editor_state.set_status("Animation loaded: " +
-                                fs::path(path).filename().string());
+                            const u32 anim_id = animation_cache.id_for(path);
+                            Entity e = static_cast<Entity>(target_entity);
+                            if (e != INVALID_ENTITY && reg.alive(e)) {
+                                if (!reg.has_component<AnimatorComponent>(e)) {
+                                    reg.add_component<AnimatorComponent>(
+                                        e, AnimatorComponent{});
+                                }
+                                reg.get_component<AnimatorComponent>(e).clip_id = anim_id;
+                                editor_state.set_status("Bound animation: " +
+                                    fs::path(path).filename().string());
+                            } else {
+                                editor_state.set_status("Animation loaded: " +
+                                    fs::path(path).filename().string());
+                            }
                         }
                     } else if (ext == ".prefab" || ext == ".nexusprefab") {
                         // Hierarchy drop instantiates the prefab.  Target

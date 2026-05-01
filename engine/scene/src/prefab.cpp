@@ -55,6 +55,10 @@ static void copy_entity_components(const Registry& src_reg, Entity src,
     // Audio.
     copy_one<AudioSourceComponent>(src_reg, src, dst_reg, dst);
     copy_one<AudioListenerComponent>(src_reg, src, dst_reg, dst);
+
+    // Animator — playhead state is not authored data, but the bindings
+    // (clip id, speed, looping, autoplay) are part of the prefab.
+    copy_one<AnimatorComponent>(src_reg, src, dst_reg, dst);
 }
 
 // Recursive helper: copy entity and all descendants into temp scene, preserving hierarchy

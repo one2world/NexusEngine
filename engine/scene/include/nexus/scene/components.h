@@ -233,6 +233,32 @@ struct AudioListenerComponent {
 };
 
 // ---------------------------------------------------------------------------
+// AnimatorComponent — drives an entity's Transform3D from an AnimationClip
+// ---------------------------------------------------------------------------
+//
+// Bridges the editor's AnimationAssetCache (which holds a stable id per
+// .anim path) to the runtime animation system.  When a system tick fires,
+// it samples the clip's bone-0 channel at `time` and writes the resulting
+// pose into Transform3DComponent — covering Unity's "animate this object's
+// transform over time" workflow without requiring a SkeletonComponent.
+//
+//   • clip_id     — id allocated by AnimationAssetCache; 0 = no clip.
+//   • time        — current playhead in seconds.
+//   • speed       — playback rate multiplier.  1.0 = real time.
+//   • playing     — gate; system only advances when true.
+//   • looping     — when true, time wraps modulo duration.
+//   • play_on_start — animator system flips `playing=true` once when the
+//     scene enters Play mode (Unity convention).
+struct AnimatorComponent {
+    u32   clip_id{0};
+    f32   time{0.0f};
+    f32   speed{1.0f};
+    bool  playing{false};
+    bool  looping{true};
+    bool  play_on_start{true};
+};
+
+// ---------------------------------------------------------------------------
 // SpotLightComponent
 // ---------------------------------------------------------------------------
 struct SpotLightComponent {

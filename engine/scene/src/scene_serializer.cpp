@@ -221,6 +221,20 @@ static json serialize_entity(const Registry& reg, Entity e) {
         };
     }
 
+    if (reg.has_component<AnimatorComponent>(e)) {
+        auto& a = reg.get_component<AnimatorComponent>(e);
+        // `time` is intentionally NOT serialized — it's playback state, not
+        // authored data.  Loading a scene puts every animator at t=0 so the
+        // user gets a deterministic "start of clip" baseline.
+        entity_json["animator"] = {
+            {"clip_id", a.clip_id},
+            {"speed", a.speed},
+            {"playing", a.playing},
+            {"looping", a.looping},
+            {"play_on_start", a.play_on_start}
+        };
+    }
+
     if (reg.has_component<TilemapComponent>(e)) {
         auto& tm = reg.get_component<TilemapComponent>(e);
         entity_json["tilemap"] = {
@@ -423,6 +437,18 @@ static Entity deserialize_entity(Registry& reg, const json& j,
         comp.play_on_start = a["play_on_start"].get<bool>();
         comp.bus = a["bus"].get<u32>();
         reg.add_component<AudioSourceComponent>(e, comp);
+    }
+
+    if (j.contains("animator")) {
+        auto& a = j["animator"];
+        AnimatorComponent comp;
+        if (a.contains("clip_id"))       comp.clip_id       = a["clip_id"].get<u32>();
+        if (a.contains("speed"))         comp.speed         = a["speed"].get<f32>();
+        if (a.contains("playing"))       comp.playing       = a["playing"].get<bool>();
+        if (a.contains("looping"))       comp.looping       = a["looping"].get<bool>();
+        if (a.contains("play_on_start")) comp.play_on_start = a["play_on_start"].get<bool>();
+        // `time` deliberately stays at default 0.0 — see writer comment.
+        reg.add_component<AnimatorComponent>(e, comp);
     }
 
     if (j.contains("tilemap")) {

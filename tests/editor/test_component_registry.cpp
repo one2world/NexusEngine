@@ -198,4 +198,43 @@ TEST(ComponentRegistry, CategoriesAreUniqueAndInInsertionOrder) {
     EXPECT_EQ(cats[1], "Cat2");
 }
 
+// ── Built-ins added in M10 / M16 ─────────────────────────────────────────────
+//
+// AnimatorComponent (M10) and ScriptComponent (M16) joined the built-in
+// catalog later; these guards keep the menu in sync as further engine
+// components are added without an out-of-date "Animation" / "Scripts"
+// section silently disappearing.
+
+TEST(ComponentRegistry, AnimatorBuiltinIsRegistered) {
+    ComponentRegistry reg;
+    register_builtin_components(reg);
+    const auto* d = reg.find("Animator");
+    ASSERT_NE(d, nullptr);
+    EXPECT_EQ(d->category, "Animation");
+}
+
+TEST(ComponentRegistry, ScriptBuiltinIsRegistered) {
+    ComponentRegistry reg;
+    register_builtin_components(reg);
+    const auto* d = reg.find("Script");
+    ASSERT_NE(d, nullptr);
+    EXPECT_EQ(d->category, "Scripts");
+}
+
+TEST(ComponentRegistry, ScriptCanBeAddedToEntityViaDescriptor) {
+    ComponentRegistry reg;
+    register_builtin_components(reg);
+    const auto* d = reg.find("Script");
+    ASSERT_NE(d, nullptr);
+
+    Scene scene;
+    Entity e = scene.create_entity_3d("Player");
+    auto& r = scene.registry();
+    EXPECT_FALSE(d->has(r, static_cast<u64>(e)));
+    d->add(r, static_cast<u64>(e));
+    EXPECT_TRUE(d->has(r, static_cast<u64>(e)));
+    d->remove(r, static_cast<u64>(e));
+    EXPECT_FALSE(d->has(r, static_cast<u64>(e)));
+}
+
 }  // namespace nexus::editor::tests

@@ -4,6 +4,7 @@
 #include "nexus/editor/undo_redo.h"
 #include "nexus/editor/component_registry.h"
 #include "nexus/animation/animation_clip.h"
+#include "nexus/scripting/script_component.h"
 #include "nexus/scene/scene.h"
 #include "nexus/scene/components.h"
 #include "nexus/scene/registry.h"
@@ -2468,6 +2469,53 @@ void InspectorPanel::on_render() {
                 an.time    = 0.0f;
                 an.playing = false;
             }
+        }
+    }
+
+    // ── ScriptComponent ───────────────────────────────────────────────────
+    //
+    // Holds the Lua script name + enabled flag.  on_create / on_update /
+    // on_destroy are bound at runtime by ScriptSystem and aren't editable
+    // from here.  Inspector exposes:
+    //   - Script Name (text field — direct edit, no undo since it's a
+    //     identifier-binding op, not a property tween).
+    //   - Enabled toggle (Unity convention).
+    //   - Initialised status (read-only) so users see whether on_create
+    //     has fired yet.
+    //   - Reload button — clears `initialized` so the script's on_create
+    //     fires again next ScriptSystem tick (matches Unity's "Reset" in
+    //     the script gear menu).
+    if (registry.has_component<nexus::scripting::ScriptComponent>(target)) {
+        if (component_header<nexus::scripting::ScriptComponent>(
+                registry, target, "Script")) {
+            auto& sc = registry.get_component<
+                nexus::scripting::ScriptComponent>(target);
+
+            char buf[256];
+            std::snprintf(buf, sizeof(buf), "%s", sc.script_name.c_str());
+            ImGui::SetNextItemWidth(-100.0f);
+            if (ImGui::InputTextWithHint("Script##script_name",
+                                         "(empty)", buf, sizeof(buf))) {
+                sc.script_name = buf;
+                // Renaming the bound script invalidates the previous
+                // bindings; ScriptSystem will rebind on the next tick.
+                sc.initialized = false;
+            }
+
+            ImGui::Checkbox("Enabled##script_enabled", &sc.enabled);
+
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reload##script_reload")) {
+                // Force a re-bind: ScriptSystem checks `initialized` and
+                // re-runs on_create when false.  Lifecycle callbacks are
+                // bound by name so changing script_name + reloading is
+                // the standard hot-swap path.
+                sc.initialized = false;
+            }
+
+            ImGui::TextDisabled(sc.initialized
+                ? "Status: initialised (on_create fired)"
+                : "Status: pending — on_create runs next tick");
         }
     }
 

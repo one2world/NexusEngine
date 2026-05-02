@@ -3,6 +3,7 @@
 #include "nexus/scene/components.h"
 #include "nexus/scene/hierarchy.h"
 #include "nexus/scene/registry.h"
+#include "nexus/scripting/script_component.h"
 
 #include <algorithm>
 #include <cctype>
@@ -109,6 +110,12 @@ void register_builtin_components(ComponentRegistry& reg) {
     // Audio.
     reg.register_type<AudioSourceComponent>  ("Audio Source",   "Audio");
     reg.register_type<AudioListenerComponent>("Audio Listener", "Audio");
+
+    // Animation.
+    reg.register_type<AnimatorComponent>("Animator", "Animation");
+
+    // Scripts.
+    reg.register_type<scripting::ScriptComponent>("Script", "Scripts");
 }
 
 }  // namespace nexus::editor

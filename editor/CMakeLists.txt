@@ -51,6 +51,7 @@ target_link_libraries(nexus-editor-lib
         Nexus::Assets
         Nexus::Animation
         Nexus::Audio
+        Nexus::Scripting
         imgui
         imguizmo
 )

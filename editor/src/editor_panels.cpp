@@ -3,6 +3,7 @@
 #include "nexus/editor/editor_state.h"
 #include "nexus/editor/undo_redo.h"
 #include "nexus/editor/component_registry.h"
+#include "nexus/animation/animation_clip.h"
 #include "nexus/scene/scene.h"
 #include "nexus/scene/components.h"
 #include "nexus/scene/registry.h"
@@ -3843,6 +3844,181 @@ void ProfilerPanel::on_render() {
             ImGui::EndTable();
         }
     }
+
+    ImGui::End();
+}
+
+// ── AnimationPanel ─────────────────────────────────────────────────────────
+
+f32 AnimationPanel::time_to_x(f32 t, f32 view_x_min, f32 view_x_max,
+                              f32 duration) {
+    if (duration <= 0.0f || view_x_max <= view_x_min) return view_x_min;
+    if (t < 0.0f)        t = 0.0f;
+    if (t > duration)    t = duration;
+    const f32 frac = t / duration;
+    return view_x_min + frac * (view_x_max - view_x_min);
+}
+
+f32 AnimationPanel::x_to_time(f32 x, f32 view_x_min, f32 view_x_max,
+                              f32 duration) {
+    if (duration <= 0.0f || view_x_max <= view_x_min) return 0.0f;
+    if (x < view_x_min) x = view_x_min;
+    if (x > view_x_max) x = view_x_max;
+    const f32 frac = (x - view_x_min) / (view_x_max - view_x_min);
+    return frac * duration;
+}
+
+u32 AnimationPanel::clip_total_keys(const nexus::anim::AnimationClip& clip) {
+    u32 n = 0;
+    for (const auto& ch : clip.channels()) {
+        n += static_cast<u32>(ch.positions.size());
+        n += static_cast<u32>(ch.rotations.size());
+        n += static_cast<u32>(ch.scales.size());
+    }
+    return n;
+}
+
+void AnimationPanel::on_render() {
+    if (!visible_) return;
+    if (!ImGui::Begin(title_.c_str(), &visible_)) {
+        ImGui::End();
+        return;
+    }
+
+    const nexus::anim::AnimationClip* clip =
+        (resolver_ && clip_id_ != 0u) ? resolver_(clip_id_) : nullptr;
+
+    // Header — clip name + duration + counts.  Always visible so the user
+    // sees why the timeline below is empty when no clip is bound.
+    if (!clip) {
+        ImGui::TextDisabled("No clip bound.  Drop a .anim onto an "
+                             "AnimatorComponent or select an animator.");
+        ImGui::End();
+        return;
+    }
+    ImGui::Text("%s   duration=%.2fs   keys=%u   channels=%zu",
+                clip->name().empty() ? "(unnamed)" : clip->name().c_str(),
+                static_cast<double>(clip->duration()),
+                clip_total_keys(*clip),
+                clip->channels().size());
+
+    // Zoom + scrub controls.
+    ImGui::SetNextItemWidth(120.0f);
+    f32 z = zoom_;
+    if (ImGui::SliderFloat("Zoom (px/s)##anim", &z, 16.0f, 4096.0f,
+                            "%.0f", ImGuiSliderFlags_Logarithmic)) {
+        set_zoom(z);
+    }
+    ImGui::SameLine();
+    f32 ph = playhead_;
+    if (clip->duration() > 0.0f) {
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::SliderFloat("Time##anim", &ph, 0.0f, clip->duration(),
+                                "%.3fs")) {
+            set_playhead(ph);
+        }
+    }
+    ImGui::Separator();
+
+    // ── Dopesheet area ─────────────────────────────────────────────────
+    //
+    // One row per channel × component (positions / rotations / scales).
+    // Keyframes drawn as small diamonds at their `time` position; playhead
+    // drawn as a vertical line.  Clicking inside the timeline scrubs the
+    // playhead — write-back goes through set_playhead so subclasses can
+    // hook the value if needed.
+    constexpr float kRowHeight   = 18.0f;
+    constexpr float kLabelWidth  = 130.0f;
+    constexpr float kTopPadding  = 4.0f;
+    const f32 duration = clip->duration();
+    if (duration <= 0.0f) {
+        ImGui::TextDisabled("Clip has zero duration — no timeline to draw.");
+        ImGui::End();
+        return;
+    }
+
+    const u32 row_count = static_cast<u32>(clip->channels().size()) * 3u;
+    const float content_h = static_cast<float>(row_count) * kRowHeight + 24.0f;
+    ImGui::BeginChild("##AnimDopesheet",
+                       ImVec2(0, std::max(content_h, 64.0f)), true,
+                       ImGuiWindowFlags_HorizontalScrollbar);
+
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const float track_x_min = origin.x + kLabelWidth;
+    const float track_x_max = track_x_min + duration * zoom_;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    // 1-second gridlines so users can read the timeline at a glance.
+    const ImU32 grid_col = IM_COL32(80, 80, 80, 200);
+    for (i32 s = 0; s <= static_cast<i32>(duration) + 1; ++s) {
+        const f32 x = time_to_x(static_cast<f32>(s),
+                                track_x_min, track_x_max, duration);
+        dl->AddLine(ImVec2(x, origin.y),
+                    ImVec2(x, origin.y + content_h),
+                    grid_col, 1.0f);
+    }
+
+    // Per-channel rows.
+    auto draw_keys = [&](float row_y, ImU32 color, const auto& keys) {
+        for (const auto& k : keys) {
+            const f32 cx = time_to_x(k.time, track_x_min, track_x_max, duration);
+            const f32 cy = row_y + kRowHeight * 0.5f;
+            const f32 r  = 5.0f;
+            // Diamond: 4 line segments around centre (cx, cy).
+            const ImVec2 p0(cx,     cy - r);
+            const ImVec2 p1(cx + r, cy);
+            const ImVec2 p2(cx,     cy + r);
+            const ImVec2 p3(cx - r, cy);
+            dl->AddQuadFilled(p0, p1, p2, p3, color);
+            dl->AddQuad(p0, p1, p2, p3, IM_COL32(0, 0, 0, 200), 1.0f);
+        }
+    };
+
+    u32 row = 0;
+    for (const auto& ch : clip->channels()) {
+        char label[64];
+        std::snprintf(label, sizeof(label), "Bone %d  Pos", ch.bone_index);
+        const float row_y = origin.y + kTopPadding + static_cast<f32>(row) * kRowHeight;
+        ImGui::SetCursorScreenPos(ImVec2(origin.x + 4.0f, row_y));
+        ImGui::TextDisabled("%s", label);
+        draw_keys(row_y, IM_COL32(120, 200, 120, 230), ch.positions);
+        ++row;
+
+        std::snprintf(label, sizeof(label), "Bone %d  Rot", ch.bone_index);
+        const float row_yr = origin.y + kTopPadding + static_cast<f32>(row) * kRowHeight;
+        ImGui::SetCursorScreenPos(ImVec2(origin.x + 4.0f, row_yr));
+        ImGui::TextDisabled("%s", label);
+        draw_keys(row_yr, IM_COL32(220, 180, 100, 230), ch.rotations);
+        ++row;
+
+        std::snprintf(label, sizeof(label), "Bone %d  Scl", ch.bone_index);
+        const float row_ys = origin.y + kTopPadding + static_cast<f32>(row) * kRowHeight;
+        ImGui::SetCursorScreenPos(ImVec2(origin.x + 4.0f, row_ys));
+        ImGui::TextDisabled("%s", label);
+        draw_keys(row_ys, IM_COL32(180, 150, 220, 230), ch.scales);
+        ++row;
+    }
+
+    // Playhead vertical line drawn last so it overlays diamonds.
+    const f32 ph_x = time_to_x(playhead_, track_x_min, track_x_max, duration);
+    dl->AddLine(ImVec2(ph_x, origin.y),
+                ImVec2(ph_x, origin.y + content_h),
+                IM_COL32(255, 60, 60, 230), 2.0f);
+
+    // Click-to-scrub on the track area — only fires when the mouse is
+    // inside the timeline x-range, so clicks on row labels don't move
+    // the playhead.
+    const ImVec2 mouse = ImGui::GetMousePos();
+    if (ImGui::IsWindowHovered() && ImGui::IsMouseDown(0) &&
+        mouse.x >= track_x_min && mouse.x <= track_x_max &&
+        mouse.y >= origin.y    && mouse.y <= origin.y + content_h) {
+        set_playhead(x_to_time(mouse.x, track_x_min, track_x_max, duration));
+    }
+
+    // Reserve dummy space so ImGui's child sizing accounts for the
+    // dopesheet (which we drew via the draw list directly).
+    ImGui::Dummy(ImVec2(track_x_max - origin.x + 16.0f, content_h));
+    ImGui::EndChild();
 
     ImGui::End();
 }

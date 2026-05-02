@@ -898,6 +898,91 @@ TEST(AssetBrowserVisuals, TileColorAliasesShareSameColor) {
               AssetBrowserPanel::default_tile_color_for(".jpeg"));
 }
 
+// =============================================================================
+// AnimationPanel — dopesheet helpers (M15)
+// =============================================================================
+
+#include "nexus/animation/animation_clip.h"
+
+TEST(AnimationPanel, TimeToXLinearMapping) {
+    // Maps t in [0, duration] linearly onto [view_min, view_max].
+    EXPECT_FLOAT_EQ(AnimationPanel::time_to_x(0.0f, 100.0f, 500.0f, 2.0f), 100.0f);
+    EXPECT_FLOAT_EQ(AnimationPanel::time_to_x(2.0f, 100.0f, 500.0f, 2.0f), 500.0f);
+    EXPECT_FLOAT_EQ(AnimationPanel::time_to_x(1.0f, 100.0f, 500.0f, 2.0f), 300.0f);
+}
+
+TEST(AnimationPanel, TimeToXClampsOutOfRange) {
+    EXPECT_FLOAT_EQ(AnimationPanel::time_to_x(-1.0f, 100.0f, 500.0f, 2.0f), 100.0f);
+    EXPECT_FLOAT_EQ(AnimationPanel::time_to_x(99.0f, 100.0f, 500.0f, 2.0f), 500.0f);
+}
+
+TEST(AnimationPanel, TimeToXZeroDurationPinsToStart) {
+    EXPECT_FLOAT_EQ(AnimationPanel::time_to_x(1.0f, 100.0f, 500.0f, 0.0f), 100.0f);
+}
+
+TEST(AnimationPanel, XToTimeIsInverseOfTimeToX) {
+    const f32 t = 0.7f;
+    const f32 x = AnimationPanel::time_to_x(t, 100.0f, 500.0f, 2.0f);
+    EXPECT_NEAR(AnimationPanel::x_to_time(x, 100.0f, 500.0f, 2.0f), t, 1e-4f);
+}
+
+TEST(AnimationPanel, XToTimeClampsAndZeroDurationReturnsZero) {
+    EXPECT_FLOAT_EQ(AnimationPanel::x_to_time(50.0f,  100.0f, 500.0f, 2.0f), 0.0f);
+    EXPECT_FLOAT_EQ(AnimationPanel::x_to_time(700.0f, 100.0f, 500.0f, 2.0f), 2.0f);
+    EXPECT_FLOAT_EQ(AnimationPanel::x_to_time(300.0f, 100.0f, 500.0f, 0.0f), 0.0f);
+}
+
+TEST(AnimationPanel, ClipTotalKeysCountsAcrossChannelsAndComponents) {
+    nexus::anim::AnimationClip clip("test", 1.0f);
+    nexus::anim::BoneChannel ch;
+    ch.bone_index = 0;
+    ch.positions.push_back({0.0f, Vec3(0)});
+    ch.positions.push_back({1.0f, Vec3(1)});
+    ch.rotations.push_back({0.5f, Quat(1, 0, 0, 0)});
+    clip.add_channel(std::move(ch));
+
+    nexus::anim::BoneChannel ch2;
+    ch2.bone_index = 1;
+    ch2.scales.push_back({0.0f, Vec3(1)});
+    ch2.scales.push_back({1.0f, Vec3(2)});
+    clip.add_channel(std::move(ch2));
+
+    EXPECT_EQ(AnimationPanel::clip_total_keys(clip), 5u);
+}
+
+TEST(AnimationPanel, EmptyClipHasZeroKeys) {
+    nexus::anim::AnimationClip clip("empty", 0.0f);
+    EXPECT_EQ(AnimationPanel::clip_total_keys(clip), 0u);
+}
+
+TEST(AnimationPanel, PlayheadAndZoomClampToValidRanges) {
+    AnimationPanel p;
+    EXPECT_FLOAT_EQ(p.playhead(), 0.0f);
+    p.set_playhead(-5.0f);
+    EXPECT_FLOAT_EQ(p.playhead(), 0.0f);   // clamps to 0
+    p.set_playhead(2.5f);
+    EXPECT_FLOAT_EQ(p.playhead(), 2.5f);
+
+    EXPECT_FLOAT_EQ(p.zoom(), 120.0f);     // default
+    p.set_zoom(0.1f);
+    EXPECT_FLOAT_EQ(p.zoom(), 16.0f);      // clamps to min
+    p.set_zoom(99999.0f);
+    EXPECT_FLOAT_EQ(p.zoom(), 4096.0f);    // clamps to max
+    p.set_zoom(256.0f);
+    EXPECT_FLOAT_EQ(p.zoom(), 256.0f);
+}
+
+TEST(AnimationPanel, ClipIdAndResolverBindings) {
+    AnimationPanel p;
+    EXPECT_EQ(p.clip_id(), 0u);
+    EXPECT_FALSE(p.has_clip_resolver());
+    p.set_clip_id(12345);
+    EXPECT_EQ(p.clip_id(), 12345u);
+    p.set_clip_resolver([](u32) { return nullptr; });
+    EXPECT_TRUE(p.has_clip_resolver());
+    EXPECT_STREQ(p.type_id(), "AnimationPanel");
+}
+
 TEST(AssetBrowserVisuals, MaterialColorSamplerBindIsIntrospectable) {
     AssetBrowserPanel ab;
     EXPECT_FALSE(ab.has_material_color_sampler());

@@ -351,6 +351,11 @@ static void register_default_panels(EditorState& state) {
         profiler_panel->set_visible(false);
         panels.add_panel(std::move(profiler_panel));
     }
+    {
+        auto anim_panel = std::make_unique<AnimationPanel>();
+        anim_panel->set_visible(false);
+        panels.add_panel(std::move(anim_panel));
+    }
 
     // Set up default dock layout.
     auto& dock = panels.dock_space();
@@ -362,6 +367,7 @@ static void register_default_panels(EditorState& state) {
     dock.dock("Asset Browser", DockPosition::Bottom, 0.25f);
     dock.dock("Undo History",  DockPosition::Right,  0.25f);
     dock.dock("Profiler",      DockPosition::Bottom, 0.30f);
+    dock.dock("Animation",     DockPosition::Bottom, 0.30f);
 }
 
 static int run(int /*argc*/, char* /*argv*/[]) {
@@ -666,6 +672,20 @@ static int run(int /*argc*/, char* /*argv*/[]) {
             resolvers.audio     = [&](u32 id) { return audio_cache.path_for(id); };
             resolvers.prefab    = [&](u32 id) { return prefab_cache.path_for(id); };
             inspector->bind_asset_path_resolvers(std::move(resolvers));
+        }
+
+        // Wire AnimationPanel resolver + selection follow.  When the user
+        // selects an entity with an AnimatorComponent, the panel auto-binds
+        // to that animator's clip_id; if the user selects something else
+        // the panel keeps its previous focus until the next selection
+        // change.  The resolver pulls AnimationClip pointers from the
+        // editor cache.
+        if (auto* anim_panel = editor_state.panels()
+                .find_typed<AnimationPanel>("Animation")) {
+            anim_panel->set_clip_resolver(
+                [&animation_cache](u32 id) -> const nexus::anim::AnimationClip* {
+                    return animation_cache.get_by_id(id);
+                });
         }
 
         // Route engine log output (NX_INFO / NX_WARN / …) into the Console
@@ -1366,6 +1386,25 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                     inspector->set_target_entity(sel.primary());
                 } else {
                     inspector->clear_target();
+                }
+            }
+
+            // AnimationPanel selection follow — auto-bind to the selected
+            // entity's AnimatorComponent.clip_id when present.  Mirrors
+            // playhead from the runtime animator so the dopesheet's red
+            // line matches what the AnimatorSystem is sampling each frame.
+            if (auto* anim_panel = editor_state.panels()
+                    .find_typed<AnimationPanel>("Animation")) {
+                const auto& sel = editor_state.selection();
+                if (sel.has_selection()) {
+                    Entity ent = static_cast<Entity>(sel.primary());
+                    auto& reg = scene.registry();
+                    if (reg.alive(ent) &&
+                        reg.has_component<AnimatorComponent>(ent)) {
+                        const auto& a = reg.get_component<AnimatorComponent>(ent);
+                        anim_panel->set_clip_id(a.clip_id);
+                        anim_panel->set_playhead(a.time);
+                    }
                 }
             }
 

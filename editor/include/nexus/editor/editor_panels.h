@@ -19,7 +19,8 @@ class ForwardRenderer3D;
 class BatchRenderer2D;
 class DebugRenderer;
 struct Mesh;
-namespace rhi { class RHI; }
+namespace rhi  { class RHI; }
+namespace anim { class AnimationClip; }
 }
 
 namespace nexus::editor {
@@ -884,6 +885,82 @@ private:
     std::vector<f32> frozen_frame_times_ms_;
     FrameProfile     frozen_last_frame_{};
     bool             frozen_has_frame_{false};
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AnimationPanel — Unity-style Animation window (read-only dopesheet)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Visualizes the keyframes of an `anim::AnimationClip` as horizontal tracks
+// (one row per channel × component) with diamond markers at each keyframe's
+// `time`.  The current playhead is drawn as a vertical line that the user
+// can scrub by clicking inside the timeline area.
+//
+// Scope (M15):
+//   • Read-only display + scrub.  Edits (add / move / delete keyframe) are
+//     deferred until later milestones — the data model (BoneChannel) is
+//     already mutable, so editing slots in cleanly later.
+//   • Clip is resolved through a `ClipResolver` callback so the panel
+//     stays decoupled from AnimationAssetCache.
+//   • Selection follow: when the editor's selected entity has an
+//     AnimatorComponent, the panel auto-binds to that component's clip_id.
+//     Hosts call `set_clip_id()` directly when navigating from the Project
+//     view (double-click .anim).
+//
+// Pure helpers (`time_to_x` / `x_to_time` / `clip_total_keys`) are static so
+// the panel can be unit-tested headlessly.
+
+class AnimationPanel : public Panel {
+public:
+    AnimationPanel() : Panel("Animation") {}
+
+    void on_render() override;
+    const char* type_id() const override { return "AnimationPanel"; }
+
+    using ClipResolver =
+        std::function<const ::nexus::anim::AnimationClip*(u32)>;
+    void set_clip_resolver(ClipResolver r) { resolver_ = std::move(r); }
+    bool has_clip_resolver() const { return static_cast<bool>(resolver_); }
+
+    /// Bind / query the active clip id.  Setting 0 hides the dopesheet.
+    void set_clip_id(u32 id) { clip_id_ = id; }
+    u32 clip_id() const { return clip_id_; }
+
+    /// Read-only playhead in seconds, clamped to [0, duration].  Hosts can
+    /// drive this from AnimatorComponent.time so the panel reflects the
+    /// runtime animator's current sample position.
+    f32 playhead() const { return playhead_; }
+    void set_playhead(f32 t) { playhead_ = t < 0.0f ? 0.0f : t; }
+
+    /// Pixels-per-second zoom for the timeline.  Default suits a 1-2s
+    /// clip in a typical dock width.
+    f32 zoom() const { return zoom_; }
+    void set_zoom(f32 z) {
+        if (z < 16.0f)  z = 16.0f;
+        if (z > 4096.0f) z = 4096.0f;
+        zoom_ = z;
+    }
+
+    // ── Pure helpers (test-friendly) ─────────────────────────────────────
+
+    /// Map a time in [0, duration] seconds onto a screen-x in
+    /// [view_x_min, view_x_max].  Linear; clamps when t is out of range.
+    static f32 time_to_x(f32 t, f32 view_x_min, f32 view_x_max,
+                         f32 duration);
+
+    /// Inverse — pixel x → time.  Out-of-range x clamps to [0, duration].
+    static f32 x_to_time(f32 x, f32 view_x_min, f32 view_x_max,
+                         f32 duration);
+
+    /// Total keyframe count across all channels (positions + rotations +
+    /// scales).  Used by the panel header for a quick read and by tests.
+    static u32 clip_total_keys(const anim::AnimationClip& clip);
+
+private:
+    ClipResolver resolver_;
+    u32 clip_id_{0};
+    f32 playhead_{0.0f};
+    f32 zoom_{120.0f};
 };
 
 } // namespace nexus::editor

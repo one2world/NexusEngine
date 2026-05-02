@@ -28,6 +28,7 @@
 #include "nexus/editor/prefab_asset.h"
 #include "nexus/editor/animation_asset.h"
 #include "nexus/editor/audio_asset.h"
+#include "nexus/editor/build_scenes.h"
 #include "nexus/animation/animator_system.h"
 #include "nexus/perf/profiler.h"
 #include "nexus/assets/asset_registry.h"
@@ -587,6 +588,15 @@ static int run(int /*argc*/, char* /*argv*/[]) {
         audio_cache.set_audio_engine(&audio);
         audio_cache.set_asset_registry(&editor_assets);
 
+        // Build scenes — Unity-style "Scenes In Build" list.  Persisted as
+        // a sibling JSON file so the project's build manifest survives
+        // editor restarts.  open_scene below auto-adds new paths so the
+        // user's recent-scenes story stays maintained without a panel UI.
+        nexus::editor::BuildScenes build_scenes;
+        const std::string build_scenes_path = "build_scenes.json";
+        // Best-effort load; absence is normal for a fresh project.
+        (void)build_scenes.load_from_file(build_scenes_path);
+
         // Animator system — drives AnimatorComponent playback every Play
         // mode tick.  Resolver hands the system a way to look up the
         // engine-side AnimationClip from the editor cache's stable id.
@@ -818,6 +828,13 @@ static int run(int /*argc*/, char* /*argv*/[]) {
             editor_state.set_scene_path(path);
             editor_state.set_status("Saved: " + path);
             NX_INFO("Scene saved to {}", path);
+            // Saving a fresh path adds it to the Build Scenes list so it
+            // shows up next time the user opens the build settings UI.
+            // Re-adding an existing path is a no-op; persistence is
+            // best-effort (failure logs but doesn't fail the save).
+            if (build_scenes.add(path)) {
+                (void)build_scenes.save_to_file(build_scenes_path);
+            }
             return true;
         };
         auto save_scene = [&]() {
@@ -855,6 +872,9 @@ static int run(int /*argc*/, char* /*argv*/[]) {
             }
             editor_state.set_scene_path(path);
             editor_state.set_status("Opened: " + path);
+            if (build_scenes.add(path)) {
+                (void)build_scenes.save_to_file(build_scenes_path);
+            }
             if (hierarchy) hierarchy->clear_selection();
             if (inspector) inspector->clear_target();
             NX_INFO("Scene loaded from {}", path);

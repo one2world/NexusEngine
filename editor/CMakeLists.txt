@@ -15,6 +15,7 @@ add_library(nexus-editor-lib STATIC
     src/prefab_asset.cpp
     src/animation_asset.cpp
     src/audio_asset.cpp
+    src/build_scenes.cpp
 )
 
 # stb_image is a third-party single-header that emits sign/cast warnings

@@ -3067,10 +3067,14 @@ namespace {
 const char* asset_icon(const AssetBrowserEntry& entry) {
     if (entry.is_directory) return "[DIR]";
     const auto& ext = entry.extension;
-    if (ext == ".bmp" || ext == ".png" || ext == ".jpg" ||
+    if (ext == ".bmp" || ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
         ext == ".tga" || ext == ".hdr") return "[IMG]";
-    if (ext == ".obj" || ext == ".gltf" || ext == ".glb") return "[MESH]";
+    if (ext == ".obj" || ext == ".gltf" || ext == ".glb" ||
+        ext == ".fbx" || ext == ".dae")  return "[MESH]";
     if (ext == ".wav" || ext == ".ogg" || ext == ".mp3") return "[SFX]";
+    if (ext == ".mat" || ext == ".material") return "[MAT]";
+    if (ext == ".prefab" || ext == ".nexusprefab") return "[PFB]";
+    if (ext == ".anim") return "[ANIM]";
     if (ext == ".lua")  return "[LUA]";
     if (ext == ".glsl" || ext == ".vert" || ext == ".frag") return "[SHDR]";
     if (ext == ".nxs"  || ext == ".json") return "[SCN]";
@@ -3085,12 +3089,17 @@ const char* asset_icon(const AssetBrowserEntry& entry) {
 ImU32 asset_tile_color(const AssetBrowserEntry& entry) {
     if (entry.is_directory) return IM_COL32(110, 90, 50, 255);   // amber
     const auto& ext = entry.extension;
-    if (ext == ".bmp" || ext == ".png" || ext == ".jpg" ||
+    if (ext == ".bmp" || ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
         ext == ".tga" || ext == ".hdr") return IM_COL32(80, 130, 70, 255);   // image green
-    if (ext == ".obj" || ext == ".gltf" || ext == ".glb")
-                                       return IM_COL32(60, 95, 140, 255);  // mesh blue
+    if (ext == ".obj" || ext == ".gltf" || ext == ".glb" ||
+        ext == ".fbx" || ext == ".dae")  return IM_COL32(60, 95, 140, 255);  // mesh blue
     if (ext == ".wav" || ext == ".ogg" || ext == ".mp3")
                                        return IM_COL32(150, 70, 130, 255); // audio magenta
+    if (ext == ".mat" || ext == ".material")
+                                       return IM_COL32(70, 110, 95, 255);  // material teal
+    if (ext == ".prefab" || ext == ".nexusprefab")
+                                       return IM_COL32(120, 80, 140, 255); // prefab violet
+    if (ext == ".anim") return IM_COL32(180, 130, 60, 255);                 // animation amber
     if (ext == ".lua") return IM_COL32(40, 80, 130, 255);
     if (ext == ".glsl" || ext == ".vert" || ext == ".frag")
                                        return IM_COL32(140, 100, 50, 255); // shader copper
@@ -3099,6 +3108,51 @@ ImU32 asset_tile_color(const AssetBrowserEntry& entry) {
     if (ext == ".pak")  return IM_COL32(70, 70, 90, 255);
     return IM_COL32(60, 60, 60, 255);
 }
+
+} // namespace (anonymous)
+
+// ── AssetBrowserPanel: pure default-visual helpers (test-friendly) ──────────
+//
+// These statics live OUTSIDE the anonymous namespace so they're linkable
+// from test TUs.  The bodies inline the same dispatch as `asset_icon` /
+// `asset_tile_color` above — keeping them in sync with that table is a
+// small duplication cost paid for testability of the visual contract.
+const char* AssetBrowserPanel::default_icon_for(const std::string& ext) {
+    if (ext == ".bmp" || ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+        ext == ".tga" || ext == ".hdr") return "[IMG]";
+    if (ext == ".obj" || ext == ".gltf" || ext == ".glb" ||
+        ext == ".fbx" || ext == ".dae")  return "[MESH]";
+    if (ext == ".wav" || ext == ".ogg" || ext == ".mp3") return "[SFX]";
+    if (ext == ".mat" || ext == ".material") return "[MAT]";
+    if (ext == ".prefab" || ext == ".nexusprefab") return "[PFB]";
+    if (ext == ".anim") return "[ANIM]";
+    if (ext == ".lua")  return "[LUA]";
+    if (ext == ".glsl" || ext == ".vert" || ext == ".frag") return "[SHDR]";
+    if (ext == ".nxs"  || ext == ".json") return "[SCN]";
+    if (ext == ".pak")  return "[PAK]";
+    return "[F]";
+}
+u32 AssetBrowserPanel::default_tile_color_for(const std::string& ext) {
+    if (ext == ".bmp" || ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+        ext == ".tga" || ext == ".hdr") return IM_COL32(80, 130, 70, 255);
+    if (ext == ".obj" || ext == ".gltf" || ext == ".glb" ||
+        ext == ".fbx" || ext == ".dae")  return IM_COL32(60, 95, 140, 255);
+    if (ext == ".wav" || ext == ".ogg" || ext == ".mp3")
+                                       return IM_COL32(150, 70, 130, 255);
+    if (ext == ".mat" || ext == ".material") return IM_COL32(70, 110, 95, 255);
+    if (ext == ".prefab" || ext == ".nexusprefab")
+                                       return IM_COL32(120, 80, 140, 255);
+    if (ext == ".anim") return IM_COL32(180, 130, 60, 255);
+    if (ext == ".lua") return IM_COL32(40, 80, 130, 255);
+    if (ext == ".glsl" || ext == ".vert" || ext == ".frag")
+                                       return IM_COL32(140, 100, 50, 255);
+    if (ext == ".nxs"  || ext == ".json")
+                                       return IM_COL32(100, 100, 100, 255);
+    if (ext == ".pak")  return IM_COL32(70, 70, 90, 255);
+    return IM_COL32(60, 60, 60, 255);
+}
+
+namespace {
 
 /// Format a byte count into a 6-char-ish human-readable string (e.g.
 /// "  3 B", " 12 KB", "  1.4 MB").  Avoids std::to_string overhead in the
@@ -3350,12 +3404,69 @@ void AssetBrowserPanel::on_render() {
                 dl->AddImage(static_cast<ImTextureID>(tex), cur,
                              ImVec2(cur.x + cell.x, cur.y + cell.y));
             } else {
+                ImU32 base = asset_tile_color(entry);
+                // Material content-aware tint — when a sampler is bound and
+                // the file is a material, paint the tile in the actual
+                // albedo so the user sees a Unity-style at-a-glance read.
+                // Sampler returning false (parse failed / not a material)
+                // falls back to the extension tint.
+                const auto& ext = entry.extension;
+                if (material_color_sampler_ &&
+                    (ext == ".mat" || ext == ".material")) {
+                    f32 c[4]{};
+                    if (material_color_sampler_(entry.path, c)) {
+                        const u8 r = static_cast<u8>(std::clamp(c[0], 0.0f, 1.0f) * 255.0f);
+                        const u8 g = static_cast<u8>(std::clamp(c[1], 0.0f, 1.0f) * 255.0f);
+                        const u8 b = static_cast<u8>(std::clamp(c[2], 0.0f, 1.0f) * 255.0f);
+                        const u8 a = static_cast<u8>(std::clamp(c[3], 0.0f, 1.0f) * 255.0f);
+                        base = IM_COL32(r, g, b, a == 0 ? 255 : a);
+                    }
+                }
                 dl->AddRectFilled(cur,
                                   ImVec2(cur.x + cell.x, cur.y + cell.y),
-                                  asset_tile_color(entry), 4.0f);
+                                  base, 4.0f);
                 dl->AddRect(cur,
                             ImVec2(cur.x + cell.x, cur.y + cell.y),
                             IM_COL32(0, 0, 0, 110), 4.0f);
+
+                // Type-specific overlays — small cues that fit inside the
+                // cell so users distinguish prefabs / animations from
+                // generic colored tiles even when no real thumbnail is
+                // bound yet.
+                if (ext == ".prefab" || ext == ".nexusprefab") {
+                    // Cube-outline glyph centred near the bottom.
+                    const float pad = std::min(cell.x, cell.y) * 0.18f;
+                    const ImVec2 a(cur.x + pad,           cur.y + pad);
+                    const ImVec2 b(cur.x + cell.x - pad,  cur.y + pad);
+                    const ImVec2 c(cur.x + cell.x - pad,  cur.y + cell.y - pad);
+                    const ImVec2 d(cur.x + pad,           cur.y + cell.y - pad);
+                    const ImU32 line = IM_COL32(255, 255, 255, 200);
+                    dl->AddLine(a, b, line, 1.5f);
+                    dl->AddLine(b, c, line, 1.5f);
+                    dl->AddLine(c, d, line, 1.5f);
+                    dl->AddLine(d, a, line, 1.5f);
+                    dl->AddLine(a, c, line, 1.0f);
+                    dl->AddLine(b, d, line, 1.0f);
+                } else if (ext == ".anim") {
+                    // Sine-wave glyph along the bottom strip — quick visual
+                    // metaphor for "this is animated data" without sampling
+                    // the clip's actual tracks.
+                    constexpr int kSegs = 16;
+                    const float strip_h = cell.y * 0.30f;
+                    const float strip_y = cur.y + cell.y - strip_h - 4.0f;
+                    const ImU32 line = IM_COL32(255, 240, 200, 220);
+                    ImVec2 prev(cur.x + 4.0f, strip_y + strip_h * 0.5f);
+                    for (int i = 1; i <= kSegs; ++i) {
+                        const float t = static_cast<float>(i) /
+                                        static_cast<float>(kSegs);
+                        const float x = cur.x + 4.0f + (cell.x - 8.0f) * t;
+                        const float y = strip_y + strip_h * 0.5f -
+                            std::sin(t * 6.2832f) * strip_h * 0.4f;
+                        const ImVec2 next(x, y);
+                        dl->AddLine(prev, next, line, 1.5f);
+                        prev = next;
+                    }
+                }
             }
 
             if (ImGui::Selectable(label, is_selected,

@@ -780,6 +780,28 @@ public:
         if (tex_id == 0) thumbnails_.erase(path);
         else             thumbnails_[path] = tex_id;
     }
+
+    /// Material color sampler — host hook that returns the albedo color for
+    /// a `.mat` path, e.g. via MaterialAssetCache.  When bound, the
+    /// AssetBrowserPanel paints material tiles using the file's actual
+    /// color instead of the generic "material teal" extension tint, giving
+    /// users a Unity-style at-a-glance read.  Return false from the
+    /// callback to fall back to the extension color (e.g. file failed to
+    /// parse).
+    using MaterialColorSampler =
+        std::function<bool(const std::string& path, f32 rgba[4])>;
+    void set_material_color_sampler(MaterialColorSampler s) {
+        material_color_sampler_ = std::move(s);
+    }
+    bool has_material_color_sampler() const {
+        return static_cast<bool>(material_color_sampler_);
+    }
+
+    /// Pure helpers exposed for tests so the visual contract for asset
+    /// classes can be verified headlessly without ImGui.  `tile_color`
+    /// returns 32-bit RGBA in ImU32 layout (R, G, B, A from low byte).
+    static const char* default_icon_for(const std::string& extension);
+    static u32 default_tile_color_for(const std::string& extension);
     std::uintptr_t thumbnail(const std::string& path) const {
         auto it = thumbnails_.find(path);
         return it == thumbnails_.end() ? 0u : it->second;
@@ -804,6 +826,7 @@ private:
     ActionCallback on_delete_;
     std::function<void()> on_refresh_;
     std::unordered_map<std::string, std::uintptr_t> thumbnails_;
+    MaterialColorSampler material_color_sampler_;
 
     SidebarFilter current_filter_{SidebarFilter::None};
     FilterCallback on_filter_request_;

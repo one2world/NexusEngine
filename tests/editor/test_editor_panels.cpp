@@ -846,6 +846,76 @@ TEST(InspectorPanelAssetResolvers, BindCanReplaceIndividualResolvers) {
     EXPECT_FALSE(ip.asset_path_resolvers().animation);
 }
 
+// =============================================================================
+// AssetBrowserPanel — visual contract for non-image asset families (M14)
+// =============================================================================
+
+TEST(AssetBrowserVisuals, IconForKnownExtensions) {
+    EXPECT_STREQ(AssetBrowserPanel::default_icon_for(".mat"),    "[MAT]");
+    EXPECT_STREQ(AssetBrowserPanel::default_icon_for(".material"),"[MAT]");
+    EXPECT_STREQ(AssetBrowserPanel::default_icon_for(".prefab"), "[PFB]");
+    EXPECT_STREQ(AssetBrowserPanel::default_icon_for(".nexusprefab"), "[PFB]");
+    EXPECT_STREQ(AssetBrowserPanel::default_icon_for(".anim"),   "[ANIM]");
+    EXPECT_STREQ(AssetBrowserPanel::default_icon_for(".png"),    "[IMG]");
+    EXPECT_STREQ(AssetBrowserPanel::default_icon_for(".jpeg"),   "[IMG]");
+    EXPECT_STREQ(AssetBrowserPanel::default_icon_for(".obj"),    "[MESH]");
+    EXPECT_STREQ(AssetBrowserPanel::default_icon_for(".fbx"),    "[MESH]");
+    EXPECT_STREQ(AssetBrowserPanel::default_icon_for(".wav"),    "[SFX]");
+}
+
+TEST(AssetBrowserVisuals, IconFallbackForUnknown) {
+    EXPECT_STREQ(AssetBrowserPanel::default_icon_for(".xyz"), "[F]");
+    EXPECT_STREQ(AssetBrowserPanel::default_icon_for(""),     "[F]");
+}
+
+TEST(AssetBrowserVisuals, TileColorsAreUniqueAcrossFamilies) {
+    // Each major family should map to a distinct color so users can
+    // distinguish at a glance.
+    const u32 mat    = AssetBrowserPanel::default_tile_color_for(".mat");
+    const u32 prefab = AssetBrowserPanel::default_tile_color_for(".prefab");
+    const u32 anim   = AssetBrowserPanel::default_tile_color_for(".anim");
+    const u32 img    = AssetBrowserPanel::default_tile_color_for(".png");
+    const u32 mesh   = AssetBrowserPanel::default_tile_color_for(".obj");
+    const u32 audio  = AssetBrowserPanel::default_tile_color_for(".wav");
+    const u32 dflt   = AssetBrowserPanel::default_tile_color_for(".xyz");
+
+    EXPECT_NE(mat, prefab);
+    EXPECT_NE(prefab, anim);
+    EXPECT_NE(anim, img);
+    EXPECT_NE(img, mesh);
+    EXPECT_NE(mesh, audio);
+    EXPECT_NE(audio, dflt);
+    EXPECT_NE(mat, dflt);
+}
+
+TEST(AssetBrowserVisuals, TileColorAliasesShareSameColor) {
+    // .mat and .material map to the same family → same tile color.
+    EXPECT_EQ(AssetBrowserPanel::default_tile_color_for(".mat"),
+              AssetBrowserPanel::default_tile_color_for(".material"));
+    EXPECT_EQ(AssetBrowserPanel::default_tile_color_for(".prefab"),
+              AssetBrowserPanel::default_tile_color_for(".nexusprefab"));
+    EXPECT_EQ(AssetBrowserPanel::default_tile_color_for(".jpg"),
+              AssetBrowserPanel::default_tile_color_for(".jpeg"));
+}
+
+TEST(AssetBrowserVisuals, MaterialColorSamplerBindIsIntrospectable) {
+    AssetBrowserPanel ab;
+    EXPECT_FALSE(ab.has_material_color_sampler());
+    bool fired = false;
+    ab.set_material_color_sampler(
+        [&fired](const std::string& path, f32 rgba[4]) {
+            fired = true;
+            (void)path;
+            rgba[0] = 0.1f; rgba[1] = 0.2f; rgba[2] = 0.3f; rgba[3] = 1.0f;
+            return true;
+        });
+    EXPECT_TRUE(ab.has_material_color_sampler());
+    // Clearing via empty std::function is fine.
+    ab.set_material_color_sampler({});
+    EXPECT_FALSE(ab.has_material_color_sampler());
+    (void)fired;  // sampler is invoked from on_render which we can't run here
+}
+
 TEST(InspectorPanelAssetResolvers, EmptyBindClearsAllSlots) {
     InspectorPanel ip;
     InspectorPanel::AssetPathResolvers r;

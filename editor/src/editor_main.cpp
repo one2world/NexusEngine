@@ -742,6 +742,22 @@ static int run(int /*argc*/, char* /*argv*/[]) {
             assets_panel->set_root_path(root);
             assets_panel->navigate_to(root);
             populate_asset_browser(*assets_panel, root);
+
+            // Material color sampler — paints .mat tiles in the file's
+            // actual albedo so the Project view matches Unity's preview at
+            // a glance.  Sampler reads through MaterialAssetCache; cached
+            // miss → first call decodes from disk and populates the cache.
+            assets_panel->set_material_color_sampler(
+                [&material_cache](const std::string& path, f32 rgba[4]) {
+                    auto m = material_cache.load(path);
+                    if (!m) return false;
+                    rgba[0] = m->color[0];
+                    rgba[1] = m->color[1];
+                    rgba[2] = m->color[2];
+                    rgba[3] = m->color[3];
+                    return true;
+                });
+
             // Host callbacks (Open/Reveal/Delete/Refresh) are wired below,
             // after `open_scene` is declared so we can route .nxs/.json
             // double-clicks straight into the loader.

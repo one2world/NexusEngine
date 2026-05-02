@@ -657,6 +657,15 @@ static int run(int /*argc*/, char* /*argv*/[]) {
             inspector->bind_undo_manager(&editor_state.undo_redo());
             inspector->bind_selection(&editor_state.selection());
             inspector->bind_component_registry(&component_registry);
+            // Hand the Inspector a way to translate raw asset ids back into
+            // human-readable filenames.  Each cache exposes a stable
+            // path_for(id) that the picker calls when rendering the slot.
+            nexus::editor::InspectorPanel::AssetPathResolvers resolvers;
+            resolvers.material  = [&](u32 id) { return material_cache.path_for(id); };
+            resolvers.animation = [&](u32 id) { return animation_cache.path_for(id); };
+            resolvers.audio     = [&](u32 id) { return audio_cache.path_for(id); };
+            resolvers.prefab    = [&](u32 id) { return prefab_cache.path_for(id); };
+            inspector->bind_asset_path_resolvers(std::move(resolvers));
         }
 
         // Route engine log output (NX_INFO / NX_WARN / …) into the Console

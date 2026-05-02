@@ -1851,6 +1851,29 @@ void InspectorPanel::on_render() {
                                    static_cast<u32>(std::max(0, v));
                            });
             mr.material_id = static_cast<u32>(std::max(0, mat_id_i));
+            // Resolved-path display: shows the material's filename next to
+            // the raw id when the resolver is bound and the id is known.
+            // "(none)" when id == 0; "<unknown>" when the cache doesn't
+            // recognise it (stale scene reference).  Clear button zeroes
+            // the id without an extra panel button — Unity convention.
+            if (asset_paths_.material) {
+                std::string label;
+                if (mr.material_id == 0) {
+                    label = "(none)";
+                } else {
+                    std::string p = asset_paths_.material(mr.material_id);
+                    label = p.empty()
+                        ? "<unknown>"
+                        : std::filesystem::path(p).filename().string();
+                }
+                ImGui::TextDisabled("  → %s", label.c_str());
+                if (mr.material_id != 0) {
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Clear##mat")) {
+                        mr.material_id = 0;
+                    }
+                }
+            }
 
             f32 tint[4] = {mr.tint.x, mr.tint.y, mr.tint.z, mr.tint.w};
             const bool tint_mixed = !component_field_uniform<
@@ -2239,6 +2262,22 @@ void InspectorPanel::on_render() {
             if (ImGui::InputInt("Clip ID", &clip_i)) {
                 as.clip_id = static_cast<u32>(std::max(0, clip_i));
             }
+            if (asset_paths_.audio) {
+                std::string label;
+                if (as.clip_id == 0) {
+                    label = "(none)";
+                } else {
+                    std::string p = asset_paths_.audio(as.clip_id);
+                    label = p.empty()
+                        ? "<unknown>"
+                        : std::filesystem::path(p).filename().string();
+                }
+                ImGui::TextDisabled("  → %s", label.c_str());
+                if (as.clip_id != 0) {
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Clear##audio")) as.clip_id = 0;
+                }
+            }
             int bus_i = static_cast<int>(as.bus);
             if (ImGui::InputInt("Bus", &bus_i)) {
                 as.bus = static_cast<u32>(std::max(0, bus_i));
@@ -2339,6 +2378,94 @@ void InspectorPanel::on_render() {
                                           static_cast<Entity>(ent)).max_distance = v[0];
                                   });
                 as.max_distance = mx[0];
+            }
+        }
+    }
+
+    // ── AnimatorComponent ─────────────────────────────────────────────────
+    //
+    // Pairs the entity with an AnimationClip via clip_id (id allocated by
+    // AnimationAssetCache).  Inspector shows the resolved filename next to
+    // the raw int id, exposes speed / looping / play_on_start, and offers
+    // a Play / Pause / Reset row that maps directly to the runtime
+    // AnimatorSystem's `playing` / `time` fields.  All edits respect undo.
+    if (registry.has_component<AnimatorComponent>(target)) {
+        if (component_header<AnimatorComponent>(registry, target, "Animator")) {
+            auto& an = registry.get_component<AnimatorComponent>(target);
+            const auto edit_targets = current_edit_targets();
+
+            int clip_i = static_cast<int>(an.clip_id);
+            if (ImGui::InputInt("Clip ID##anim", &clip_i)) {
+                an.clip_id = static_cast<u32>(std::max(0, clip_i));
+            }
+            if (asset_paths_.animation) {
+                std::string label;
+                if (an.clip_id == 0) {
+                    label = "(none)";
+                } else {
+                    std::string p = asset_paths_.animation(an.clip_id);
+                    label = p.empty()
+                        ? "<unknown>"
+                        : std::filesystem::path(p).filename().string();
+                }
+                ImGui::TextDisabled("  → %s", label.c_str());
+                if (an.clip_id != 0) {
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Clear##anim")) an.clip_id = 0;
+                }
+            }
+
+            f32 speed[4] = {an.speed, 0, 0, 0};
+            drag_float_n_undo(*this, undo_mgr_, edit_targets, "Speed",
+                              "anim_speed", 1, speed, 0.01f, -10.0f, 10.0f,
+                              drag_widget_id_, drag_begin_f_, drag_begin_targets_,
+                              [scene = scene_](u32 ent, const f32* v) {
+                                  if (!scene) return;
+                                  auto& reg = scene->registry();
+                                  if (!reg.alive(static_cast<Entity>(ent))) return;
+                                  if (!reg.has_component<AnimatorComponent>(
+                                          static_cast<Entity>(ent))) return;
+                                  reg.get_component<AnimatorComponent>(
+                                      static_cast<Entity>(ent)).speed = v[0];
+                              });
+            an.speed = speed[0];
+
+            checkbox_undo(undo_mgr_, edit_targets, "Looping", "anim_looping",
+                          &an.looping,
+                          [scene = scene_](u32 ent, bool v) {
+                              if (!scene) return;
+                              auto& reg = scene->registry();
+                              if (!reg.alive(static_cast<Entity>(ent))) return;
+                              if (!reg.has_component<AnimatorComponent>(
+                                      static_cast<Entity>(ent))) return;
+                              reg.get_component<AnimatorComponent>(
+                                  static_cast<Entity>(ent)).looping = v;
+                          });
+            ImGui::SameLine();
+            checkbox_undo(undo_mgr_, edit_targets, "Play On Start",
+                          "anim_play_on_start", &an.play_on_start,
+                          [scene = scene_](u32 ent, bool v) {
+                              if (!scene) return;
+                              auto& reg = scene->registry();
+                              if (!reg.alive(static_cast<Entity>(ent))) return;
+                              if (!reg.has_component<AnimatorComponent>(
+                                      static_cast<Entity>(ent))) return;
+                              reg.get_component<AnimatorComponent>(
+                                  static_cast<Entity>(ent)).play_on_start = v;
+                          });
+
+            // Transport row: Play / Pause / Reset.  In editor mode these
+            // just flip flags + reset playhead so the user can scrub the
+            // value live by editing `time`; the AnimatorSystem only ticks
+            // during Play mode.
+            ImGui::Text("Time: %.3f", an.time);
+            if (ImGui::SmallButton(an.playing ? "Pause##anim" : "Play##anim")) {
+                an.playing = !an.playing;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset##anim")) {
+                an.time    = 0.0f;
+                an.playing = false;
             }
         }
     }

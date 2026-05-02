@@ -485,6 +485,25 @@ public:
         return component_registry_;
     }
 
+    /// Asset id → human-readable path resolvers, one per cache family.
+    /// Inspector uses these to render `{Label}: {basename}` next to the
+    /// raw integer id slot of MeshRenderer.material_id / AudioSource.clip_id
+    /// / AnimatorComponent.clip_id.  Each callback returns "" when the id
+    /// is unknown — Inspector falls back to the integer in that case.
+    /// All four are independent — wire only what the host project needs.
+    struct AssetPathResolvers {
+        std::function<std::string(u32)> material;   // MaterialAssetCache::path_for
+        std::function<std::string(u32)> animation;  // AnimationAssetCache::path_for
+        std::function<std::string(u32)> audio;      // AudioAssetCache::path_for
+        std::function<std::string(u32)> prefab;     // PrefabAssetCache::path_for
+    };
+    void bind_asset_path_resolvers(AssetPathResolvers r) {
+        asset_paths_ = std::move(r);
+    }
+    const AssetPathResolvers& asset_path_resolvers() const {
+        return asset_paths_;
+    }
+
     /// Track pending edits.
     void push_edit(const PropertyEdit& edit) { pending_edits_.push_back(edit); }
     std::vector<PropertyEdit> drain_edits();
@@ -505,6 +524,7 @@ private:
     UndoRedoManager* undo_mgr_{nullptr};
     class EditorSelection* ext_selection_{nullptr};
     class ComponentRegistry* component_registry_{nullptr};
+    AssetPathResolvers asset_paths_{};
     // Add-component popup state.  The search buffer is kept across frames
     // so the user's typed query persists while the popup is open.
     char add_component_search_[128] = {};

@@ -791,6 +791,76 @@ TEST(InspectorPanelAddComponent, RegistryBindIsRoundTrippable) {
 }
 
 // =============================================================================
+// InspectorPanel — asset path resolvers (M13)
+// =============================================================================
+//
+// The inspector renders raw asset ids (material_id, clip_id, etc.) alongside
+// a human-readable filename when the host project has bound a path resolver.
+// The popup itself isn't testable headlessly, but the bind/unbind/lookup
+// contract is — these tests guard against regressions where a future
+// refactor drops the slot or wraps callbacks in a way that would crash on
+// a missing resolver.
+
+TEST(InspectorPanelAssetResolvers, DefaultResolversAreEmpty) {
+    InspectorPanel ip;
+    EXPECT_FALSE(ip.asset_path_resolvers().material);
+    EXPECT_FALSE(ip.asset_path_resolvers().animation);
+    EXPECT_FALSE(ip.asset_path_resolvers().audio);
+    EXPECT_FALSE(ip.asset_path_resolvers().prefab);
+}
+
+TEST(InspectorPanelAssetResolvers, BindRoundTripsAndCallbacksFire) {
+    InspectorPanel ip;
+    InspectorPanel::AssetPathResolvers r;
+    r.material  = [](u32 id) { return id == 1u ? std::string{"mat.mat"}     : std::string{}; };
+    r.animation = [](u32 id) { return id == 2u ? std::string{"a.anim"}      : std::string{}; };
+    r.audio     = [](u32 id) { return id == 3u ? std::string{"clip.wav"}    : std::string{}; };
+    r.prefab    = [](u32 id) { return id == 4u ? std::string{"hero.prefab"} : std::string{}; };
+    ip.bind_asset_path_resolvers(std::move(r));
+
+    const auto& got = ip.asset_path_resolvers();
+    ASSERT_TRUE(got.material);
+    ASSERT_TRUE(got.animation);
+    ASSERT_TRUE(got.audio);
+    ASSERT_TRUE(got.prefab);
+
+    EXPECT_EQ(got.material(1u),  "mat.mat");
+    EXPECT_EQ(got.material(99u), "");
+    EXPECT_EQ(got.animation(2u), "a.anim");
+    EXPECT_EQ(got.audio(3u),     "clip.wav");
+    EXPECT_EQ(got.prefab(4u),    "hero.prefab");
+}
+
+TEST(InspectorPanelAssetResolvers, BindCanReplaceIndividualResolvers) {
+    InspectorPanel ip;
+    InspectorPanel::AssetPathResolvers r1;
+    r1.material = [](u32) { return std::string{"first"}; };
+    ip.bind_asset_path_resolvers(std::move(r1));
+    EXPECT_EQ(ip.asset_path_resolvers().material(0u), "first");
+
+    InspectorPanel::AssetPathResolvers r2;
+    r2.material = [](u32) { return std::string{"second"}; };
+    ip.bind_asset_path_resolvers(std::move(r2));
+    EXPECT_EQ(ip.asset_path_resolvers().material(0u), "second");
+    // The previous animation slot should be gone — bind replaces wholesale.
+    EXPECT_FALSE(ip.asset_path_resolvers().animation);
+}
+
+TEST(InspectorPanelAssetResolvers, EmptyBindClearsAllSlots) {
+    InspectorPanel ip;
+    InspectorPanel::AssetPathResolvers r;
+    r.material = [](u32) { return std::string{"x"}; };
+    ip.bind_asset_path_resolvers(std::move(r));
+    EXPECT_TRUE(ip.asset_path_resolvers().material);
+
+    ip.bind_asset_path_resolvers({});
+    EXPECT_FALSE(ip.asset_path_resolvers().material);
+    EXPECT_FALSE(ip.asset_path_resolvers().animation);
+    EXPECT_FALSE(ip.asset_path_resolvers().audio);
+    EXPECT_FALSE(ip.asset_path_resolvers().prefab);
+}
+
+// =============================================================================
 // ViewportPanel — Game view toolbar state + letterbox math
 // =============================================================================
 

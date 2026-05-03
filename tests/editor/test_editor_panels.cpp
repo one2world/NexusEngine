@@ -983,6 +983,47 @@ TEST(AnimationPanel, ClipIdAndResolverBindings) {
     EXPECT_STREQ(p.type_id(), "AnimationPanel");
 }
 
+// =============================================================================
+// AnimationPanel — edit-mode bindings (M23)
+// =============================================================================
+
+TEST(AnimationPanel, MutableResolverBindIsRoundTrippable) {
+    AnimationPanel p;
+    EXPECT_FALSE(p.has_mutable_clip_resolver());
+    p.set_mutable_clip_resolver(
+        [](u32) -> nexus::anim::AnimationClip* { return nullptr; });
+    EXPECT_TRUE(p.has_mutable_clip_resolver());
+    p.set_mutable_clip_resolver({});
+    EXPECT_FALSE(p.has_mutable_clip_resolver());
+}
+
+TEST(AnimationPanel, ActiveBoneClampsAndDefaults) {
+    AnimationPanel p;
+    EXPECT_EQ(p.active_bone(), 0);
+    p.set_active_bone(5);
+    EXPECT_EQ(p.active_bone(), 5);
+    p.set_active_bone(-3);
+    EXPECT_EQ(p.active_bone(), 0);  // clamps to 0
+}
+
+TEST(AnimationPanel, KeySelectionRoundTripsAndClearable) {
+    AnimationPanel p;
+    EXPECT_EQ(p.selected_key_kind(), AnimationPanel::KeyKind::None);
+    EXPECT_EQ(p.selected_key_index(), -1);
+
+    p.select_key(AnimationPanel::KeyKind::Position, 2);
+    EXPECT_EQ(p.selected_key_kind(),  AnimationPanel::KeyKind::Position);
+    EXPECT_EQ(p.selected_key_index(), 2);
+
+    p.select_key(AnimationPanel::KeyKind::Rotation, 7);
+    EXPECT_EQ(p.selected_key_kind(),  AnimationPanel::KeyKind::Rotation);
+    EXPECT_EQ(p.selected_key_index(), 7);
+
+    p.clear_key_selection();
+    EXPECT_EQ(p.selected_key_kind(),  AnimationPanel::KeyKind::None);
+    EXPECT_EQ(p.selected_key_index(), -1);
+}
+
 TEST(AssetBrowserVisuals, MaterialColorSamplerBindIsIntrospectable) {
     AssetBrowserPanel ab;
     EXPECT_FALSE(ab.has_material_color_sampler());

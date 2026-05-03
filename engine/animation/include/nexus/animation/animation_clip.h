@@ -86,9 +86,52 @@ public:
 
     // Accessors
     const std::string& name() const { return name_; }
+    void set_name(std::string n) { name_ = std::move(n); }
+
     float duration() const { return duration_; }
+    /// Editor authoring uses this to extend a clip when a keyframe is
+    /// added past the current end.  Runtime sampling clamps `time` to
+    /// `duration` already, so shrinking is safe; growing widens the
+    /// authored window.
+    void set_duration(float d) { duration_ = d < 0.0f ? 0.0f : d; }
+
     const std::vector<BoneChannel>& channels() const { return channels_; }
+    /// Mutable accessor — used by the Animation Window's editing path
+    /// (M23) to insert / remove keyframes in place.  Direct ref because
+    /// editor edits are a hot path and copying a vector of channels per
+    /// keystroke would be wasteful.
+    std::vector<BoneChannel>& channels() { return channels_; }
+
     const std::vector<AnimationEvent>& events() const { return events_; }
+    std::vector<AnimationEvent>& events() { return events_; }
+
+    // ── Keyframe edit helpers (M23) ──────────────────────────────────────
+    //
+    // Pure functions for the dopesheet's edit toolbar.  Inserts maintain
+    // sorted-by-time invariant so Sample() can keep using upper_bound or
+    // a linear walk.  Removal is indexed; out-of-range indices are
+    // silently ignored.
+    enum class KeyType : u8 { Position, Rotation, Scale };
+
+    /// Find an existing channel by bone index, or create one if missing.
+    /// Returns the channel reference for chained edits.  bone_index < 0
+    /// is normalised to 0.
+    BoneChannel& ensure_channel(i32 bone_index);
+
+    /// Insert a position key at `time` for `bone_index`, maintaining the
+    /// sorted-by-time invariant.  Updates duration to max(duration, time).
+    void add_position_key(i32 bone_index, float time, Vec3 value);
+
+    /// Same shape for rotation / scale.
+    void add_rotation_key(i32 bone_index, float time, Quat value);
+    void add_scale_key   (i32 bone_index, float time, Vec3 value);
+
+    /// Remove a key by position in the channel's per-component vector.
+    /// Returns true if removal happened.  Out-of-range and empty-channel
+    /// requests are silent no-ops.
+    bool remove_position_key(i32 bone_index, u32 key_index);
+    bool remove_rotation_key(i32 bone_index, u32 key_index);
+    bool remove_scale_key   (i32 bone_index, u32 key_index);
 
 private:
     std::string name_;

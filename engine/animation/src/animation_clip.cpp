@@ -59,6 +59,90 @@ void AnimationClip::add_channel(BoneChannel channel) {
     channels_.push_back(std::move(channel));
 }
 
+// ── Keyframe edit helpers (M23) ─────────────────────────────────────────────
+//
+// Maintain sorted-by-time invariant via insertion-point search.  Channel
+// lookup is linear; clips with hundreds of bones would warrant a hash
+// map but for typical character rigs (~60 bones) the linear walk is far
+// cheaper than the indirection of a map.
+
+BoneChannel& AnimationClip::ensure_channel(i32 bone_index) {
+    if (bone_index < 0) bone_index = 0;
+    for (auto& ch : channels_) {
+        if (ch.bone_index == bone_index) return ch;
+    }
+    BoneChannel fresh;
+    fresh.bone_index = bone_index;
+    channels_.push_back(std::move(fresh));
+    return channels_.back();
+}
+
+namespace {
+
+template <typename Key>
+void insert_sorted(std::vector<Key>& keys, Key k) {
+    auto it = std::upper_bound(keys.begin(), keys.end(), k,
+        [](const Key& a, const Key& b) { return a.time < b.time; });
+    keys.insert(it, std::move(k));
+}
+
+template <typename Key>
+bool remove_at(std::vector<Key>& keys, u32 idx) {
+    if (idx >= keys.size()) return false;
+    keys.erase(keys.begin() + idx);
+    return true;
+}
+
+}  // namespace
+
+void AnimationClip::add_position_key(i32 bone_index, float time, Vec3 value) {
+    if (time < 0.0f) time = 0.0f;
+    auto& ch = ensure_channel(bone_index);
+    insert_sorted<PositionKey>(ch.positions, {time, value});
+    if (time > duration_) duration_ = time;
+}
+
+void AnimationClip::add_rotation_key(i32 bone_index, float time, Quat value) {
+    if (time < 0.0f) time = 0.0f;
+    auto& ch = ensure_channel(bone_index);
+    insert_sorted<RotationKey>(ch.rotations, {time, value});
+    if (time > duration_) duration_ = time;
+}
+
+void AnimationClip::add_scale_key(i32 bone_index, float time, Vec3 value) {
+    if (time < 0.0f) time = 0.0f;
+    auto& ch = ensure_channel(bone_index);
+    insert_sorted<ScaleKey>(ch.scales, {time, value});
+    if (time > duration_) duration_ = time;
+}
+
+bool AnimationClip::remove_position_key(i32 bone_index, u32 key_index) {
+    for (auto& ch : channels_) {
+        if (ch.bone_index == bone_index) {
+            return remove_at(ch.positions, key_index);
+        }
+    }
+    return false;
+}
+
+bool AnimationClip::remove_rotation_key(i32 bone_index, u32 key_index) {
+    for (auto& ch : channels_) {
+        if (ch.bone_index == bone_index) {
+            return remove_at(ch.rotations, key_index);
+        }
+    }
+    return false;
+}
+
+bool AnimationClip::remove_scale_key(i32 bone_index, u32 key_index) {
+    for (auto& ch : channels_) {
+        if (ch.bone_index == bone_index) {
+            return remove_at(ch.scales, key_index);
+        }
+    }
+    return false;
+}
+
 void AnimationClip::add_event(float time, const std::string& event_name) {
     events_.push_back({time, event_name});
     // Keep sorted by time

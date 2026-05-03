@@ -7,6 +7,7 @@ add_executable(nexus-test-animation
     test_ik_solver.cpp
     test_animator_system.cpp
     test_particle_emitter_system.cpp
+    test_animation_clip_edit.cpp
 )
 
 target_link_libraries(nexus-test-animation

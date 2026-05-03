@@ -232,4 +232,12 @@ AnimationAssetCache::get_by_id(u32 id) const {
     return get(it->second);
 }
 
+anim::AnimationClip*
+AnimationAssetCache::get_by_id_mutable(u32 id) {
+    auto it = id_to_path_.find(id);
+    if (it == id_to_path_.end()) return nullptr;
+    auto cit = clips_.find(it->second);
+    return cit == clips_.end() ? nullptr : cit->second.get();
+}
+
 }  // namespace nexus::editor

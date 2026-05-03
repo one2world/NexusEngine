@@ -922,6 +922,39 @@ public:
     void set_clip_resolver(ClipResolver r) { resolver_ = std::move(r); }
     bool has_clip_resolver() const { return static_cast<bool>(resolver_); }
 
+    /// Mutable resolver — when bound the dopesheet exposes editing
+    /// affordances (Add Position/Rotation/Scale Key at playhead, Delete
+    /// selected key).  Decoupled from the const resolver so the host can
+    /// gate editing per-cache (e.g. read-only when the file is on a
+    /// version-controlled path).
+    using MutableClipResolver =
+        std::function<::nexus::anim::AnimationClip*(u32)>;
+    void set_mutable_clip_resolver(MutableClipResolver r) {
+        mutable_resolver_ = std::move(r);
+    }
+    bool has_mutable_clip_resolver() const {
+        return static_cast<bool>(mutable_resolver_);
+    }
+
+    /// Bone index targeted by Add Key / Delete Key actions.  Default 0
+    /// (root bone).  The toolbar exposes an int input for this.
+    i32 active_bone() const { return active_bone_; }
+    void set_active_bone(i32 b) { active_bone_ = b < 0 ? 0 : b; }
+
+    /// Selected key index for Delete Key — paired with selected_kind_.
+    /// (-1 means "no selection").
+    enum class KeyKind : u8 { None, Position, Rotation, Scale };
+    KeyKind selected_key_kind() const { return selected_kind_; }
+    i32     selected_key_index() const { return selected_idx_; }
+    void clear_key_selection() {
+        selected_kind_ = KeyKind::None;
+        selected_idx_  = -1;
+    }
+    void select_key(KeyKind kind, i32 index) {
+        selected_kind_ = kind;
+        selected_idx_  = index;
+    }
+
     /// Bind / query the active clip id.  Setting 0 hides the dopesheet.
     void set_clip_id(u32 id) { clip_id_ = id; }
     u32 clip_id() const { return clip_id_; }
@@ -957,10 +990,14 @@ public:
     static u32 clip_total_keys(const anim::AnimationClip& clip);
 
 private:
-    ClipResolver resolver_;
+    ClipResolver        resolver_;
+    MutableClipResolver mutable_resolver_;
     u32 clip_id_{0};
     f32 playhead_{0.0f};
     f32 zoom_{120.0f};
+    i32 active_bone_{0};
+    KeyKind selected_kind_{KeyKind::None};
+    i32     selected_idx_{-1};
 };
 
 } // namespace nexus::editor

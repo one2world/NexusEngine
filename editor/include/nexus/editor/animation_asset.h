@@ -58,6 +58,11 @@ public:
     const anim::AnimationClip* get(const std::string& path) const;
     const anim::AnimationClip* get_by_id(u32 id) const;
 
+    /// Mutable accessor — used by the Animation Window's edit toolbar
+    /// (M23) to insert / remove keyframes directly on the cached clip.
+    /// Returns nullptr when the id is unknown.
+    anim::AnimationClip* get_by_id_mutable(u32 id);
+
     u32 size() const { return static_cast<u32>(clips_.size()); }
     bool contains(const std::string& path) const {
         return clips_.find(path) != clips_.end();

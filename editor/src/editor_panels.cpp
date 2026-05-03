@@ -4051,6 +4051,59 @@ void AnimationPanel::on_render() {
             set_playhead(ph);
         }
     }
+
+    // ── Editing toolbar (M23) ──────────────────────────────────────────
+    //
+    // Visible when a mutable resolver is bound.  Bone index target +
+    // three "Add Key at Playhead" buttons (Pos / Rot / Scl) + Delete
+    // Selected for the diamond the user has clicked.  Direct mutation;
+    // no undo broadcast since AnimationClip lives outside the
+    // UndoRedoManager scope (clip edits persist via "Save" through
+    // AnimationAssetCache, not through Ctrl+Z).
+    if (mutable_resolver_) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70.0f);
+        ImGui::InputInt("Bone##anim_bone", &active_bone_);
+        if (active_bone_ < 0) active_bone_ = 0;
+
+        nexus::anim::AnimationClip* mclip = mutable_resolver_(clip_id_);
+        const bool can_edit = (mclip != nullptr);
+        if (!can_edit) ImGui::BeginDisabled();
+        ImGui::SameLine();
+        if (ImGui::SmallButton("+Pos##anim_addp") && mclip) {
+            mclip->add_position_key(active_bone_, playhead_,
+                                    Vec3(0.0f, 0.0f, 0.0f));
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("+Rot##anim_addr") && mclip) {
+            mclip->add_rotation_key(active_bone_, playhead_,
+                                    Quat(1.0f, 0.0f, 0.0f, 0.0f));
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("+Scl##anim_adds") && mclip) {
+            mclip->add_scale_key(active_bone_, playhead_, Vec3(1.0f));
+        }
+        ImGui::SameLine();
+        const bool has_sel = selected_kind_ != KeyKind::None && selected_idx_ >= 0;
+        if (!has_sel) ImGui::BeginDisabled();
+        if (ImGui::SmallButton("Delete##anim_del") && mclip && has_sel) {
+            const u32 idx = static_cast<u32>(selected_idx_);
+            switch (selected_kind_) {
+                case KeyKind::Position:
+                    mclip->remove_position_key(active_bone_, idx); break;
+                case KeyKind::Rotation:
+                    mclip->remove_rotation_key(active_bone_, idx); break;
+                case KeyKind::Scale:
+                    mclip->remove_scale_key(active_bone_, idx); break;
+                default: break;
+            }
+            clear_key_selection();
+        }
+        if (!has_sel) ImGui::EndDisabled();
+        if (!can_edit) ImGui::EndDisabled();
+    }
     ImGui::Separator();
 
     // ── Dopesheet area ─────────────────────────────────────────────────

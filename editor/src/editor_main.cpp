@@ -698,6 +698,13 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                 [&animation_cache](u32 id) -> const nexus::anim::AnimationClip* {
                     return animation_cache.get_by_id(id);
                 });
+            // Mutable resolver — enables M23 edit toolbar (Add Pos/Rot/
+            // Scl Key at playhead, Delete selected key).  Same cache,
+            // non-const view.
+            anim_panel->set_mutable_clip_resolver(
+                [&animation_cache](u32 id) -> nexus::anim::AnimationClip* {
+                    return animation_cache.get_by_id_mutable(id);
+                });
         }
 
         // Route engine log output (NX_INFO / NX_WARN / …) into the Console

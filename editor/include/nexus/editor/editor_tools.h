@@ -162,16 +162,47 @@ public:
 
     ParticlePreset& current_preset() { return current_; }
     const ParticlePreset& current_preset() const { return current_; }
+    void set_current_preset(const ParticlePreset& p) { current_ = p; }
 
     void add_preset(const ParticlePreset& p) { presets_.push_back(p); }
     const std::vector<ParticlePreset>& presets() const { return presets_; }
+    void clear_presets() { presets_.clear(); selected_preset_ = -1; }
+    u32 preset_count() const { return static_cast<u32>(presets_.size()); }
     void load_preset(u32 index);
+    i32 selected_preset_index() const { return selected_preset_; }
 
     bool preview_active() const { return preview_active_; }
     void set_preview_active(bool v) { preview_active_ = v; }
 
     u32 alive_count() const { return alive_count_; }
     void set_alive_count(u32 c) { alive_count_ = c; }
+
+    // ── Persistence (M18) ────────────────────────────────────────────────
+    /// Serialise every preset (and the current working preset) into a
+    /// JSON document.  Round-trip-safe: load_from_json() reconstructs the
+    /// exact same state.
+    std::string save_to_json() const;
+    /// Replace the panel's preset list + current preset with the contents
+    /// of a JSON document.  Atomic: returns false on parse failure with
+    /// no partial mutation.
+    bool load_from_json(const std::string& json);
+    bool save_to_file(const std::string& path) const;
+    bool load_from_file(const std::string& path);
+
+    // ── Pure helpers (test-friendly) ─────────────────────────────────────
+    /// Validate + repair a preset in-place.  Negatives clamp to 0; min/max
+    /// pairs swap when reversed; emission_rate < 0 → 0.  Idempotent.
+    static void sanitize(ParticlePreset& p);
+
+    /// Return a vector of canonical built-in presets (Fire, Smoke, Sparks,
+    /// Magic).  Used by `seed_builtin_presets` and by tests verifying
+    /// that the catalogue stays consistent.
+    static std::vector<ParticlePreset> builtin_presets();
+
+    /// Replace the current preset list with the canonical built-ins.
+    /// Useful when the panel is first registered and the user has no
+    /// saved JSON yet.
+    void seed_builtin_presets() { presets_ = builtin_presets(); }
 
 private:
     ParticlePreset current_;

@@ -85,7 +85,16 @@ if(NEXUS_BUILD_TESTS)
 endif()
 
 # Make available
-FetchContent_MakeAvailable(spdlog glm glfw json stb imgui miniaudio imguizmo)
+FetchContent_MakeAvailable(spdlog glm glfw json stb imgui miniaudio)
+
+# imguizmo: bypass add_subdirectory so upstream's own CMakeLists (which
+# lacks an imgui include path) doesn't run.  We build the single .cpp
+# manually below — the static target ends up consumer-equivalent without
+# requiring the upstream CMake to evolve compatibly.
+FetchContent_GetProperties(imguizmo)
+if(NOT imguizmo_POPULATED)
+    FetchContent_Populate(imguizmo)
+endif()
 
 # spdlog 1.13's bundled fmt uses `consteval` format-string validation that
 # trips a Clang 17+ "not a constant expression" diagnostic when compile-time
@@ -122,11 +131,24 @@ endif()
 # IMGUI_DEFINE_MATH_OPERATORS is propagated PUBLICly: ImGuizmo.cpp uses
 # `ImVec2 - ImVec2` etc., and any consumer that includes <ImGuizmo.h> needs
 # the same operators visible to compile.
+#
+# Upstream imguizmo gained its own CMakeLists in 2026, so on a fresh fetch
+# the FetchContent_MakeAvailable() above already creates an `imguizmo`
+# target via add_subdirectory.  Only build our manual target when the
+# upstream didn't (older snapshots / forks).  If upstream did, just
+# re-apply the math-operators define so both code paths stay equivalent.
 if(imguizmo_POPULATED)
-    add_library(imguizmo STATIC
-        ${imguizmo_SOURCE_DIR}/ImGuizmo.cpp
-    )
-    target_include_directories(imguizmo PUBLIC ${imguizmo_SOURCE_DIR})
+    # Upstream now stores ImGuizmo.cpp under src/; older snapshots had it at
+    # the repo root.  Pick whichever exists so we work against either layout.
+    if(EXISTS "${imguizmo_SOURCE_DIR}/src/ImGuizmo.cpp")
+        set(_imguizmo_src "${imguizmo_SOURCE_DIR}/src/ImGuizmo.cpp")
+        set(_imguizmo_inc "${imguizmo_SOURCE_DIR}/src")
+    else()
+        set(_imguizmo_src "${imguizmo_SOURCE_DIR}/ImGuizmo.cpp")
+        set(_imguizmo_inc "${imguizmo_SOURCE_DIR}")
+    endif()
+    add_library(imguizmo STATIC "${_imguizmo_src}")
+    target_include_directories(imguizmo PUBLIC "${_imguizmo_inc}")
     target_compile_definitions(imguizmo PUBLIC IMGUI_DEFINE_MATH_OPERATORS)
     target_link_libraries(imguizmo PUBLIC imgui)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

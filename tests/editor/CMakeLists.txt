@@ -12,6 +12,7 @@ add_executable(nexus-test-editor
     test_animation_asset.cpp
     test_audio_asset.cpp
     test_build_scenes.cpp
+    test_particle_editor.cpp
 )
 
 target_link_libraries(nexus-test-editor

@@ -4,10 +4,16 @@
 #include "nexus/scene/components.h"
 #include "nexus/scene/registry.h"
 #include "nexus/core/log.h"
+
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <queue>
+#include <sstream>
 
 namespace nexus::editor {
 
@@ -356,6 +362,233 @@ void ParticleEditorPanel::load_preset(u32 index) {
         current_ = presets_[index];
         selected_preset_ = static_cast<i32>(index);
     }
+}
+
+// ── Pure helpers (M18) ──────────────────────────────────────────────────────
+
+void ParticleEditorPanel::sanitize(ParticlePreset& p) {
+    auto clamp_min = [](float& v, float lo) { if (v < lo) v = lo; };
+    clamp_min(p.spread,        0.0f);
+    clamp_min(p.min_speed,     0.0f);
+    clamp_min(p.max_speed,     0.0f);
+    clamp_min(p.min_lifetime,  0.0f);
+    clamp_min(p.max_lifetime,  0.0f);
+    clamp_min(p.start_size,    0.0f);
+    clamp_min(p.end_size,      0.0f);
+    clamp_min(p.emission_rate, 0.0f);
+    // Swap inverted ranges so [min, max] stays well-formed.  Skipping
+    // this would let the runtime sample in [max, min] which loops to
+    // negative durations / speeds.
+    if (p.min_speed    > p.max_speed)    std::swap(p.min_speed,    p.max_speed);
+    if (p.min_lifetime > p.max_lifetime) std::swap(p.min_lifetime, p.max_lifetime);
+}
+
+std::vector<ParticlePreset> ParticleEditorPanel::builtin_presets() {
+    std::vector<ParticlePreset> out;
+
+    ParticlePreset fire;
+    fire.name          = "Fire";
+    fire.direction     = Vec3(0, 1, 0);
+    fire.spread        = 30.0f;
+    fire.min_speed     = 1.0f;
+    fire.max_speed     = 3.0f;
+    fire.min_lifetime  = 0.5f;
+    fire.max_lifetime  = 1.2f;
+    fire.start_color   = Vec4(1.0f, 0.7f, 0.2f, 1.0f);
+    fire.end_color     = Vec4(1.0f, 0.1f, 0.0f, 0.0f);
+    fire.start_size    = 0.20f;
+    fire.end_size      = 0.05f;
+    fire.gravity       = 0.5f;     // upward buoyancy
+    fire.emission_rate = 200.0f;
+    fire.additive      = true;
+    out.push_back(fire);
+
+    ParticlePreset smoke;
+    smoke.name         = "Smoke";
+    smoke.direction    = Vec3(0, 1, 0);
+    smoke.spread       = 20.0f;
+    smoke.min_speed    = 0.5f;
+    smoke.max_speed    = 1.5f;
+    smoke.min_lifetime = 2.0f;
+    smoke.max_lifetime = 4.0f;
+    smoke.start_color  = Vec4(0.4f, 0.4f, 0.4f, 0.6f);
+    smoke.end_color    = Vec4(0.2f, 0.2f, 0.2f, 0.0f);
+    smoke.start_size   = 0.15f;
+    smoke.end_size     = 0.45f;
+    smoke.gravity      = 0.2f;
+    smoke.emission_rate = 60.0f;
+    smoke.additive     = false;
+    out.push_back(smoke);
+
+    ParticlePreset sparks;
+    sparks.name         = "Sparks";
+    sparks.direction    = Vec3(0, 1, 0);
+    sparks.spread       = 90.0f;
+    sparks.min_speed    = 4.0f;
+    sparks.max_speed    = 9.0f;
+    sparks.min_lifetime = 0.4f;
+    sparks.max_lifetime = 0.9f;
+    sparks.start_color  = Vec4(1.0f, 0.95f, 0.4f, 1.0f);
+    sparks.end_color    = Vec4(1.0f, 0.4f, 0.0f, 0.0f);
+    sparks.start_size   = 0.04f;
+    sparks.end_size     = 0.0f;
+    sparks.gravity      = -9.81f;
+    sparks.emission_rate = 800.0f;
+    sparks.additive     = true;
+    out.push_back(sparks);
+
+    ParticlePreset magic;
+    magic.name         = "Magic";
+    magic.direction    = Vec3(0, 1, 0);
+    magic.spread       = 360.0f;
+    magic.min_speed    = 0.2f;
+    magic.max_speed    = 1.0f;
+    magic.min_lifetime = 1.0f;
+    magic.max_lifetime = 2.0f;
+    magic.start_color  = Vec4(0.5f, 0.7f, 1.0f, 1.0f);
+    magic.end_color    = Vec4(0.8f, 0.5f, 1.0f, 0.0f);
+    magic.start_size   = 0.05f;
+    magic.end_size     = 0.10f;
+    magic.gravity      = 0.0f;
+    magic.emission_rate = 150.0f;
+    magic.additive     = true;
+    out.push_back(magic);
+
+    return out;
+}
+
+// ── JSON persistence ────────────────────────────────────────────────────────
+//
+// Schema:
+//   {
+//     "current": <preset-object>,
+//     "presets": [<preset-object>, ...]
+//   }
+//
+// Atomic load: parse fully into temporaries before mutating member state
+// so a corrupt file can't half-clobber the user's working catalogue.
+
+namespace {
+
+nlohmann::json preset_to_json(const ParticlePreset& p) {
+    return nlohmann::json{
+        {"name",          p.name},
+        {"direction",     {p.direction.x, p.direction.y, p.direction.z}},
+        {"spread",        p.spread},
+        {"min_speed",     p.min_speed},
+        {"max_speed",     p.max_speed},
+        {"min_lifetime",  p.min_lifetime},
+        {"max_lifetime",  p.max_lifetime},
+        {"start_color",   {p.start_color.x, p.start_color.y,
+                            p.start_color.z, p.start_color.w}},
+        {"end_color",     {p.end_color.x, p.end_color.y,
+                            p.end_color.z, p.end_color.w}},
+        {"start_size",    p.start_size},
+        {"end_size",      p.end_size},
+        {"gravity",       p.gravity},
+        {"emission_rate", p.emission_rate},
+        {"additive",      p.additive},
+    };
+}
+
+ParticlePreset preset_from_json(const nlohmann::json& j) {
+    ParticlePreset p;
+    p.name = j.value("name", std::string{});
+    if (j.contains("direction") && j["direction"].is_array() &&
+        j["direction"].size() == 3) {
+        p.direction = Vec3(j["direction"][0].get<float>(),
+                            j["direction"][1].get<float>(),
+                            j["direction"][2].get<float>());
+    }
+    p.spread        = j.value("spread", 0.0f);
+    p.min_speed     = j.value("min_speed", 0.0f);
+    p.max_speed     = j.value("max_speed", 0.0f);
+    p.min_lifetime  = j.value("min_lifetime", 0.0f);
+    p.max_lifetime  = j.value("max_lifetime", 0.0f);
+    auto take_color = [&](const char* key, Vec4& dst) {
+        if (j.contains(key) && j[key].is_array() && j[key].size() == 4) {
+            dst = Vec4(j[key][0].get<float>(), j[key][1].get<float>(),
+                        j[key][2].get<float>(), j[key][3].get<float>());
+        }
+    };
+    take_color("start_color", p.start_color);
+    take_color("end_color",   p.end_color);
+    p.start_size    = j.value("start_size",    0.0f);
+    p.end_size      = j.value("end_size",      0.0f);
+    p.gravity       = j.value("gravity",       0.0f);
+    p.emission_rate = j.value("emission_rate", 0.0f);
+    p.additive      = j.value("additive",      false);
+    return p;
+}
+
+}  // namespace
+
+std::string ParticleEditorPanel::save_to_json() const {
+    nlohmann::json j;
+    j["current"]  = preset_to_json(current_);
+    auto arr = nlohmann::json::array();
+    for (const auto& p : presets_) arr.push_back(preset_to_json(p));
+    j["presets"] = std::move(arr);
+    return j.dump(2);
+}
+
+bool ParticleEditorPanel::load_from_json(const std::string& json) {
+    if (json.empty()) return false;
+    try {
+        auto j = nlohmann::json::parse(json);
+        ParticlePreset cur;
+        std::vector<ParticlePreset> presets;
+        if (j.contains("current") && j["current"].is_object()) {
+            cur = preset_from_json(j["current"]);
+            sanitize(cur);
+        }
+        if (j.contains("presets") && j["presets"].is_array()) {
+            for (const auto& jp : j["presets"]) {
+                if (!jp.is_object()) continue;
+                ParticlePreset p = preset_from_json(jp);
+                sanitize(p);
+                presets.push_back(std::move(p));
+            }
+        }
+        // Atomic apply.
+        current_ = std::move(cur);
+        presets_ = std::move(presets);
+        selected_preset_ = -1;
+        return true;
+    } catch (const std::exception& e) {
+        NX_ERROR("ParticleEditorPanel: JSON parse failed: {}", e.what());
+        return false;
+    }
+}
+
+bool ParticleEditorPanel::save_to_file(const std::string& path) const {
+    if (path.empty()) return false;
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::create_directories(fs::path(path).parent_path(), ec);
+    std::ofstream out(path);
+    if (!out) {
+        NX_ERROR("ParticleEditorPanel: failed to open '{}' for writing", path);
+        return false;
+    }
+    out << save_to_json();
+    if (!out) {
+        NX_ERROR("ParticleEditorPanel: write failed for '{}'", path);
+        return false;
+    }
+    return true;
+}
+
+bool ParticleEditorPanel::load_from_file(const std::string& path) {
+    if (path.empty()) return false;
+    std::ifstream in(path);
+    if (!in) {
+        NX_WARN("ParticleEditorPanel: failed to open '{}'", path);
+        return false;
+    }
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return load_from_json(ss.str());
 }
 
 // ============================================================================

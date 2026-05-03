@@ -21,6 +21,8 @@
 #include "nexus/editor/editor_state.h"
 #include "nexus/editor/editor_panels.h"
 #include "nexus/editor/editor_tools.h"
+#include "nexus/scripting/script_engine.h"
+#include "nexus/scripting/lua_backend.h"
 #include "nexus/editor/asset_thumbnail_cache.h"
 #include "nexus/editor/component_registry.h"
 #include "nexus/editor/asset_drop_importer.h"
@@ -368,6 +370,11 @@ static void register_default_panels(EditorState& state) {
         particle_panel->seed_builtin_presets();
         panels.add_panel(std::move(particle_panel));
     }
+    {
+        auto lua_panel = std::make_unique<LuaConsolePanel>();
+        lua_panel->set_visible(false);
+        panels.add_panel(std::move(lua_panel));
+    }
 
     // Set up default dock layout.
     auto& dock = panels.dock_space();
@@ -381,6 +388,7 @@ static void register_default_panels(EditorState& state) {
     dock.dock("Profiler",        DockPosition::Bottom, 0.30f);
     dock.dock("Animation",       DockPosition::Bottom, 0.30f);
     dock.dock("Particle Editor", DockPosition::Right,  0.30f);
+    dock.dock("Lua Console",     DockPosition::Bottom, 0.30f);
 }
 
 static int run(int /*argc*/, char* /*argv*/[]) {
@@ -628,6 +636,14 @@ static int run(int /*argc*/, char* /*argv*/[]) {
         // ticks every ParticleEmitterComponent on Play-mode advance.
         nexus::anim::ParticleEmitterSystem particle_system;
 
+        // Lua scripting backend — a single ScriptEngine + LuaBackend
+        // pair shared across the editor (Lua Console panel, future
+        // ScriptComponent on_create, etc.).  initialize() is cheap;
+        // shutdown happens automatically when the engine destructs.
+        nexus::scripting::ScriptEngine script_engine;
+        nexus::scripting::LuaBackend& lua_backend = script_engine.lua_backend();
+        lua_backend.initialize();
+
         EditorState editor_state;
         register_default_panels(editor_state);
         editor_state.set_status("Ready");
@@ -759,6 +775,24 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                     editor_state.set_status(
                         std::string("Applied particle preset: ") + p.name);
                     return true;
+                });
+        }
+
+        // Lua Console runner — feeds the panel's Run button straight
+        // into LuaBackend::execute and surfaces last_error on failure.
+        // Idempotent: a no-arg Run on an empty buffer is a graceful
+        // no-op that still records "OK" in the history so the user
+        // can confirm the wiring is live.
+        if (auto* lua_panel = editor_state.panels()
+                .find_typed<LuaConsolePanel>("Lua Console")) {
+            lua_panel->set_runner(
+                [&lua_backend](const std::string& src)
+                    -> nexus::editor::LuaConsolePanel::RunResult {
+                    nexus::editor::LuaConsolePanel::RunResult r;
+                    const bool ok = lua_backend.execute(src);
+                    r.ok = ok;
+                    if (!ok) r.error = lua_backend.last_error();
+                    return r;
                 });
         }
 

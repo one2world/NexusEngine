@@ -4248,4 +4248,100 @@ void AnimationPanel::on_render() {
     ImGui::End();
 }
 
+// ── LuaConsolePanel ─────────────────────────────────────────────────────────
+
+void LuaConsolePanel::set_source(std::string s) {
+    if (s.size() > kBufferCap) s.resize(kBufferCap);
+    source_ = std::move(s);
+}
+
+LuaConsolePanel::RunResult
+LuaConsolePanel::run_source(const std::string& src) {
+    RunResult result;
+    if (!runner_) {
+        result.ok    = false;
+        result.error = "No Lua runner bound to LuaConsolePanel.";
+    } else {
+        result = runner_(src);
+    }
+    HistoryLine line;
+    line.ok = result.ok;
+    if (result.ok) {
+        line.text = result.output.empty()
+            ? std::string("OK")
+            : (std::string("OK: ") + result.output);
+    } else {
+        line.text = std::string("ERROR: ") + result.error;
+    }
+    history_.push_back(std::move(line));
+    if (history_.size() > kHistoryCap) {
+        // Drop oldest until back inside cap — append-cap with O(1)
+        // amortised since erase-front is rare (only fires when the
+        // user has logged hundreds of runs without clearing).
+        const auto excess = history_.size() - kHistoryCap;
+        history_.erase(
+            history_.begin(),
+            history_.begin() +
+                static_cast<std::ptrdiff_t>(excess));
+    }
+    return result;
+}
+
+void LuaConsolePanel::on_render() {
+    if (!visible_) return;
+    if (!ImGui::Begin(title_.c_str(), &visible_)) {
+        ImGui::End();
+        return;
+    }
+
+    if (!runner_) {
+        ImGui::TextDisabled("No Lua runner bound — editor host wiring "
+                             "missing.");
+    }
+
+    // Source editor — single big multiline input.  ImGui's InputTextMultiline
+    // wants a writable char buffer; mirror our std::string into a fixed
+    // buffer for the duration of the call, then sync back.
+    std::vector<char> buf(source_.size() + kBufferCap + 1u, '\0');
+    std::memcpy(buf.data(), source_.data(), source_.size());
+    if (ImGui::InputTextMultiline("##LuaSource", buf.data(), buf.size(),
+                                    ImVec2(-1.0f, 200.0f),
+                                    ImGuiInputTextFlags_AllowTabInput)) {
+        source_.assign(buf.data());
+    }
+
+    // Toolbar.
+    if (ImGui::Button("Run##Lua")) {
+        run_now();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Clear##LuaSrc")) {
+        source_.clear();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Clear History##Lua")) {
+        clear_history();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%zu line%s)",
+                          history_.size(),
+                          history_.size() == 1 ? "" : "s");
+
+    ImGui::Separator();
+
+    // History — newest-first, colour-coded.  Reuses ConsolePanel's
+    // visual idiom without sharing code (the surfaces have different
+    // payloads — Lua results vs. log messages).
+    ImGui::BeginChild("##LuaHistory", ImVec2(0, 0), true);
+    for (auto it = history_.rbegin(); it != history_.rend(); ++it) {
+        const ImVec4 col = it->ok
+            ? ImVec4(0.55f, 0.85f, 0.55f, 1.0f)
+            : ImVec4(1.00f, 0.45f, 0.45f, 1.0f);
+        ImGui::TextColored(col, "%s", it->text.c_str());
+    }
+    ImGui::EndChild();
+
+    ImGui::End();
+}
+
 } // namespace nexus::editor

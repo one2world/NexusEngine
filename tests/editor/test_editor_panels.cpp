@@ -1006,6 +1006,101 @@ TEST(AnimationPanel, ActiveBoneClampsAndDefaults) {
     EXPECT_EQ(p.active_bone(), 0);  // clamps to 0
 }
 
+
+// =============================================================================
+// LuaConsolePanel (M22) — runner binding + history accounting
+// =============================================================================
+
+TEST(LuaConsolePanel, DefaultStateIsEmpty) {
+    LuaConsolePanel p;
+    EXPECT_FALSE(p.has_runner());
+    EXPECT_TRUE(p.source().empty());
+    EXPECT_TRUE(p.history().empty());
+    EXPECT_STREQ(p.type_id(), "LuaConsolePanel");
+}
+
+TEST(LuaConsolePanel, RunWithoutRunnerProducesSyntheticError) {
+    LuaConsolePanel p;
+    auto r = p.run_source("anything");
+    EXPECT_FALSE(r.ok);
+    EXPECT_FALSE(r.error.empty());
+    ASSERT_EQ(p.history().size(), 1u);
+    EXPECT_FALSE(p.history().front().ok);
+}
+
+TEST(LuaConsolePanel, RunDispatchesToRunnerAndAppendsHistory) {
+    LuaConsolePanel p;
+    int call_count = 0;
+    std::string captured;
+    p.set_runner([&](const std::string& src) {
+        ++call_count;
+        captured = src;
+        LuaConsolePanel::RunResult r;
+        r.ok = true;
+        r.output = "42";
+        return r;
+    });
+    EXPECT_TRUE(p.has_runner());
+
+    p.set_source("return 42");
+    auto r = p.run_now();
+    EXPECT_TRUE(r.ok);
+    EXPECT_EQ(call_count, 1);
+    EXPECT_EQ(captured, "return 42");
+    ASSERT_EQ(p.history().size(), 1u);
+    EXPECT_TRUE(p.history().front().ok);
+    EXPECT_NE(p.history().front().text.find("OK"), std::string::npos);
+    EXPECT_NE(p.history().front().text.find("42"), std::string::npos);
+}
+
+TEST(LuaConsolePanel, RunnerFailureIsLoggedRed) {
+    LuaConsolePanel p;
+    p.set_runner([](const std::string&) {
+        LuaConsolePanel::RunResult r;
+        r.ok    = false;
+        r.error = "syntax error: line 3";
+        return r;
+    });
+    auto r = p.run_source("foo bar");
+    EXPECT_FALSE(r.ok);
+    ASSERT_EQ(p.history().size(), 1u);
+    EXPECT_FALSE(p.history().front().ok);
+    EXPECT_NE(p.history().front().text.find("ERROR"), std::string::npos);
+    EXPECT_NE(p.history().front().text.find("syntax error"),
+              std::string::npos);
+}
+
+TEST(LuaConsolePanel, HistoryCappedAtMaxSize) {
+    LuaConsolePanel p;
+    p.set_runner([](const std::string&) {
+        LuaConsolePanel::RunResult r; r.ok = true; return r;
+    });
+    // Run kHistoryCap+10 times; the panel should drop the oldest 10.
+    for (u32 i = 0; i < LuaConsolePanel::kHistoryCap + 10u; ++i) {
+        p.run_source("noop");
+    }
+    EXPECT_EQ(p.history().size(), LuaConsolePanel::kHistoryCap);
+}
+
+TEST(LuaConsolePanel, ClearHistoryWipesEverything) {
+    LuaConsolePanel p;
+    p.set_runner([](const std::string&) {
+        LuaConsolePanel::RunResult r; r.ok = true; return r;
+    });
+    p.run_source("foo");
+    p.run_source("bar");
+    EXPECT_EQ(p.history().size(), 2u);
+    p.clear_history();
+    EXPECT_TRUE(p.history().empty());
+}
+
+TEST(LuaConsolePanel, SetSourceTruncatesAtBufferCap) {
+    LuaConsolePanel p;
+    std::string oversized(LuaConsolePanel::kBufferCap * 2, 'a');
+    p.set_source(oversized);
+    EXPECT_EQ(p.source().size(), LuaConsolePanel::kBufferCap);
+}
+
 TEST(AnimationPanel, KeySelectionRoundTripsAndClearable) {
     AnimationPanel p;
     EXPECT_EQ(p.selected_key_kind(), AnimationPanel::KeyKind::None);

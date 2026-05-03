@@ -1008,4 +1008,65 @@ private:
     i32     selected_idx_{-1};
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// LuaConsolePanel — in-editor Lua scripting workspace (M22)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// A simple-but-real REPL inside the editor: the user types Lua source into
+// a multi-line buffer, hits Run, and the panel feeds the buffer to the
+// engine's LuaBackend.  Output (success message, error text, optional
+// returned value) is appended to a capped history so users can iterate
+// without re-typing.
+//
+// Decoupled from LuaBackend through a `Runner` callback so the panel
+// stays testable without spinning up the scripting engine.  Production
+// wiring (editor_main) hands a runner that calls
+// LuaBackend::execute + last_error.
+class LuaConsolePanel : public Panel {
+public:
+    LuaConsolePanel() : Panel("Lua Console") {}
+    void on_render() override;
+    const char* type_id() const override { return "LuaConsolePanel"; }
+
+    /// Outcome of a single Run press.  Tests + the panel both consume
+    /// this: success → green message, error → red plus error text.
+    struct RunResult {
+        bool        ok{true};
+        std::string error;       // empty on success
+        std::string output;      // optional explicit log line
+    };
+    using Runner = std::function<RunResult(const std::string& script)>;
+
+    void set_runner(Runner r) { runner_ = std::move(r); }
+    bool has_runner() const { return static_cast<bool>(runner_); }
+
+    /// Buffer contents.  Bounded by a sane cap so a runaway paste can't
+    /// blow up the panel.
+    static constexpr u32 kBufferCap = 64u * 1024u;
+    const std::string& source() const { return source_; }
+    void set_source(std::string s);
+
+    /// History — append-only ring of {timestamp_text, message, ok}.  Cap
+    /// below means the oldest lines drop off when full.
+    static constexpr u32 kHistoryCap = 256u;
+    struct HistoryLine {
+        std::string text;
+        bool        ok{true};
+    };
+    const std::vector<HistoryLine>& history() const { return history_; }
+    void clear_history() { history_.clear(); }
+
+    /// Run the current buffer (or the override) through the bound
+    /// runner and append the outcome to history.  Returns the result.
+    /// When `runner_` is unbound, returns a synthetic error so callers
+    /// can surface the missing wire-up.  Pure entry point for tests.
+    RunResult run_now() { return run_source(source_); }
+    RunResult run_source(const std::string& src);
+
+private:
+    Runner runner_;
+    std::string source_;
+    std::vector<HistoryLine> history_;
+};
+
 } // namespace nexus::editor

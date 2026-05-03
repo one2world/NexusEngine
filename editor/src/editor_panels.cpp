@@ -2472,6 +2472,91 @@ void InspectorPanel::on_render() {
         }
     }
 
+    // ── ParticleEmitterComponent ──────────────────────────────────────────
+    //
+    // Authored emission knobs grouped Unity-style (Emission / Particle /
+    // Color / Limits) with a small read-only "Status" line for the live
+    // alive_count populated by ParticleEmitterSystem.  Direct ImGui
+    // widgets — no undo broadcast since the component is a single
+    // emitter instance per entity (per-field undo would need 14
+    // independent slots, deferred until a unified undo helper lands).
+    if (registry.has_component<ParticleEmitterComponent>(target)) {
+        if (component_header<ParticleEmitterComponent>(
+                registry, target, "Particle Emitter")) {
+            auto& pe = registry.get_component<ParticleEmitterComponent>(target);
+
+            ImGui::TextDisabled("Emission");
+            ImGui::Indent(8.0f);
+            ImGui::DragFloat("Rate (per s)##pe_rate",
+                             &pe.emit_rate, 1.0f, 0.0f, 100000.0f);
+            ImGui::Checkbox("Emitting##pe_emitting", &pe.emitting);
+            ImGui::SameLine();
+            ImGui::Checkbox("Play On Start##pe_pos", &pe.play_on_start);
+            ImGui::Unindent(8.0f);
+
+            ImGui::TextDisabled("Particle");
+            ImGui::Indent(8.0f);
+            f32 speed[2] = {pe.speed_min, pe.speed_max};
+            if (ImGui::DragFloat2("Speed (min, max)##pe_speed",
+                                  speed, 0.05f, 0.0f, 10000.0f)) {
+                pe.speed_min = speed[0];
+                pe.speed_max = speed[1];
+            }
+            f32 life[2] = {pe.lifetime_min, pe.lifetime_max};
+            if (ImGui::DragFloat2("Lifetime (min, max)##pe_life",
+                                  life, 0.05f, 0.0f, 600.0f)) {
+                pe.lifetime_min = life[0];
+                pe.lifetime_max = life[1];
+            }
+            f32 size[2] = {pe.size_start, pe.size_end};
+            if (ImGui::DragFloat2("Size (start, end)##pe_size",
+                                  size, 0.01f, 0.0f, 1000.0f)) {
+                pe.size_start = size[0];
+                pe.size_end   = size[1];
+            }
+            ImGui::DragFloat("Gravity##pe_grav",
+                             &pe.gravity, 0.1f, -1000.0f, 1000.0f);
+            ImGui::Unindent(8.0f);
+
+            ImGui::TextDisabled("Color");
+            ImGui::Indent(8.0f);
+            f32 c0[4] = {pe.color_start.x, pe.color_start.y,
+                          pe.color_start.z, pe.color_start.w};
+            if (ImGui::ColorEdit4("Start##pe_cs", c0,
+                                   ImGuiColorEditFlags_AlphaPreviewHalf)) {
+                pe.color_start = Vec4(c0[0], c0[1], c0[2], c0[3]);
+            }
+            f32 c1[4] = {pe.color_end.x, pe.color_end.y,
+                          pe.color_end.z, pe.color_end.w};
+            if (ImGui::ColorEdit4("End##pe_ce", c1,
+                                   ImGuiColorEditFlags_AlphaPreviewHalf)) {
+                pe.color_end = Vec4(c1[0], c1[1], c1[2], c1[3]);
+            }
+            ImGui::Unindent(8.0f);
+
+            ImGui::TextDisabled("Limits");
+            ImGui::Indent(8.0f);
+            int max_i = static_cast<int>(pe.max_particles);
+            if (ImGui::InputInt("Max Particles##pe_max", &max_i)) {
+                pe.max_particles =
+                    static_cast<u32>(std::max(0, max_i));
+            }
+            ImGui::Unindent(8.0f);
+
+            ImGui::Separator();
+            ImGui::Text("Alive: %u / %u", pe.alive_count, pe.max_particles);
+            // Reset button — clears accumulator + alive count.  Doesn't
+            // touch the system's particle storage; that wipes on next
+            // tick when emit_accumulator < 1 and existing particles age
+            // out, OR via a future "Stop and Clear" hook.
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset##pe_reset")) {
+                pe.emit_accumulator = 0.0f;
+                pe.alive_count      = 0;
+            }
+        }
+    }
+
     // ── ScriptComponent ───────────────────────────────────────────────────
     //
     // Holds the Lua script name + enabled flag.  on_create / on_update /

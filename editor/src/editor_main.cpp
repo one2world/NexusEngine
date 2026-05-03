@@ -31,6 +31,7 @@
 #include "nexus/editor/build_scenes.h"
 #include "nexus/editor/script_serializer_ext.h"
 #include "nexus/animation/animator_system.h"
+#include "nexus/animation/particle_emitter_system.h"
 #include "nexus/perf/profiler.h"
 #include "nexus/assets/asset_registry.h"
 
@@ -612,6 +613,10 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                 return animation_cache.get_by_id(id);
             });
 
+        // Particle emitter system — owns per-entity Particle storage and
+        // ticks every ParticleEmitterComponent on Play-mode advance.
+        nexus::anim::ParticleEmitterSystem particle_system;
+
         EditorState editor_state;
         register_default_panels(editor_state);
         editor_state.set_status("Ready");
@@ -947,12 +952,16 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                 // Animator system runs BEFORE scene.update so transforms it
                 // writes are visible to physics / rendering this same frame.
                 animator_system.tick(scene.registry(), dt);
+                // Particle emitter system after animator so emitters
+                // tracking moving rigs sample the up-to-date positions.
+                particle_system.tick(scene.registry(), dt);
                 scene.update(dt);
             };
             bridge.on_play = [&]() {
-                // Animators with `play_on_start` flip to `playing` when the
-                // scene enters Play mode — Unity convention.
+                // Animators + particle emitters with `play_on_start` flip
+                // to active when the scene enters Play mode.
                 nexus::anim::AnimatorSystem::start_autoplay(scene.registry());
+                nexus::anim::ParticleEmitterSystem::start_autoplay(scene.registry());
                 // Clear transient editor UI state tied to entities that may
                 // have been re-created by snapshot restore (inspector target
                 // holds an Entity id that's invalidated across restore).

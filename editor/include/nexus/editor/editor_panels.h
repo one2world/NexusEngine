@@ -20,7 +20,7 @@ class BatchRenderer2D;
 class DebugRenderer;
 struct Mesh;
 namespace rhi  { class RHI; }
-namespace anim { class AnimationClip; }
+namespace anim { class AnimationClip; class ParticleEmitterSystem; }
 }
 
 namespace nexus::editor {
@@ -128,6 +128,13 @@ public:
     void bind_renderer_2d(BatchRenderer2D* r) { renderer_2d_ = r; }
     void bind_debug_renderer(DebugRenderer* d) { debug_renderer_ = d; }
     void bind_rhi(nexus::rhi::RHI* rhi) { rhi_ = rhi; }
+    /// Bind the live ParticleEmitterSystem so the viewport can draw the
+    /// per-entity Particle records the system owns.  When unbound the
+    /// viewport simply skips the particle pass — the system continues
+    /// to tick from SceneBridge.simulate either way.
+    void bind_particle_system(::nexus::anim::ParticleEmitterSystem* p) {
+        particle_system_ = p;
+    }
 
     /// Register a CPU-side mesh under a numeric id so MeshRendererComponent
     /// records can resolve it during the viewport's render pass.  Ownership of
@@ -332,6 +339,7 @@ private:
     ForwardRenderer3D* renderer_3d_{nullptr};
     BatchRenderer2D* renderer_2d_{nullptr};
     DebugRenderer* debug_renderer_{nullptr};
+    ::nexus::anim::ParticleEmitterSystem* particle_system_{nullptr};
     nexus::rhi::RHI* rhi_{nullptr};
     std::unordered_map<u32, Mesh*> mesh_registry_;
 

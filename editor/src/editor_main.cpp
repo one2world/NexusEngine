@@ -644,6 +644,7 @@ static int run(int /*argc*/, char* /*argv*/[]) {
             vp->register_mesh(kPrimitiveCubeMeshId,   &primitive_cube);
             vp->register_mesh(kPrimitivePlaneMeshId,  &primitive_plane);
             vp->register_mesh(kPrimitiveSphereMeshId, &primitive_sphere);
+            vp->bind_particle_system(&particle_system);
             drop_importer.add_viewport(vp);
         }
 

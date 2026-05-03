@@ -4,6 +4,7 @@
 #include "nexus/editor/undo_redo.h"
 #include "nexus/editor/component_registry.h"
 #include "nexus/animation/animation_clip.h"
+#include "nexus/animation/particle_emitter_system.h"
 #include "nexus/scripting/script_component.h"
 #include "nexus/scene/scene.h"
 #include "nexus/scene/components.h"
@@ -270,10 +271,48 @@ void ViewportPanel::render_scene_to_fbo() {
                 stats.vertices  += 4u;  // quad
                 stats.triangles += 2u;
             });
+        // ── Particle emitter pass (M26) ──────────────────────────────
+        //
+        // Iterate every entity that has a ParticleEmitterComponent and
+        // ask the bound ParticleEmitterSystem for the per-entity
+        // Particle list it's been simulating.  Each particle becomes a
+        // 2D quad through the same BatchRenderer2D so existing batching
+        // / pipeline state applies.  Emitters with no particles (idle,
+        // pre-Play, or with `emitting=false`) are skipped without cost.
+        u32 particle_quads = 0;
+        if (particle_system_) {
+            registry.each<ParticleEmitterComponent>(
+                [&](u32 entity_id, ParticleEmitterComponent& /*em*/) {
+                    const auto* parts =
+                        particle_system_->particles_for(entity_id);
+                    if (!parts || parts->empty()) return;
+                    for (const auto& p : *parts) {
+                        // Project the world-space particle position onto
+                        // the XY plane for the 2D renderer.  Particles
+                        // authored in 3D still draw — they just lose Z
+                        // until a 3D billboard renderer lands.
+                        renderer_2d_->draw_quad(
+                            {p.position.x, p.position.y},
+                            {p.size, p.size},
+                            0.0f,
+                            p.color);
+                        ++particle_quads;
+                    }
+                });
+        }
         renderer_2d_->end();
         // BatchRenderer2D batches into a single draw call but rebinds its
         // sprite pipeline at begin/end — count as 1 set-pass.
-        if (stats.sprite_draw_calls > 0) ++stats.set_pass_calls;
+        if (stats.sprite_draw_calls > 0 || particle_quads > 0) {
+            ++stats.set_pass_calls;
+        }
+        // Surface particle count in the same draw_calls / vertices /
+        // triangles totals so the Stats overlay reflects the real GPU
+        // load.  4 verts / 2 tris per particle quad.
+        stats.sprite_draw_calls += particle_quads;
+        stats.draw_calls        += particle_quads;
+        stats.vertices          += particle_quads * 4u;
+        stats.triangles         += particle_quads * 2u;
     }
 
     // SceneView overlays — grid, world axes, selected entity outline.

@@ -354,7 +354,46 @@ void ParticleEditorPanel::on_render() {
     ui::same_line();
     ui::text("Alive: %u", alive_count_);
 
+    // ── Apply to Selected Entity (M25) ───────────────────────────────────
+    //
+    // When the host wires an apply callback (typically pointing at the
+    // editor selection + scene registry), this button materialises the
+    // current preset as a ParticleEmitterComponent on the selected
+    // entity.  Hidden when the host hasn't bound a callback so users
+    // never get silent no-ops.
+    if (on_apply_to_entity_) {
+        ui::separator();
+        if (ui::button("Apply to Selected Entity")) {
+            on_apply_to_entity_(current_);
+        }
+    }
+
     ui::end_window();
+}
+
+ParticleEmitterComponent
+ParticleEditorPanel::preset_to_component(const ParticlePreset& p) {
+    // Field-by-field map.  Direction / spread / additive don't have a
+    // 1:1 mapping in the runtime component yet (it drives a fixed +Y
+    // cone with stochastic X/Z jitter); reserved for a future emitter-
+    // shape pass.  start/end size and color names also differ slightly
+    // ("size_start" vs "start_size") — translate them at this seam so
+    // both layers can stay idiomatic in their own naming convention.
+    ParticleEmitterComponent c;
+    c.emit_rate     = p.emission_rate;
+    c.speed_min     = p.min_speed;
+    c.speed_max     = p.max_speed;
+    c.lifetime_min  = p.min_lifetime;
+    c.lifetime_max  = p.max_lifetime;
+    c.color_start   = p.start_color;
+    c.color_end     = p.end_color;
+    c.size_start    = p.start_size;
+    c.size_end      = p.end_size;
+    c.gravity       = p.gravity;
+    // Defaults from the component for fields the preset doesn't carry
+    // (max_particles, emitting, play_on_start) — leave them at the
+    // POD's authored defaults rather than overwrite with zeros.
+    return c;
 }
 
 void ParticleEditorPanel::load_preset(u32 index) {

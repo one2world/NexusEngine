@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "nexus/editor/editor_tools.h"
+#include "nexus/scene/components.h"
 
 #include <filesystem>
 #include <fstream>
@@ -211,6 +212,72 @@ TEST(ParticleEditorPanel, LoadMissingFileFails) {
 TEST(ParticleEditorPanel, SaveRefusesEmptyPath) {
     ParticleEditorPanel pep;
     EXPECT_FALSE(pep.save_to_file(""));
+}
+
+// ── preset_to_component (M25) ──────────────────────────────────────────────
+
+TEST(ParticleEditorPanel, PresetToComponentMapsAuthoredFields) {
+    ParticlePreset p;
+    p.name           = "Test";
+    p.emission_rate  = 250.0f;
+    p.min_speed      = 1.5f;
+    p.max_speed      = 6.0f;
+    p.min_lifetime   = 0.4f;
+    p.max_lifetime   = 1.1f;
+    p.start_color    = Vec4(1.0f, 0.5f, 0.0f, 1.0f);
+    p.end_color      = Vec4(0.0f, 0.0f, 0.0f, 0.0f);
+    p.start_size     = 0.07f;
+    p.end_size       = 0.01f;
+    p.gravity        = -3.5f;
+
+    const auto c = ParticleEditorPanel::preset_to_component(p);
+    EXPECT_FLOAT_EQ(c.emit_rate,    250.0f);
+    EXPECT_FLOAT_EQ(c.speed_min,     1.5f);
+    EXPECT_FLOAT_EQ(c.speed_max,     6.0f);
+    EXPECT_FLOAT_EQ(c.lifetime_min,  0.4f);
+    EXPECT_FLOAT_EQ(c.lifetime_max,  1.1f);
+    EXPECT_FLOAT_EQ(c.color_start.x, 1.0f);
+    EXPECT_FLOAT_EQ(c.color_start.y, 0.5f);
+    EXPECT_FLOAT_EQ(c.color_end.w,   0.0f);
+    EXPECT_FLOAT_EQ(c.size_start,    0.07f);
+    EXPECT_FLOAT_EQ(c.size_end,      0.01f);
+    EXPECT_FLOAT_EQ(c.gravity,      -3.5f);
+}
+
+TEST(ParticleEditorPanel, PresetToComponentLeavesUnauthoredAtDefaults) {
+    ParticlePreset p;
+    // preset_to_component must leave max_particles, emitting,
+    // play_on_start at the component's authored defaults so applying
+    // a preset doesn't accidentally disable an emitter or set max=0.
+    const auto c = ParticleEditorPanel::preset_to_component(p);
+    ParticleEmitterComponent fresh;
+    EXPECT_EQ(c.max_particles,  fresh.max_particles);
+    EXPECT_EQ(c.emitting,       fresh.emitting);
+    EXPECT_EQ(c.play_on_start,  fresh.play_on_start);
+}
+
+TEST(ParticleEditorPanel, BuiltinPresetsRoundTripThroughComponentMapping) {
+    for (const auto& p : ParticleEditorPanel::builtin_presets()) {
+        const auto c = ParticleEditorPanel::preset_to_component(p);
+        EXPECT_FLOAT_EQ(c.emit_rate,     p.emission_rate);
+        EXPECT_FLOAT_EQ(c.speed_min,     p.min_speed);
+        EXPECT_FLOAT_EQ(c.speed_max,     p.max_speed);
+        EXPECT_FLOAT_EQ(c.lifetime_min,  p.min_lifetime);
+        EXPECT_FLOAT_EQ(c.lifetime_max,  p.max_lifetime);
+        EXPECT_FLOAT_EQ(c.size_start,    p.start_size);
+        EXPECT_FLOAT_EQ(c.size_end,      p.end_size);
+        EXPECT_FLOAT_EQ(c.gravity,       p.gravity);
+    }
+}
+
+TEST(ParticleEditorPanel, ApplyCallbackBindIsRoundTrippable) {
+    ParticleEditorPanel pep;
+    EXPECT_FALSE(pep.has_apply_to_entity_callback());
+    pep.set_apply_to_entity_callback(
+        [](const ParticlePreset&) { return true; });
+    EXPECT_TRUE(pep.has_apply_to_entity_callback());
+    pep.set_apply_to_entity_callback({});
+    EXPECT_FALSE(pep.has_apply_to_entity_callback());
 }
 
 // ── ClearPresets ───────────────────────────────────────────────────────────

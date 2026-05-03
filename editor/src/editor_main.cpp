@@ -20,6 +20,7 @@
 #include "nexus/audio/audio_device.h"
 #include "nexus/editor/editor_state.h"
 #include "nexus/editor/editor_panels.h"
+#include "nexus/editor/editor_tools.h"
 #include "nexus/editor/asset_thumbnail_cache.h"
 #include "nexus/editor/component_registry.h"
 #include "nexus/editor/asset_drop_importer.h"
@@ -358,18 +359,28 @@ static void register_default_panels(EditorState& state) {
         anim_panel->set_visible(false);
         panels.add_panel(std::move(anim_panel));
     }
+    {
+        auto particle_panel = std::make_unique<ParticleEditorPanel>();
+        particle_panel->set_visible(false);
+        // Pre-seed the four canonical built-ins so first-launch users
+        // see Fire / Smoke / Sparks / Magic without needing a saved
+        // preset file.
+        particle_panel->seed_builtin_presets();
+        panels.add_panel(std::move(particle_panel));
+    }
 
     // Set up default dock layout.
     auto& dock = panels.dock_space();
-    dock.dock("Scene",         DockPosition::Center);
-    dock.dock("Game",          DockPosition::Center);
-    dock.dock("Hierarchy",     DockPosition::Left,   0.20f);
-    dock.dock("Inspector",     DockPosition::Right,  0.25f);
-    dock.dock("Console",       DockPosition::Bottom, 0.25f);
-    dock.dock("Asset Browser", DockPosition::Bottom, 0.25f);
-    dock.dock("Undo History",  DockPosition::Right,  0.25f);
-    dock.dock("Profiler",      DockPosition::Bottom, 0.30f);
-    dock.dock("Animation",     DockPosition::Bottom, 0.30f);
+    dock.dock("Scene",           DockPosition::Center);
+    dock.dock("Game",            DockPosition::Center);
+    dock.dock("Hierarchy",       DockPosition::Left,   0.20f);
+    dock.dock("Inspector",       DockPosition::Right,  0.25f);
+    dock.dock("Console",         DockPosition::Bottom, 0.25f);
+    dock.dock("Asset Browser",   DockPosition::Bottom, 0.25f);
+    dock.dock("Undo History",    DockPosition::Right,  0.25f);
+    dock.dock("Profiler",        DockPosition::Bottom, 0.30f);
+    dock.dock("Animation",       DockPosition::Bottom, 0.30f);
+    dock.dock("Particle Editor", DockPosition::Right,  0.30f);
 }
 
 static int run(int /*argc*/, char* /*argv*/[]) {
@@ -705,6 +716,49 @@ static int run(int /*argc*/, char* /*argv*/[]) {
             anim_panel->set_mutable_clip_resolver(
                 [&animation_cache](u32 id) -> nexus::anim::AnimationClip* {
                     return animation_cache.get_by_id_mutable(id);
+                });
+        }
+
+        // Wire the ParticleEditor's "Apply to Selected Entity" hook so
+        // built-in or user-saved presets can be materialised onto the
+        // currently-selected entity as a real ParticleEmitterComponent.
+        // Returning true tells the panel the apply landed; status bar
+        // surfaces the result to the user.
+        if (auto* particle_panel = editor_state.panels()
+                .find_typed<ParticleEditorPanel>("Particle Editor")) {
+            particle_panel->set_apply_to_entity_callback(
+                [&](const ParticlePreset& p) -> bool {
+                    const auto& sel = editor_state.selection();
+                    if (!sel.has_selection()) {
+                        editor_state.set_status(
+                            "Apply Particle Preset: no entity selected");
+                        return false;
+                    }
+                    Entity e = static_cast<Entity>(sel.primary());
+                    auto& reg = scene.registry();
+                    if (!reg.alive(e)) {
+                        editor_state.set_status(
+                            "Apply Particle Preset: selection is no longer alive");
+                        return false;
+                    }
+                    auto comp = ParticleEditorPanel::preset_to_component(p);
+                    if (reg.has_component<ParticleEmitterComponent>(e)) {
+                        // Keep runtime state from the existing emitter so
+                        // applying a preset on a live emitter doesn't
+                        // burst-reset alive_count.  Only the authored
+                        // fields swap; emit_accumulator + alive_count
+                        // remain.
+                        auto& existing =
+                            reg.get_component<ParticleEmitterComponent>(e);
+                        comp.emit_accumulator = existing.emit_accumulator;
+                        comp.alive_count      = existing.alive_count;
+                        existing = comp;
+                    } else {
+                        reg.add_component<ParticleEmitterComponent>(e, comp);
+                    }
+                    editor_state.set_status(
+                        std::string("Applied particle preset: ") + p.name);
+                    return true;
                 });
         }
 

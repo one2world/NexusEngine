@@ -10,6 +10,7 @@
 namespace nexus {
 class Scene;
 class Registry;
+struct ParticleEmitterComponent;
 }
 
 namespace nexus::editor {
@@ -204,12 +205,36 @@ public:
     /// saved JSON yet.
     void seed_builtin_presets() { presets_ = builtin_presets(); }
 
+    /// Pure helper that converts an editor-side ParticlePreset into the
+    /// engine-side ParticleEmitterComponent the runtime
+    /// ParticleEmitterSystem expects.  Used by both "Apply to Selected
+    /// Entity" and tests so the field mapping stays in one place.
+    /// Direction / spread / additive don't have a 1:1 mapping in the
+    /// component yet (component drives a fixed +Y cone with stochastic
+    /// X/Z jitter); they're reserved for a future emitter shape pass.
+    static ParticleEmitterComponent preset_to_component(const ParticlePreset& p);
+
+    /// Apply the panel's currently-active preset to a host-supplied
+    /// entity.  The host wires this via `set_apply_to_entity_callback`
+    /// when the user clicks "Apply to Selected Entity"; if the
+    /// callback isn't bound the button is hidden so users don't get
+    /// silent no-ops.  Returns true when the callback fires.
+    using ApplyCallback =
+        std::function<bool(const ParticlePreset& preset)>;
+    void set_apply_to_entity_callback(ApplyCallback cb) {
+        on_apply_to_entity_ = std::move(cb);
+    }
+    bool has_apply_to_entity_callback() const {
+        return static_cast<bool>(on_apply_to_entity_);
+    }
+
 private:
     ParticlePreset current_;
     std::vector<ParticlePreset> presets_;
     bool preview_active_{true};
     u32 alive_count_{0};
     i32 selected_preset_{-1};
+    ApplyCallback on_apply_to_entity_;
 };
 
 // ============================================================================

@@ -4,6 +4,8 @@
 #include <nexus/scene/binary_serializer.h>
 #include <nexus/scene/hierarchy.h>
 
+#include <nlohmann/json.hpp>
+
 namespace nexus::tests {
 
 TEST(SceneSerializer, SerializeDeserializeRoundTrip) {
@@ -464,6 +466,132 @@ TEST(SceneSerializer, PreservesAnimatorComponentBindings) {
             EXPECT_NEAR(a.time, 0.0f, 1e-5f);  // playback state resets
         });
     EXPECT_TRUE(saw);
+}
+
+// =============================================================================
+// SceneSerializer extension hook (M19) — third-party component plug-in
+// =============================================================================
+//
+// Verifies that custom (non-engine) components can round-trip through the
+// scene JSON without engine/scene knowing about them.  Uses a synthetic
+// CustomTagComponent + manual register_extension call to keep the test
+// independent of editor / scripting layers.
+
+namespace {
+struct CustomTagComponent {
+    std::string label;
+    int level{0};
+};
+}  // namespace
+
+TEST(SceneSerializerExt, RegisterAndUnregisterTracksCount) {
+    SceneSerializer::clear_extensions();
+    EXPECT_EQ(SceneSerializer::extension_count(), 0u);
+    SceneSerializer::register_extension(
+        "noop",
+        [](void*, const Registry&, Entity) {},
+        [](const void*, Registry&, Entity) {});
+    EXPECT_EQ(SceneSerializer::extension_count(), 1u);
+    SceneSerializer::clear_extensions();
+    EXPECT_EQ(SceneSerializer::extension_count(), 0u);
+}
+
+TEST(SceneSerializerExt, ExtensionRoundTripsCustomComponent) {
+    SceneSerializer::clear_extensions();
+    using nlohmann::json;
+    SceneSerializer::register_extension(
+        "CustomTagComponent",
+        [](void* ptr, const Registry& reg, Entity e) {
+            auto* j = static_cast<json*>(ptr);
+            if (!reg.has_component<CustomTagComponent>(e)) return;
+            const auto& c = reg.get_component<CustomTagComponent>(e);
+            (*j)["custom_tag"] = {
+                {"label", c.label},
+                {"level", c.level},
+            };
+        },
+        [](const void* ptr, Registry& reg, Entity e) {
+            const auto* j = static_cast<const json*>(ptr);
+            if (!j->contains("custom_tag")) return;
+            const auto& cj = (*j)["custom_tag"];
+            CustomTagComponent c;
+            c.label = cj.value("label", std::string{});
+            c.level = cj.value("level", 0);
+            reg.add_component<CustomTagComponent>(e, std::move(c));
+        });
+
+    Scene scene;
+    Entity e = scene.create_entity_3d("Hero");
+    scene.registry().add_component<CustomTagComponent>(
+        e, CustomTagComponent{"Boss", 9});
+
+    SceneSerializer ser(scene);
+    const std::string json_str = ser.to_json();
+
+    Scene loaded;
+    SceneSerializer reloader(loaded);
+    ASSERT_TRUE(reloader.from_json(json_str));
+
+    bool seen = false;
+    loaded.registry().each<TagComponent>(
+        [&](Entity ent, TagComponent& tc) {
+            if (tc.name != "Hero") return;
+            seen = true;
+            ASSERT_TRUE(loaded.registry().has_component<CustomTagComponent>(ent));
+            const auto& got =
+                loaded.registry().get_component<CustomTagComponent>(ent);
+            EXPECT_EQ(got.label, "Boss");
+            EXPECT_EQ(got.level, 9);
+        });
+    EXPECT_TRUE(seen);
+    SceneSerializer::clear_extensions();
+}
+
+TEST(SceneSerializerExt, ExtensionsCalledInRegistrationOrder) {
+    SceneSerializer::clear_extensions();
+    std::vector<std::string> order;
+    SceneSerializer::register_extension(
+        "a",
+        [&](void*, const Registry&, Entity) { order.push_back("a"); },
+        [](const void*, Registry&, Entity) {});
+    SceneSerializer::register_extension(
+        "b",
+        [&](void*, const Registry&, Entity) { order.push_back("b"); },
+        [](const void*, Registry&, Entity) {});
+    SceneSerializer::register_extension(
+        "c",
+        [&](void*, const Registry&, Entity) { order.push_back("c"); },
+        [](const void*, Registry&, Entity) {});
+
+    Scene scene;
+    scene.create_entity_3d("X");
+    SceneSerializer(scene).to_json();
+    ASSERT_GE(order.size(), 3u);
+    EXPECT_EQ(order[0], "a");
+    EXPECT_EQ(order[1], "b");
+    EXPECT_EQ(order[2], "c");
+    SceneSerializer::clear_extensions();
+}
+
+TEST(SceneSerializerExt, NullCallbacksAreSkipped) {
+    SceneSerializer::clear_extensions();
+    bool fired = false;
+    SceneSerializer::register_extension(
+        "writer-only",
+        [&](void*, const Registry&, Entity) { fired = true; },
+        nullptr);
+
+    Scene scene;
+    scene.create_entity_3d("Y");
+    SceneSerializer ser(scene);
+    const std::string json = ser.to_json();
+    EXPECT_TRUE(fired);
+
+    // Reader path mustn't crash even though we registered no reader.
+    Scene loaded;
+    SceneSerializer reloader(loaded);
+    EXPECT_TRUE(reloader.from_json(json));
+    SceneSerializer::clear_extensions();
 }
 
 } // namespace nexus::tests

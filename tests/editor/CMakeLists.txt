@@ -13,6 +13,7 @@ add_executable(nexus-test-editor
     test_audio_asset.cpp
     test_build_scenes.cpp
     test_particle_editor.cpp
+    test_script_serializer_ext.cpp
 )
 
 target_link_libraries(nexus-test-editor
@@ -21,6 +22,7 @@ target_link_libraries(nexus-test-editor
         Nexus::Assets
         Nexus::EditorLib
         Nexus::Perf
+        Nexus::Scripting
         gtest
         gtest_main
 )

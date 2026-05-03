@@ -29,6 +29,7 @@
 #include "nexus/editor/animation_asset.h"
 #include "nexus/editor/audio_asset.h"
 #include "nexus/editor/build_scenes.h"
+#include "nexus/editor/script_serializer_ext.h"
 #include "nexus/animation/animator_system.h"
 #include "nexus/perf/profiler.h"
 #include "nexus/assets/asset_registry.h"
@@ -614,6 +615,12 @@ static int run(int /*argc*/, char* /*argv*/[]) {
         EditorState editor_state;
         register_default_panels(editor_state);
         editor_state.set_status("Ready");
+
+        // Plug ScriptComponent into SceneSerializer's extension hook so
+        // scenes round-trip the script binding without engine/scene
+        // depending on engine/scripting.  One-shot per process — extension
+        // registry is global and survives until shutdown.
+        nexus::editor::install_script_serializer_extension();
 
         // Wire Scene + Game viewports to the scene/renderers/RHI.
         ViewportPanel* scene_vp = editor_state.panels()

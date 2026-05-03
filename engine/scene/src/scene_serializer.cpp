@@ -8,6 +8,37 @@ using json = nlohmann::json;
 
 namespace nexus {
 
+// ── Extension registry storage ──────────────────────────────────────────────
+//
+// Static vector + accessor; kept inside the .cpp so the public header
+// stays free of #include <vector> bloat for consumers that don't touch
+// extensions.  Single-threaded by contract — register at startup, never
+// during a save/load.
+static std::vector<SceneSerializer::Extension>& SceneSerializer_extensions() {
+    static std::vector<SceneSerializer::Extension> exts;
+    return exts;
+}
+
+u32 SceneSerializer::register_extension(std::string name,
+                                        ExtensionWriter writer,
+                                        ExtensionReader reader) {
+    auto& list = SceneSerializer_extensions();
+    SceneSerializer::Extension ext;
+    ext.name   = std::move(name);
+    ext.writer = std::move(writer);
+    ext.reader = std::move(reader);
+    list.push_back(std::move(ext));
+    return static_cast<u32>(list.size()) - 1u;
+}
+
+void SceneSerializer::clear_extensions() {
+    SceneSerializer_extensions().clear();
+}
+
+u32 SceneSerializer::extension_count() {
+    return static_cast<u32>(SceneSerializer_extensions().size());
+}
+
 // ── JSON helpers ────────────────────────────────────────────────────────────
 
 static json vec2_to_json(Vec2 v) { return {v.x, v.y}; }
@@ -255,6 +286,15 @@ static json serialize_entity(const Registry& reg, Entity e) {
         }
     }
 
+    // Extension hook — let downstream libraries (scripting, custom audio
+    // bus serialisers, etc.) plug in per-entity payloads without forcing
+    // engine/scene to depend on them.
+    for (const auto& ext : SceneSerializer_extensions()) {
+        if (ext.writer) {
+            ext.writer(static_cast<void*>(&entity_json), reg, e);
+        }
+    }
+
     return entity_json;
 }
 
@@ -469,6 +509,14 @@ static Entity deserialize_entity(Registry& reg, const json& j,
         AudioListenerComponent comp;
         comp.active = a["active"].get<bool>();
         reg.add_component<AudioListenerComponent>(e, comp);
+    }
+
+    // Extension hook — same registry as the writer side; each reader
+    // checks `j` for its key and applies the inverse transformation.
+    for (const auto& ext : SceneSerializer_extensions()) {
+        if (ext.reader) {
+            ext.reader(static_cast<const void*>(&j), reg, e);
+        }
     }
 
     return e;

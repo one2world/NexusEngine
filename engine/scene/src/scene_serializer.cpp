@@ -266,6 +266,27 @@ static json serialize_entity(const Registry& reg, Entity e) {
         };
     }
 
+    if (reg.has_component<ParticleEmitterComponent>(e)) {
+        auto& p = reg.get_component<ParticleEmitterComponent>(e);
+        // emit_accumulator + alive_count are runtime state, explicitly
+        // omitted so save/load yields a deterministic emitter baseline.
+        entity_json["particle_emitter"] = {
+            {"emit_rate",      p.emit_rate},
+            {"speed_min",      p.speed_min},
+            {"speed_max",      p.speed_max},
+            {"lifetime_min",   p.lifetime_min},
+            {"lifetime_max",   p.lifetime_max},
+            {"color_start",    vec4_to_json(p.color_start)},
+            {"color_end",      vec4_to_json(p.color_end)},
+            {"size_start",     p.size_start},
+            {"size_end",       p.size_end},
+            {"gravity",        p.gravity},
+            {"max_particles",  p.max_particles},
+            {"emitting",       p.emitting},
+            {"play_on_start",  p.play_on_start},
+        };
+    }
+
     if (reg.has_component<TilemapComponent>(e)) {
         auto& tm = reg.get_component<TilemapComponent>(e);
         entity_json["tilemap"] = {
@@ -489,6 +510,25 @@ static Entity deserialize_entity(Registry& reg, const json& j,
         if (a.contains("play_on_start")) comp.play_on_start = a["play_on_start"].get<bool>();
         // `time` deliberately stays at default 0.0 — see writer comment.
         reg.add_component<AnimatorComponent>(e, comp);
+    }
+
+    if (j.contains("particle_emitter")) {
+        auto& p = j["particle_emitter"];
+        ParticleEmitterComponent comp;
+        if (p.contains("emit_rate"))     comp.emit_rate     = p["emit_rate"].get<f32>();
+        if (p.contains("speed_min"))     comp.speed_min     = p["speed_min"].get<f32>();
+        if (p.contains("speed_max"))     comp.speed_max     = p["speed_max"].get<f32>();
+        if (p.contains("lifetime_min"))  comp.lifetime_min  = p["lifetime_min"].get<f32>();
+        if (p.contains("lifetime_max"))  comp.lifetime_max  = p["lifetime_max"].get<f32>();
+        if (p.contains("color_start"))   comp.color_start   = json_to_vec4(p["color_start"]);
+        if (p.contains("color_end"))     comp.color_end     = json_to_vec4(p["color_end"]);
+        if (p.contains("size_start"))    comp.size_start    = p["size_start"].get<f32>();
+        if (p.contains("size_end"))      comp.size_end      = p["size_end"].get<f32>();
+        if (p.contains("gravity"))       comp.gravity       = p["gravity"].get<f32>();
+        if (p.contains("max_particles")) comp.max_particles = p["max_particles"].get<u32>();
+        if (p.contains("emitting"))      comp.emitting      = p["emitting"].get<bool>();
+        if (p.contains("play_on_start")) comp.play_on_start = p["play_on_start"].get<bool>();
+        reg.add_component<ParticleEmitterComponent>(e, comp);
     }
 
     if (j.contains("tilemap")) {

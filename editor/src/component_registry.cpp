@@ -114,6 +114,9 @@ void register_builtin_components(ComponentRegistry& reg) {
     // Animation.
     reg.register_type<AnimatorComponent>("Animator", "Animation");
 
+    // Effects.
+    reg.register_type<ParticleEmitterComponent>("Particle Emitter", "Effects");
+
     // Scripts.
     reg.register_type<scripting::ScriptComponent>("Script", "Scripts");
 }

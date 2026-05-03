@@ -288,6 +288,65 @@ struct SkeletonComponent {
 };
 
 // ---------------------------------------------------------------------------
+// ParticleEmitterComponent — ECS-driven particle emitter (M21)
+// ---------------------------------------------------------------------------
+//
+// Editor-authored emission parameters that the runtime ParticleEmitterSystem
+// (engine/animation) walks each frame to spawn / age / cull particles.
+// Lives in engine/scene as a thin POD so scene_serializer can JSON it
+// without scene needing to depend on animation (animation depends on
+// scene, so the reverse would create a cycle — same constraint that
+// drove the M19 extension hook).
+//
+// Runtime particle storage (positions, velocities, ages) is owned by the
+// system, NOT this component — this struct only carries the authoring
+// values and a small amount of cross-frame state (time accumulator,
+// alive_count read-back) so the data stays small and serialisable.
+//
+// Defaults model a generic upward "spark" emitter so a fresh component
+// produces visible output the moment the user adds it from the Inspector.
+struct ParticleEmitterComponent {
+    // Emission rate (particles per second).  Negatives clamp to 0 in
+    // the runtime system.
+    f32  emit_rate{30.0f};
+
+    // Per-particle initial speed window.  System samples uniformly in
+    // [min, max] when a new particle is born.
+    f32  speed_min{1.0f};
+    f32  speed_max{3.0f};
+
+    // Lifetime window in seconds.
+    f32  lifetime_min{1.0f};
+    f32  lifetime_max{2.0f};
+
+    // Colour gradient — start at birth, end at lifetime expiry.
+    Vec4 color_start{1.0f, 1.0f, 1.0f, 1.0f};
+    Vec4 color_end{1.0f, 1.0f, 1.0f, 0.0f};
+
+    // Size in world units; lerps from start to end across lifetime.
+    f32  size_start{0.10f};
+    f32  size_end{0.00f};
+
+    // Constant downward acceleration — simple gravity proxy.
+    f32  gravity{-9.81f};
+
+    // Soft cap on alive particles to keep memory bounded.
+    u32  max_particles{500};
+
+    // Runtime gates — `emitting` is the user-controlled play/pause; the
+    // system flips `emitting` to true on Play-mode entry when
+    // `play_on_start` is set (Unity convention).
+    bool emitting{true};
+    bool play_on_start{true};
+
+    // Cross-frame state (NOT serialised).  emit_accumulator_ tracks the
+    // fractional particle owed since last spawn; alive_count_ surfaces
+    // the live population for the Inspector / Stats overlay.
+    f32  emit_accumulator{0.0f};
+    u32  alive_count{0};
+};
+
+// ---------------------------------------------------------------------------
 // SpotLightComponent
 // ---------------------------------------------------------------------------
 struct SpotLightComponent {

@@ -469,6 +469,69 @@ TEST(SceneSerializer, PreservesAnimatorComponentBindings) {
 }
 
 // =============================================================================
+// ParticleEmitterComponent — JSON round-trip (M21)
+// =============================================================================
+
+TEST(SceneSerializer, PreservesParticleEmitterComponent) {
+    Scene scene;
+    Entity e = scene.create_entity_3d("Sparks");
+    ParticleEmitterComponent em;
+    em.emit_rate     = 250.0f;
+    em.speed_min     = 4.0f;
+    em.speed_max     = 9.0f;
+    em.lifetime_min  = 0.4f;
+    em.lifetime_max  = 0.9f;
+    em.color_start   = Vec4(1.0f, 0.95f, 0.4f, 1.0f);
+    em.color_end     = Vec4(1.0f, 0.4f, 0.0f, 0.0f);
+    em.size_start    = 0.04f;
+    em.size_end      = 0.0f;
+    em.gravity       = -9.81f;
+    em.max_particles = 200;
+    em.emitting      = false;
+    em.play_on_start = false;
+    // Runtime state intentionally pre-populated — the serializer must NOT
+    // round-trip these values.
+    em.emit_accumulator = 99.9f;
+    em.alive_count      = 42;
+    scene.registry().add_component<ParticleEmitterComponent>(e, em);
+
+    SceneSerializer ser(scene);
+    const std::string js = ser.to_json();
+    Scene loaded;
+    SceneSerializer reloader(loaded);
+    ASSERT_TRUE(reloader.from_json(js));
+
+    bool seen = false;
+    loaded.registry().each<TagComponent>(
+        [&](Entity ent, TagComponent& tc) {
+            if (tc.name != "Sparks") return;
+            seen = true;
+            ASSERT_TRUE(loaded.registry()
+                .has_component<ParticleEmitterComponent>(ent));
+            const auto& got = loaded.registry()
+                .get_component<ParticleEmitterComponent>(ent);
+            EXPECT_NEAR(got.emit_rate,   250.0f, 1e-4f);
+            EXPECT_NEAR(got.speed_min,   4.0f,   1e-4f);
+            EXPECT_NEAR(got.speed_max,   9.0f,   1e-4f);
+            EXPECT_NEAR(got.lifetime_min, 0.4f,  1e-4f);
+            EXPECT_NEAR(got.lifetime_max, 0.9f,  1e-4f);
+            EXPECT_NEAR(got.color_start.r, 1.0f, 1e-4f);
+            EXPECT_NEAR(got.color_start.b, 0.4f, 1e-4f);
+            EXPECT_NEAR(got.color_end.a,   0.0f, 1e-4f);
+            EXPECT_NEAR(got.size_start,  0.04f,  1e-4f);
+            EXPECT_NEAR(got.size_end,    0.0f,   1e-4f);
+            EXPECT_NEAR(got.gravity,    -9.81f,  1e-4f);
+            EXPECT_EQ(got.max_particles, 200u);
+            EXPECT_FALSE(got.emitting);
+            EXPECT_FALSE(got.play_on_start);
+            // Runtime state resets to defaults.
+            EXPECT_FLOAT_EQ(got.emit_accumulator, 0.0f);
+            EXPECT_EQ(got.alive_count, 0u);
+        });
+    EXPECT_TRUE(seen);
+}
+
+// =============================================================================
 // SceneSerializer extension hook (M19) — third-party component plug-in
 // =============================================================================
 //

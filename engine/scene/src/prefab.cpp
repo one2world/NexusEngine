@@ -67,6 +67,12 @@ static void copy_entity_components(const Registry& src_reg, Entity src,
     // remap (M21+).  Round-tripping for snapshots / scene-local copies
     // works as-is.
     copy_one<SkeletonComponent>(src_reg, src, dst_reg, dst);
+
+    // Particle emitter — authored fields + runtime state both copy.
+    // Duplicating a prefab mid-emission yields a sibling whose
+    // accumulator continues from where the original is, matching
+    // Unity's duplicate-at-this-moment semantics.
+    copy_one<ParticleEmitterComponent>(src_reg, src, dst_reg, dst);
 }
 
 // Recursive helper: copy entity and all descendants into temp scene, preserving hierarchy

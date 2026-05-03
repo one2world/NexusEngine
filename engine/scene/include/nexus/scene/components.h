@@ -259,6 +259,35 @@ struct AnimatorComponent {
 };
 
 // ---------------------------------------------------------------------------
+// SkeletonComponent — wires entity bones to AnimationClip channels (M20)
+// ---------------------------------------------------------------------------
+//
+// AnimatorComponent's single-transform path (bone 0 → entity Transform3D)
+// is fine for "animate this object" workflows but can't drive a skeletal
+// rig where each bone is its own entity in the hierarchy.  This component
+// closes that gap:
+//
+//   bone_entities[i] = entity id whose Transform3D holds bone i's local
+//                      pose.  Index 0 is the root; subsequent indices
+//                      address children in any order — the runtime
+//                      doesn't assume a specific tree shape.
+//
+// AnimatorSystem detects this component on the same entity that owns
+// AnimatorComponent and, when present, writes each `clip.channels()[i]`
+// sample into the matching bone entity's Transform3D rather than
+// collapsing everything to the entity's own transform.
+//
+// Deliberately a thin POD — does NOT own a Skeleton object.  Runtime
+// resources (Skeleton, skinning matrices) live on the renderer side and
+// are looked up by clip / mesh asset ids elsewhere.
+struct SkeletonComponent {
+    /// One entity id per bone, indexed 0..bone_count-1.  Empty vector
+    /// disables multi-bone driving (runtime falls back to AnimatorComponent's
+    /// single-transform path).
+    std::vector<u32> bone_entities;
+};
+
+// ---------------------------------------------------------------------------
 // SpotLightComponent
 // ---------------------------------------------------------------------------
 struct SpotLightComponent {

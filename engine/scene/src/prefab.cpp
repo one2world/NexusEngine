@@ -59,6 +59,14 @@ static void copy_entity_components(const Registry& src_reg, Entity src,
     // Animator — playhead state is not authored data, but the bindings
     // (clip id, speed, looping, autoplay) are part of the prefab.
     copy_one<AnimatorComponent>(src_reg, src, dst_reg, dst);
+
+    // Skeleton — bone_entities ids reference the prefab's own subtree, so
+    // the value carries through unchanged.  When a prefab is instantiated
+    // into a new scene the subtree's entity ids change, so callers that
+    // rely on bone_entities through Prefab::instantiate need a post-pass
+    // remap (M21+).  Round-tripping for snapshots / scene-local copies
+    // works as-is.
+    copy_one<SkeletonComponent>(src_reg, src, dst_reg, dst);
 }
 
 // Recursive helper: copy entity and all descendants into temp scene, preserving hierarchy

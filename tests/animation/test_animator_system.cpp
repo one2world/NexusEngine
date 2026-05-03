@@ -267,6 +267,170 @@ TEST(AnimatorSystem, StartAutoplayFlipsPlayOnStartFlag) {
 
 // ── Sampled rotation reaches expected target at endpoint ────────────────────
 
+// =============================================================================
+// SkeletonComponent multi-bone path (M20)
+// =============================================================================
+//
+// AnimatorSystem::tick must, when SkeletonComponent is present, route each
+// bone-i pose into the matching bone entity's Transform3D — not into the
+// owning entity's Transform3D.  These tests verify the routing, the
+// graceful fallbacks (out-of-range pose, dead bone, missing transform),
+// and the single-transform path's continued correctness when there is no
+// skeleton bound.
+
+namespace {
+
+// Build a clip with N bone channels, each animating bone-i's position to
+// a unique target so the test can verify which channel hit which entity.
+std::unique_ptr<AnimationClip> make_per_bone_clip(u32 bone_count) {
+    auto clip = std::make_unique<AnimationClip>("rig", 1.0f);
+    for (u32 i = 0; i < bone_count; ++i) {
+        BoneChannel ch;
+        ch.bone_index = static_cast<i32>(i);
+        ch.positions.push_back({0.0f, Vec3(0.0f)});
+        ch.positions.push_back({1.0f, Vec3(static_cast<f32>(i + 1) * 10.0f,
+                                            0.0f, 0.0f)});
+        clip->add_channel(std::move(ch));
+    }
+    return clip;
+}
+
+}  // namespace
+
+TEST(AnimatorSystem, SkeletonRoutesEachBoneToItsOwnEntity) {
+    auto clip = make_per_bone_clip(3);
+    AnimatorSystem sys([&](u32) { return clip.get(); });
+
+    Scene scene;
+    auto& reg = scene.registry();
+
+    Entity rig = scene.create_entity_3d("Rig");
+    Entity bone0 = scene.create_entity_3d("Bone0");
+    Entity bone1 = scene.create_entity_3d("Bone1");
+    Entity bone2 = scene.create_entity_3d("Bone2");
+
+    SkeletonComponent skel;
+    skel.bone_entities = {static_cast<u32>(bone0),
+                          static_cast<u32>(bone1),
+                          static_cast<u32>(bone2)};
+    reg.add_component<SkeletonComponent>(rig, std::move(skel));
+
+    AnimatorComponent ac;
+    ac.clip_id = 1;
+    ac.playing = true;
+    ac.looping = false;
+    ac.time    = 0.0f;
+    reg.add_component<AnimatorComponent>(rig, std::move(ac));
+
+    // Tick to the end so each bone's position channel hits its target.
+    sys.tick(reg, 1.0f);
+
+    EXPECT_NEAR(reg.get_component<Transform3DComponent>(bone0).position.x, 10.0f, 1e-3f);
+    EXPECT_NEAR(reg.get_component<Transform3DComponent>(bone1).position.x, 20.0f, 1e-3f);
+    EXPECT_NEAR(reg.get_component<Transform3DComponent>(bone2).position.x, 30.0f, 1e-3f);
+
+    // The rig entity itself must NOT inherit bone-0's pose when a
+    // skeleton routes the channel away.  Its transform stays default.
+    EXPECT_NEAR(reg.get_component<Transform3DComponent>(rig).position.x, 0.0f, 1e-3f);
+}
+
+TEST(AnimatorSystem, SkeletonHandlesFewerEntitiesThanChannels) {
+    // 3-channel clip but only 2 bone entities — the third channel is
+    // silently dropped.  No crash, no out-of-bounds write.
+    auto clip = make_per_bone_clip(3);
+    AnimatorSystem sys([&](u32) { return clip.get(); });
+
+    Scene scene;
+    auto& reg = scene.registry();
+    Entity rig = scene.create_entity_3d("Rig");
+    Entity b0 = scene.create_entity_3d("B0");
+    Entity b1 = scene.create_entity_3d("B1");
+    SkeletonComponent skel;
+    skel.bone_entities = {static_cast<u32>(b0), static_cast<u32>(b1)};
+    reg.add_component<SkeletonComponent>(rig, std::move(skel));
+
+    AnimatorComponent ac;
+    ac.clip_id = 1; ac.playing = true; ac.looping = false; ac.time = 0.0f;
+    reg.add_component<AnimatorComponent>(rig, std::move(ac));
+
+    sys.tick(reg, 1.0f);
+    EXPECT_NEAR(reg.get_component<Transform3DComponent>(b0).position.x, 10.0f, 1e-3f);
+    EXPECT_NEAR(reg.get_component<Transform3DComponent>(b1).position.x, 20.0f, 1e-3f);
+}
+
+TEST(AnimatorSystem, SkeletonHandlesMoreEntitiesThanChannels) {
+    // 1-channel clip, 3 bone entities — only bone 0 receives a pose; the
+    // others stay at their default Transform3D values.
+    auto clip = make_per_bone_clip(1);
+    AnimatorSystem sys([&](u32) { return clip.get(); });
+
+    Scene scene;
+    auto& reg = scene.registry();
+    Entity rig = scene.create_entity_3d("Rig");
+    Entity b0 = scene.create_entity_3d("B0");
+    Entity b1 = scene.create_entity_3d("B1");
+    Entity b2 = scene.create_entity_3d("B2");
+    SkeletonComponent skel;
+    skel.bone_entities = {static_cast<u32>(b0), static_cast<u32>(b1),
+                          static_cast<u32>(b2)};
+    reg.add_component<SkeletonComponent>(rig, std::move(skel));
+
+    AnimatorComponent ac;
+    ac.clip_id = 1; ac.playing = true; ac.looping = false; ac.time = 0.0f;
+    reg.add_component<AnimatorComponent>(rig, std::move(ac));
+
+    sys.tick(reg, 1.0f);
+    EXPECT_NEAR(reg.get_component<Transform3DComponent>(b0).position.x, 10.0f, 1e-3f);
+    EXPECT_NEAR(reg.get_component<Transform3DComponent>(b1).position.x, 0.0f,  1e-3f);
+    EXPECT_NEAR(reg.get_component<Transform3DComponent>(b2).position.x, 0.0f,  1e-3f);
+}
+
+TEST(AnimatorSystem, SkeletonSkipsDeadBoneEntities) {
+    auto clip = make_per_bone_clip(3);
+    AnimatorSystem sys([&](u32) { return clip.get(); });
+
+    Scene scene;
+    auto& reg = scene.registry();
+    Entity rig = scene.create_entity_3d("Rig");
+    Entity b0 = scene.create_entity_3d("B0");
+    Entity b1 = scene.create_entity_3d("B1");
+    Entity b2 = scene.create_entity_3d("B2");
+    SkeletonComponent skel;
+    skel.bone_entities = {static_cast<u32>(b0), static_cast<u32>(b1),
+                          static_cast<u32>(b2)};
+    reg.add_component<SkeletonComponent>(rig, std::move(skel));
+
+    AnimatorComponent ac;
+    ac.clip_id = 1; ac.playing = true; ac.looping = false; ac.time = 0.0f;
+    reg.add_component<AnimatorComponent>(rig, std::move(ac));
+
+    // Kill bone1 between bind and tick — system must skip it without
+    // crashing and continue applying poses to the surviving bones.
+    reg.destroy(b1);
+    sys.tick(reg, 1.0f);
+    EXPECT_NEAR(reg.get_component<Transform3DComponent>(b0).position.x, 10.0f, 1e-3f);
+    EXPECT_NEAR(reg.get_component<Transform3DComponent>(b2).position.x, 30.0f, 1e-3f);
+}
+
+TEST(AnimatorSystem, EmptySkeletonFallsBackToSingleTransformPath) {
+    // SkeletonComponent present but bone_entities empty → behave as if
+    // no skeleton: bone 0's pose lands on the entity's own Transform3D.
+    auto clip = make_per_bone_clip(1);
+    AnimatorSystem sys([&](u32) { return clip.get(); });
+
+    Scene scene;
+    auto& reg = scene.registry();
+    Entity rig = scene.create_entity_3d("Rig");
+    reg.add_component<SkeletonComponent>(rig, SkeletonComponent{});  // empty
+
+    AnimatorComponent ac;
+    ac.clip_id = 1; ac.playing = true; ac.looping = false; ac.time = 0.0f;
+    reg.add_component<AnimatorComponent>(rig, std::move(ac));
+
+    sys.tick(reg, 1.0f);
+    EXPECT_NEAR(reg.get_component<Transform3DComponent>(rig).position.x, 10.0f, 1e-3f);
+}
+
 TEST(AnimatorSystem, RotationAtEndpointMatchesAuthoredYaw) {
     auto clip = make_slide_clip(1.0f);
     AnimatorSystem sys([&](u32) { return clip.get(); });

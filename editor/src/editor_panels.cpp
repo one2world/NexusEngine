@@ -4308,6 +4308,15 @@ LuaConsolePanel::run_source(const std::string& src) {
     } else {
         line.text = std::string("ERROR: ") + result.error;
     }
+    // Forward to the external sink (typically ConsolePanel::add_message
+    // in production) BEFORE pushing to local history, so the message
+    // ordering between the two surfaces is consistent.  Sink errors /
+    // exceptions don't propagate — wrapping in try/catch would mask
+    // genuine bugs; the sink is expected to be exception-free.
+    if (on_log_) {
+        on_log_(line.ok, line.text);
+    }
+
     history_.push_back(std::move(line));
     if (history_.size() > kHistoryCap) {
         // Drop oldest until back inside cap — append-cap with O(1)

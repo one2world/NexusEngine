@@ -848,6 +848,39 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                 app->sinks().push_back(
                     std::make_shared<ConsolePanelSink>(console));
             }
+
+            // M29 — forward Lua Console results to the main Console
+            // pane so users see Lua output without having to keep the
+            // Lua panel open.  ok=true → Info, ok=false → Error.
+            if (auto* lua_panel = editor_state.panels()
+                    .find_typed<LuaConsolePanel>("Lua Console")) {
+                lua_panel->set_on_log(
+                    [console](bool ok, const std::string& msg) {
+                        console->add_message(
+                            std::string("[Lua] ") + msg,
+                            ok ? LogLevel::Info : LogLevel::Error);
+                    });
+            }
+
+            // M31 — script runtime errors flow into Console.  The
+            // ScriptEngine's error_handler fires whenever LuaBackend
+            // (or any future backend) reports a structured ScriptError.
+            // Forward the message to Console as an Error entry so
+            // failures inside ScriptComponent.on_create / on_update
+            // surface in the same place as engine logs.
+            script_engine.set_error_handler(
+                [console](const nexus::scripting::ScriptError& err) {
+                    std::string out = "[Script] ";
+                    if (!err.source_file.empty()) {
+                        out += err.source_file;
+                        if (err.line > 0) {
+                            out += ":" + std::to_string(err.line);
+                        }
+                        out += " — ";
+                    }
+                    out += err.message;
+                    console->add_message(std::move(out), LogLevel::Error);
+                });
         }
 
         // RAII guard: strip ConsolePanelSink entries from all loggers on any

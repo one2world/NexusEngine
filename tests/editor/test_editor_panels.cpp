@@ -1101,6 +1101,61 @@ TEST(LuaConsolePanel, SetSourceTruncatesAtBufferCap) {
     EXPECT_EQ(p.source().size(), LuaConsolePanel::kBufferCap);
 }
 
+// ── External log forwarder (M29) ────────────────────────────────────────────
+
+TEST(LuaConsolePanel, OnLogBindIsRoundTrippable) {
+    LuaConsolePanel p;
+    EXPECT_FALSE(p.has_on_log());
+    p.set_on_log([](bool, const std::string&) {});
+    EXPECT_TRUE(p.has_on_log());
+    p.set_on_log({});
+    EXPECT_FALSE(p.has_on_log());
+}
+
+TEST(LuaConsolePanel, OnLogFiresOncePerRunWithCorrectOk) {
+    LuaConsolePanel p;
+    p.set_runner([](const std::string& src) {
+        LuaConsolePanel::RunResult r;
+        if (src == "good") {
+            r.ok = true;
+            r.output = "out-good";
+        } else {
+            r.ok = false;
+            r.error = "err-bad";
+        }
+        return r;
+    });
+
+    std::vector<std::pair<bool, std::string>> seen;
+    p.set_on_log([&](bool ok, const std::string& msg) {
+        seen.emplace_back(ok, msg);
+    });
+
+    p.run_source("good");
+    p.run_source("bad");
+    ASSERT_EQ(seen.size(), 2u);
+    EXPECT_TRUE(seen[0].first);
+    EXPECT_NE(seen[0].second.find("out-good"), std::string::npos);
+    EXPECT_FALSE(seen[1].first);
+    EXPECT_NE(seen[1].second.find("err-bad"), std::string::npos);
+}
+
+TEST(LuaConsolePanel, OnLogFiresEvenWhenRunnerIsUnbound) {
+    // Synthetic-error path must still notify external sinks so the
+    // user sees the missing-runner message in Console even when they
+    // never opened the Lua panel.
+    LuaConsolePanel p;
+    int fired = 0;
+    bool last_ok = true;
+    p.set_on_log([&](bool ok, const std::string&) {
+        ++fired;
+        last_ok = ok;
+    });
+    p.run_source("any");
+    EXPECT_EQ(fired, 1);
+    EXPECT_FALSE(last_ok);
+}
+
 // =============================================================================
 // RuntimeStatsPanel (M28) — snapshot + supplier wiring
 // =============================================================================

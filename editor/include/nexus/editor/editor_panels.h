@@ -1063,10 +1063,22 @@ public:
     RunResult run_now() { return run_source(source_); }
     RunResult run_source(const std::string& src);
 
+    /// External log forwarder — fires once per Run result.  When the
+    /// editor wires this to ConsolePanel::add_message (M29), every Lua
+    /// run also surfaces in the main Console pane so users don't need
+    /// the Lua panel open to see what scripts produced.  ok=true maps
+    /// to Info, false to Error.  Optional — leaving it unbound just
+    /// keeps results in the panel's local history.
+    using LogSink =
+        std::function<void(bool ok, const std::string& message)>;
+    void set_on_log(LogSink s) { on_log_ = std::move(s); }
+    bool has_on_log() const { return static_cast<bool>(on_log_); }
+
 private:
     Runner runner_;
     std::string source_;
     std::vector<HistoryLine> history_;
+    LogSink on_log_;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

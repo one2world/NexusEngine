@@ -881,6 +881,19 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                     out += err.message;
                     console->add_message(std::move(out), LogLevel::Error);
                 });
+
+            // M32 — Lua print() flows into Console.  The shared `print`
+            // binding (engine_bindings.cpp) calls this sink with the
+            // joined message before falling back to NX_INFO.  The Lua
+            // Console panel keeps its own history for explicit
+            // `:exec` results (M29); this sink is for arbitrary
+            // print() statements inside ScriptComponent scripts.
+            script_engine.set_print_sink(
+                [console](const std::string& msg) {
+                    console->add_message(
+                        std::string("[Lua print] ") + msg,
+                        LogLevel::Info);
+                });
         }
 
         // RAII guard: strip ConsolePanelSink entries from all loggers on any

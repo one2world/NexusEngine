@@ -13,14 +13,24 @@ namespace nexus::scripting {
 
 static void bind_utility_functions(ScriptEngine& engine) {
     // Utility: print
+    //
+    // Routes through ScriptEngine::print_sink() when one is set so the
+    // editor's ConsolePanel can display Lua-side print() output without
+    // having to scrape engine logs.  Falls back to NX_INFO when no sink
+    // is registered (sandbox / headless scripts keep the legacy
+    // behaviour).  See ScriptEngine::set_print_sink().
     engine.register_function("", "print",
-        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+        [&engine](const std::vector<ScriptValue>& args) -> ScriptValue {
             std::string msg;
             for (size_t i = 0; i < args.size(); ++i) {
                 if (i > 0) msg += " ";
                 msg += args[i].to_string();
             }
-            NX_INFO("[Script] {}", msg);
+            if (engine.has_print_sink()) {
+                engine.print_sink()(msg);
+            } else {
+                NX_INFO("[Script] {}", msg);
+            }
             return ScriptValue::nil();
         }, 0, 255, "Print values to the console");
 

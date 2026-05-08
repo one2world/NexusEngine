@@ -338,6 +338,113 @@ TEST(BindAll, PrintFunction) {
     engine.call_function("print", {ScriptValue("hello"), ScriptValue(42)});
 }
 
+// ── M32: print() routing through ScriptEngine::set_print_sink ─────────────
+
+TEST(BindAll, PrintSinkReceivesJoinedMessage) {
+    ScriptEngine engine;
+    Registry registry;
+    bind_all(engine, registry);
+
+    std::string captured;
+    engine.set_print_sink([&captured](const std::string& msg) {
+        captured = msg;
+    });
+
+    engine.call_function("print",
+        {ScriptValue("hello"), ScriptValue(42), ScriptValue(true)});
+
+    EXPECT_EQ(captured, "hello 42 true");
+}
+
+TEST(BindAll, PrintSinkInvokedOncePerCall) {
+    ScriptEngine engine;
+    Registry registry;
+    bind_all(engine, registry);
+
+    int call_count = 0;
+    engine.set_print_sink([&call_count](const std::string&) { ++call_count; });
+
+    engine.call_function("print", {ScriptValue("a")});
+    engine.call_function("print", {ScriptValue("b")});
+    engine.call_function("print", {});  // empty args still fires
+
+    EXPECT_EQ(call_count, 3);
+}
+
+TEST(BindAll, PrintSinkAccumulatesEachCall) {
+    ScriptEngine engine;
+    Registry registry;
+    bind_all(engine, registry);
+
+    std::vector<std::string> log;
+    engine.set_print_sink([&log](const std::string& m) { log.push_back(m); });
+
+    engine.call_function("print", {ScriptValue("first")});
+    engine.call_function("print", {ScriptValue("second"), ScriptValue("line")});
+
+    ASSERT_EQ(log.size(), 2u);
+    EXPECT_EQ(log[0], "first");
+    EXPECT_EQ(log[1], "second line");
+}
+
+TEST(BindAll, PrintSinkUnsetFallsBackSilently) {
+    ScriptEngine engine;
+    Registry registry;
+    bind_all(engine, registry);
+
+    EXPECT_FALSE(engine.has_print_sink());
+    // Without a sink the binding still resolves (NX_INFO fallback).
+    auto result = engine.call_function("print", {ScriptValue("ignored")});
+    EXPECT_TRUE(result.is_nil());
+}
+
+TEST(BindAll, PrintSinkReplaceableLatestWins) {
+    ScriptEngine engine;
+    Registry registry;
+    bind_all(engine, registry);
+
+    std::string first;
+    engine.set_print_sink([&first](const std::string& m) { first = m; });
+
+    std::string second;
+    engine.set_print_sink([&second](const std::string& m) { second = m; });
+
+    engine.call_function("print", {ScriptValue("hello")});
+
+    EXPECT_TRUE(first.empty());
+    EXPECT_EQ(second, "hello");
+}
+
+TEST(BindAll, PrintSinkClearedByEmptyAssignment) {
+    ScriptEngine engine;
+    Registry registry;
+    bind_all(engine, registry);
+
+    int count = 0;
+    engine.set_print_sink([&count](const std::string&) { ++count; });
+    engine.call_function("print", {ScriptValue("x")});
+    EXPECT_EQ(count, 1);
+
+    engine.set_print_sink({});
+    EXPECT_FALSE(engine.has_print_sink());
+    engine.call_function("print", {ScriptValue("y")});
+    EXPECT_EQ(count, 1);  // sink no longer called
+}
+
+TEST(BindAll, PrintSinkSeparatesArgsWithSingleSpace) {
+    ScriptEngine engine;
+    Registry registry;
+    bind_all(engine, registry);
+
+    std::string captured;
+    engine.set_print_sink([&captured](const std::string& m) { captured = m; });
+
+    engine.call_function("print",
+        {ScriptValue(1), ScriptValue(2), ScriptValue(3)});
+
+    EXPECT_EQ(captured, "1 2 3");
+}
+
 TEST(BindAll, TypeFunction) {
     ScriptEngine engine;
     Registry registry;

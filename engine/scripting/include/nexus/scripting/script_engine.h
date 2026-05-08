@@ -134,6 +134,19 @@ public:
     const std::vector<ScriptError>& errors() const { return errors_; }
     void clear_errors() { errors_.clear(); }
 
+    // ── print() routing ────────────────────────────────────────────────
+    //
+    // The shared `print` binding (see scripting/engine_bindings.cpp) calls
+    // this sink with the joined message before the engine logger sees it.
+    // The editor wires this to ConsolePanel::add_message so Lua-side
+    // `print("hello")` flows directly into the Console panel; when no
+    // sink is set the binding falls back to NX_INFO so headless / sandbox
+    // builds continue to log normally.
+    using PrintSink = std::function<void(const std::string&)>;
+    void set_print_sink(PrintSink sink) { print_sink_ = std::move(sink); }
+    const PrintSink& print_sink() const { return print_sink_; }
+    bool has_print_sink() const { return static_cast<bool>(print_sink_); }
+
     /// The global context.
     ScriptContext& globals() { return globals_; }
     const ScriptContext& globals() const { return globals_; }
@@ -163,6 +176,7 @@ private:
 
     ErrorHandler error_handler_;
     std::vector<ScriptError> errors_;
+    PrintSink print_sink_;
 
     std::unique_ptr<LuaBackend> lua_backend_;
 };

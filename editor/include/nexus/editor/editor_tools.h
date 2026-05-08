@@ -214,6 +214,16 @@ public:
     /// X/Z jitter); they're reserved for a future emitter shape pass.
     static ParticleEmitterComponent preset_to_component(const ParticlePreset& p);
 
+    /// Apply a built-in preset by name onto an existing component,
+    /// preserving runtime state (emit_accumulator + alive_count) so a
+    /// live emitter mid-emission doesn't burst-reset.  Returns false
+    /// when the name doesn't match any built-in.  Used by the Inspector
+    /// Preset Combo (M30) and tested directly so the combo dispatch
+    /// stays headless-verifiable.
+    static bool apply_builtin_preset_by_name(
+        const std::string& name,
+        ParticleEmitterComponent& target);
+
     /// Apply the panel's currently-active preset to a host-supplied
     /// entity.  The host wires this via `set_apply_to_entity_callback`
     /// when the user clicks "Apply to Selected Entity"; if the

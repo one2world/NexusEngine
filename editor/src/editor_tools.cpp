@@ -396,6 +396,30 @@ ParticleEditorPanel::preset_to_component(const ParticlePreset& p) {
     return c;
 }
 
+bool ParticleEditorPanel::apply_builtin_preset_by_name(
+        const std::string& name,
+        ParticleEmitterComponent& target) {
+    // Linear scan — there are only 4 built-ins, so a hash table would
+    // be a strict overhead.  Match returns the first hit; multiple
+    // built-ins with the same name (shouldn't happen, guarded by
+    // builtin_presets() invariants) would pick the earliest.
+    for (const auto& p : builtin_presets()) {
+        if (p.name == name) {
+            const auto fresh = preset_to_component(p);
+            // Preserve runtime state so a live emitter mid-emission
+            // doesn't burst-reset alive_count.  Same policy as the
+            // M25 Apply-to-Selection callback.
+            const f32 acc   = target.emit_accumulator;
+            const u32 alive = target.alive_count;
+            target = fresh;
+            target.emit_accumulator = acc;
+            target.alive_count      = alive;
+            return true;
+        }
+    }
+    return false;
+}
+
 void ParticleEditorPanel::load_preset(u32 index) {
     if (index < presets_.size()) {
         current_ = presets_[index];

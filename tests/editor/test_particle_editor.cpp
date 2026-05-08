@@ -280,6 +280,45 @@ TEST(ParticleEditorPanel, ApplyCallbackBindIsRoundTrippable) {
     EXPECT_FALSE(pep.has_apply_to_entity_callback());
 }
 
+// ── apply_builtin_preset_by_name (M30) ──────────────────────────────────────
+
+TEST(ParticleEditorPanel, ApplyBuiltinPresetByNameMatchesFire) {
+    ParticleEmitterComponent c;
+    EXPECT_TRUE(ParticleEditorPanel::apply_builtin_preset_by_name("Fire", c));
+    EXPECT_FLOAT_EQ(c.emit_rate, 200.0f);
+    EXPECT_NEAR(c.gravity, 0.5f, 1e-5f);
+}
+
+TEST(ParticleEditorPanel, ApplyBuiltinPresetByNameUnknownReturnsFalse) {
+    ParticleEmitterComponent c;
+    c.emit_rate = 99.0f;
+    EXPECT_FALSE(ParticleEditorPanel::apply_builtin_preset_by_name(
+        "NotAPreset", c));
+    // Component must be untouched when the name doesn't match.
+    EXPECT_FLOAT_EQ(c.emit_rate, 99.0f);
+}
+
+TEST(ParticleEditorPanel, ApplyBuiltinPresetPreservesRuntimeState) {
+    // Mid-emission burst guard — applying a preset must NOT zero
+    // emit_accumulator or alive_count.
+    ParticleEmitterComponent c;
+    c.emit_accumulator = 0.5f;
+    c.alive_count      = 17;
+    EXPECT_TRUE(ParticleEditorPanel::apply_builtin_preset_by_name("Smoke", c));
+    EXPECT_FLOAT_EQ(c.emit_accumulator, 0.5f);
+    EXPECT_EQ(c.alive_count, 17u);
+    EXPECT_FLOAT_EQ(c.emit_rate, 60.0f);  // Smoke preset rate
+}
+
+TEST(ParticleEditorPanel, ApplyBuiltinPresetCoversAllFourBuiltins) {
+    for (const char* name : {"Fire", "Smoke", "Sparks", "Magic"}) {
+        ParticleEmitterComponent c;
+        EXPECT_TRUE(
+            ParticleEditorPanel::apply_builtin_preset_by_name(name, c))
+            << "name=" << name;
+    }
+}
+
 // ── ClearPresets ───────────────────────────────────────────────────────────
 
 TEST(ParticleEditorPanel, ClearPresetsResetsSelection) {

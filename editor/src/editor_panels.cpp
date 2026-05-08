@@ -3,6 +3,7 @@
 #include "nexus/editor/editor_state.h"
 #include "nexus/editor/undo_redo.h"
 #include "nexus/editor/component_registry.h"
+#include "nexus/editor/editor_tools.h"
 #include "nexus/animation/animation_clip.h"
 #include "nexus/animation/particle_emitter_system.h"
 #include "nexus/scripting/script_component.h"
@@ -2523,6 +2524,38 @@ void InspectorPanel::on_render() {
         if (component_header<ParticleEmitterComponent>(
                 registry, target, "Particle Emitter")) {
             auto& pe = registry.get_component<ParticleEmitterComponent>(target);
+
+            // ── Preset combo (M30) ──────────────────────────────────
+            //
+            // Top-of-block dropdown that swaps the component's
+            // authored fields to a built-in preset (Fire / Smoke /
+            // Sparks / Magic) without leaving the Inspector.  Runtime
+            // state (emit_accumulator, alive_count) is preserved by
+            // apply_builtin_preset_by_name() so applying mid-emission
+            // doesn't burst-reset.  "Custom" is a no-op marker for the
+            // case where the user has hand-edited fields away from
+            // any built-in — the combo always defaults to it on first
+            // render so we don't accidentally signal "this matches
+            // Fire" when it doesn't.
+            ImGui::TextDisabled("Preset");
+            ImGui::Indent(8.0f);
+            const auto presets = ParticleEditorPanel::builtin_presets();
+            std::vector<const char*> labels;
+            labels.reserve(presets.size() + 1u);
+            labels.push_back("Custom");
+            for (const auto& bp : presets) labels.push_back(bp.name.c_str());
+            int selected = 0;  // Custom by default
+            if (ImGui::Combo("##pe_preset", &selected,
+                              labels.data(),
+                              static_cast<int>(labels.size()))) {
+                if (selected > 0 &&
+                    static_cast<size_t>(selected - 1) < presets.size()) {
+                    ParticleEditorPanel::apply_builtin_preset_by_name(
+                        presets[static_cast<size_t>(selected - 1)].name,
+                        pe);
+                }
+            }
+            ImGui::Unindent(8.0f);
 
             ImGui::TextDisabled("Emission");
             ImGui::Indent(8.0f);

@@ -1069,4 +1069,55 @@ private:
     std::vector<HistoryLine> history_;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// RuntimeStatsPanel — unified view across Animator / Particle / Profiler (M28)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Aggregates the editor's runtime systems into one observation surface so
+// users don't need three separate panels open to read live numbers.
+// Built around a `Snapshot` POD that the editor refreshes each frame from
+// supplier callbacks.  Tests inject snapshots directly so they don't need
+// the systems running.
+class RuntimeStatsPanel : public Panel {
+public:
+    RuntimeStatsPanel() : Panel("Runtime Stats") {}
+    void on_render() override;
+    const char* type_id() const override { return "RuntimeStatsPanel"; }
+
+    /// Live counters — all signed only because we never decrement past 0.
+    /// Defaults are explicitly 0 / 0.0 so a panel rendered before the
+    /// first refresh shows "0/0/0.0 ms" rather than garbage.
+    struct Snapshot {
+        // Animator
+        u32 animator_components{0};   // count with AnimatorComponent
+        u32 animator_playing{0};      // subset that's actively playing
+
+        // Particles
+        u32 particle_emitters{0};     // count with ParticleEmitterComponent
+        u32 particles_alive{0};       // sum across every emitter
+
+        // Profiler / frame
+        f32 fps{0.0f};
+        f32 frame_ms{0.0f};
+        u32 entity_count{0};
+    };
+
+    /// Pure setter — tests use this to drive the panel headlessly.  In
+    /// production, editor_main calls this per-frame inside the dock-pump
+    /// loop with values pulled fresh from each system.
+    void set_snapshot(const Snapshot& s) { snapshot_ = s; }
+    const Snapshot& snapshot() const { return snapshot_; }
+
+    /// Optional supplier — when bound, the panel calls it once per
+    /// render and overwrites the cached snapshot.  Convenience for
+    /// hosts that don't want to push manually.
+    using Supplier = std::function<Snapshot()>;
+    void set_supplier(Supplier s) { supplier_ = std::move(s); }
+    bool has_supplier() const { return static_cast<bool>(supplier_); }
+
+private:
+    Snapshot snapshot_{};
+    Supplier supplier_;
+};
+
 } // namespace nexus::editor

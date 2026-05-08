@@ -1101,6 +1101,59 @@ TEST(LuaConsolePanel, SetSourceTruncatesAtBufferCap) {
     EXPECT_EQ(p.source().size(), LuaConsolePanel::kBufferCap);
 }
 
+// =============================================================================
+// RuntimeStatsPanel (M28) — snapshot + supplier wiring
+// =============================================================================
+
+TEST(RuntimeStatsPanel, DefaultSnapshotIsZero) {
+    RuntimeStatsPanel p;
+    const auto& s = p.snapshot();
+    EXPECT_EQ(s.animator_components, 0u);
+    EXPECT_EQ(s.animator_playing,    0u);
+    EXPECT_EQ(s.particle_emitters,   0u);
+    EXPECT_EQ(s.particles_alive,     0u);
+    EXPECT_FLOAT_EQ(s.fps,           0.0f);
+    EXPECT_FLOAT_EQ(s.frame_ms,      0.0f);
+    EXPECT_EQ(s.entity_count,        0u);
+    EXPECT_FALSE(p.has_supplier());
+    EXPECT_STREQ(p.type_id(), "RuntimeStatsPanel");
+}
+
+TEST(RuntimeStatsPanel, SetSnapshotRoundTrips) {
+    RuntimeStatsPanel p;
+    RuntimeStatsPanel::Snapshot s;
+    s.animator_components = 5;
+    s.animator_playing    = 3;
+    s.particle_emitters   = 2;
+    s.particles_alive     = 200;
+    s.fps                 = 60.0f;
+    s.frame_ms            = 16.67f;
+    s.entity_count        = 42;
+    p.set_snapshot(s);
+
+    const auto& got = p.snapshot();
+    EXPECT_EQ(got.animator_components, 5u);
+    EXPECT_EQ(got.animator_playing,    3u);
+    EXPECT_EQ(got.particle_emitters,   2u);
+    EXPECT_EQ(got.particles_alive,     200u);
+    EXPECT_FLOAT_EQ(got.fps,           60.0f);
+    EXPECT_NEAR(got.frame_ms,         16.67f, 1e-3f);
+    EXPECT_EQ(got.entity_count,        42u);
+}
+
+TEST(RuntimeStatsPanel, SupplierBindIsRoundTrippable) {
+    RuntimeStatsPanel p;
+    EXPECT_FALSE(p.has_supplier());
+    p.set_supplier([] {
+        RuntimeStatsPanel::Snapshot s;
+        s.fps = 99.0f;
+        return s;
+    });
+    EXPECT_TRUE(p.has_supplier());
+    p.set_supplier({});
+    EXPECT_FALSE(p.has_supplier());
+}
+
 TEST(AnimationPanel, KeySelectionRoundTripsAndClearable) {
     AnimationPanel p;
     EXPECT_EQ(p.selected_key_kind(), AnimationPanel::KeyKind::None);

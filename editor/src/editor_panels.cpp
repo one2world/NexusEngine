@@ -4248,6 +4248,41 @@ void AnimationPanel::on_render() {
     ImGui::End();
 }
 
+// ── RuntimeStatsPanel ───────────────────────────────────────────────────────
+
+void RuntimeStatsPanel::on_render() {
+    if (!visible_) return;
+    if (!ImGui::Begin(title_.c_str(), &visible_)) {
+        ImGui::End();
+        return;
+    }
+
+    // Pull a fresh snapshot from the supplier when bound; otherwise the
+    // host is responsible for calling set_snapshot() before render.
+    if (supplier_) {
+        snapshot_ = supplier_();
+    }
+
+    if (ImGui::CollapsingHeader("Frame", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("FPS:        %.1f", static_cast<double>(snapshot_.fps));
+        ImGui::Text("Frame ms:   %.2f", static_cast<double>(snapshot_.frame_ms));
+        ImGui::Text("Entities:   %u",   snapshot_.entity_count);
+    }
+    if (ImGui::CollapsingHeader("Animation",
+                                  ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("Animators:  %u (%u playing)",
+                     snapshot_.animator_components,
+                     snapshot_.animator_playing);
+    }
+    if (ImGui::CollapsingHeader("Particles",
+                                  ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("Emitters:   %u",   snapshot_.particle_emitters);
+        ImGui::Text("Alive:      %u",   snapshot_.particles_alive);
+    }
+
+    ImGui::End();
+}
+
 // ── LuaConsolePanel ─────────────────────────────────────────────────────────
 
 void LuaConsolePanel::set_source(std::string s) {

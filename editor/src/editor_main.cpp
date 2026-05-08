@@ -375,6 +375,11 @@ static void register_default_panels(EditorState& state) {
         lua_panel->set_visible(false);
         panels.add_panel(std::move(lua_panel));
     }
+    {
+        auto stats_panel = std::make_unique<RuntimeStatsPanel>();
+        stats_panel->set_visible(false);
+        panels.add_panel(std::move(stats_panel));
+    }
 
     // Set up default dock layout.
     auto& dock = panels.dock_space();
@@ -389,6 +394,7 @@ static void register_default_panels(EditorState& state) {
     dock.dock("Animation",       DockPosition::Bottom, 0.30f);
     dock.dock("Particle Editor", DockPosition::Right,  0.30f);
     dock.dock("Lua Console",     DockPosition::Bottom, 0.30f);
+    dock.dock("Runtime Stats",   DockPosition::Right,  0.25f);
 }
 
 static int run(int /*argc*/, char* /*argv*/[]) {
@@ -775,6 +781,39 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                     editor_state.set_status(
                         std::string("Applied particle preset: ") + p.name);
                     return true;
+                });
+        }
+
+        // Runtime Stats supplier — pulled fresh each render from the
+        // live ECS + animator + particle system so the panel's
+        // numbers track the simulation without per-frame push.
+        if (auto* stats_panel = editor_state.panels()
+                .find_typed<RuntimeStatsPanel>("Runtime Stats")) {
+            stats_panel->set_supplier(
+                [&scene, &particle_system]()
+                    -> nexus::editor::RuntimeStatsPanel::Snapshot {
+                    nexus::editor::RuntimeStatsPanel::Snapshot s;
+                    auto& reg = scene.registry();
+                    reg.each<AnimatorComponent>(
+                        [&](u32 /*ent*/, AnimatorComponent& a) {
+                            ++s.animator_components;
+                            if (a.playing) ++s.animator_playing;
+                        });
+                    reg.each<ParticleEmitterComponent>(
+                        [&](u32 ent, ParticleEmitterComponent& /*em*/) {
+                            ++s.particle_emitters;
+                            s.particles_alive +=
+                                particle_system.particle_count_for(ent);
+                        });
+                    s.entity_count = static_cast<u32>(reg.size());
+                    // Pull frame timing from ImGui's IO since Timer
+                    // doesn't exist in this scope yet.  ImGui's framerate
+                    // is a smoothed value over the last 120 frames —
+                    // good signal for a stats panel without per-frame
+                    // jitter.
+                    s.fps          = ImGui::GetIO().Framerate;
+                    s.frame_ms     = s.fps > 0.0f ? 1000.0f / s.fps : 0.0f;
+                    return s;
                 });
         }
 

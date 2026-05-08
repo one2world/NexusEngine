@@ -205,6 +205,124 @@ TEST(ConsolePanel, TypeId) {
     EXPECT_STREQ(cp.type_id(), "ConsolePanel");
 }
 
+// ── M34: source classification + filter chips ──────────────────────────────
+
+TEST(ConsolePanel, SourceClassifierMatchesPrefixes) {
+    EXPECT_EQ(classify_console_source("plain log"),       LogSource::Engine);
+    EXPECT_EQ(classify_console_source("[Lua] result"),    LogSource::Lua);
+    EXPECT_EQ(classify_console_source("[Lua print] hi"),  LogSource::LuaPrint);
+    EXPECT_EQ(classify_console_source("[Script] err"),    LogSource::ScriptError);
+    EXPECT_EQ(classify_console_source("[Editor] note"),   LogSource::Editor);
+}
+
+TEST(ConsolePanel, SourceClassifierLuaPrintBeforeLua) {
+    // The prefix "[Lua print]" starts with "[Lua" but must classify
+    // as LuaPrint not Lua — order matters in the matcher.
+    EXPECT_EQ(classify_console_source("[Lua print] x"), LogSource::LuaPrint);
+    EXPECT_EQ(classify_console_source("[Lua] x"),       LogSource::Lua);
+}
+
+TEST(ConsolePanel, AddMessageAutoTagsSourceFromPrefix) {
+    ConsolePanel cp;
+    cp.add_message("[Lua] hello",       LogLevel::Info);
+    cp.add_message("[Lua print] world", LogLevel::Info);
+    cp.add_message("[Script] boom",     LogLevel::Error);
+    cp.add_message("plain engine log",  LogLevel::Info);
+
+    ASSERT_EQ(cp.message_count(), 4u);
+    EXPECT_EQ(cp.messages()[0].source, LogSource::Lua);
+    EXPECT_EQ(cp.messages()[1].source, LogSource::LuaPrint);
+    EXPECT_EQ(cp.messages()[2].source, LogSource::ScriptError);
+    EXPECT_EQ(cp.messages()[3].source, LogSource::Engine);
+}
+
+TEST(ConsolePanel, ExplicitSourceOverridesPrefix) {
+    // The explicit overload trusts the caller — text prefix is ignored.
+    ConsolePanel cp;
+    cp.add_message("plain text", LogLevel::Info, LogSource::Lua);
+    EXPECT_EQ(cp.messages().front().source, LogSource::Lua);
+}
+
+TEST(ConsolePanel, SourceFilterDefaultsAllShown) {
+    ConsolePanel cp;
+    EXPECT_TRUE(cp.is_source_shown(LogSource::Engine));
+    EXPECT_TRUE(cp.is_source_shown(LogSource::Lua));
+    EXPECT_TRUE(cp.is_source_shown(LogSource::LuaPrint));
+    EXPECT_TRUE(cp.is_source_shown(LogSource::ScriptError));
+    EXPECT_TRUE(cp.is_source_shown(LogSource::Editor));
+}
+
+TEST(ConsolePanel, SourceFilterToggle) {
+    ConsolePanel cp;
+    cp.set_source_filter(LogSource::Lua, false);
+    EXPECT_FALSE(cp.is_source_shown(LogSource::Lua));
+    EXPECT_TRUE(cp.is_source_shown(LogSource::LuaPrint));  // unaffected
+    cp.set_source_filter(LogSource::Lua, true);
+    EXPECT_TRUE(cp.is_source_shown(LogSource::Lua));
+}
+
+TEST(ConsolePanel, SourceCountIncrementsPerInsertion) {
+    ConsolePanel cp;
+    cp.add_message("a", LogLevel::Info, LogSource::Lua);
+    cp.add_message("b", LogLevel::Info, LogSource::Lua);
+    cp.add_message("c", LogLevel::Info, LogSource::LuaPrint);
+
+    EXPECT_EQ(cp.source_count(LogSource::Lua),         2u);
+    EXPECT_EQ(cp.source_count(LogSource::LuaPrint),    1u);
+    EXPECT_EQ(cp.source_count(LogSource::Engine),      0u);
+    EXPECT_EQ(cp.source_count(LogSource::ScriptError), 0u);
+}
+
+TEST(ConsolePanel, SourceCountIncrementsOnCollapsedRepeat) {
+    // Collapse mode folds repeats but the per-source counter tracks
+    // *occurrences*, not unique entries (mirrors per-level counters).
+    ConsolePanel cp;
+    cp.set_collapse_mode(true);
+    cp.add_message("dup", LogLevel::Info, LogSource::Lua);
+    cp.add_message("dup", LogLevel::Info, LogSource::Lua);
+    cp.add_message("dup", LogLevel::Info, LogSource::Lua);
+
+    EXPECT_EQ(cp.message_count(), 1u);
+    EXPECT_EQ(cp.messages().front().count, 3u);
+    EXPECT_EQ(cp.source_count(LogSource::Lua), 3u);
+}
+
+TEST(ConsolePanel, ClearResetsSourceCounts) {
+    ConsolePanel cp;
+    cp.add_message("a", LogLevel::Info, LogSource::Lua);
+    cp.add_message("b", LogLevel::Info, LogSource::ScriptError);
+    cp.clear();
+
+    EXPECT_EQ(cp.source_count(LogSource::Lua),         0u);
+    EXPECT_EQ(cp.source_count(LogSource::ScriptError), 0u);
+}
+
+TEST(ConsolePanel, SourceCountDecrementsOnPrune) {
+    ConsolePanel cp;
+    cp.set_max_messages(2);
+    cp.add_message("1", LogLevel::Info, LogSource::Lua);       // pruned
+    cp.add_message("2", LogLevel::Info, LogSource::Lua);
+    cp.add_message("3", LogLevel::Info, LogSource::LuaPrint);
+
+    EXPECT_EQ(cp.message_count(), 2u);
+    EXPECT_EQ(cp.source_count(LogSource::Lua),      1u);
+    EXPECT_EQ(cp.source_count(LogSource::LuaPrint), 1u);
+}
+
+TEST(ConsolePanel, CollapseRequiresSameSourceForFold) {
+    // Same text + level but different source must NOT fold — sources
+    // are part of the dedup identity.  Otherwise a Lua print collision
+    // would silently steal the count of an engine log.
+    ConsolePanel cp;
+    cp.set_collapse_mode(true);
+    cp.add_message("ping", LogLevel::Info, LogSource::Engine);
+    cp.add_message("ping", LogLevel::Info, LogSource::LuaPrint);
+
+    EXPECT_EQ(cp.message_count(), 2u);
+    EXPECT_EQ(cp.source_count(LogSource::Engine),   1u);
+    EXPECT_EQ(cp.source_count(LogSource::LuaPrint), 1u);
+}
+
 // =============================================================================
 // AssetBrowserPanel
 // =============================================================================

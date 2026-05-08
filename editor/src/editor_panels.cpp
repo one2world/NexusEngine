@@ -3076,6 +3076,7 @@ void ConsolePanel::on_render() {
         char ts[32];
         for (const auto& msg : messages_) {
             if (!is_level_shown(msg.level)) continue;
+            if (!is_source_shown(msg.source)) continue;
             if (!icontains(msg.text, search_)) continue;
             format_timestamp(msg.timestamp, ts, sizeof(ts));
             out += '[';
@@ -3124,7 +3125,35 @@ void ConsolePanel::on_render() {
         ImGui::PopID();
     }
 
-    // ── Toolbar row 2: search box ─────────────────────────────────────
+    // ── Toolbar row 2: source filter chips (M34) ───────────────────────
+    //
+    // Each chip is a toggle button labelled with the source name + a
+    // running count.  Active chips render in a tinted color so the user
+    // can see at a glance which streams are visible.  Hidden chips dim
+    // to grey, matching the level-filter convention above.
+    const struct { LogSource src; const char* label; ImVec4 col; } chips[] = {
+        { LogSource::Engine,      "Engine",      ImVec4(0.70f, 0.85f, 1.00f, 1.0f) },
+        { LogSource::Lua,         "Lua",         ImVec4(0.65f, 0.95f, 0.65f, 1.0f) },
+        { LogSource::LuaPrint,    "Lua print",   ImVec4(0.85f, 0.95f, 0.55f, 1.0f) },
+        { LogSource::ScriptError, "Script err",  ImVec4(1.00f, 0.55f, 0.55f, 1.0f) },
+        { LogSource::Editor,      "Editor",      ImVec4(0.85f, 0.85f, 0.85f, 1.0f) },
+    };
+    for (const auto& chip : chips) {
+        const u32 idx = static_cast<u32>(chip.src);
+        const bool active = show_source_[idx];
+        ImGui::PushID(chip.label);
+        ImVec4 col = active ? chip.col : ImVec4(0.45f, 0.45f, 0.45f, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, col);
+        char buf[40];
+        std::snprintf(buf, sizeof(buf), "%s %u", chip.label, source_counts_[idx]);
+        if (ImGui::SmallButton(buf)) show_source_[idx] = !show_source_[idx];
+        ImGui::PopStyleColor();
+        ImGui::PopID();
+        ImGui::SameLine();
+    }
+    ImGui::NewLine();
+
+    // ── Toolbar row 3: search box ─────────────────────────────────────
     char search_buf[256];
     std::snprintf(search_buf, sizeof(search_buf), "%s", search_.c_str());
     ImGui::SetNextItemWidth(-1.0f);
@@ -3141,6 +3170,7 @@ void ConsolePanel::on_render() {
     char ts[32];
     for (const auto& msg : messages_) {
         if (!is_level_shown(msg.level)) continue;
+        if (!is_source_shown(msg.source)) continue;
         if (!icontains(msg.text, search_)) continue;
 
         ImVec4 col = level_color(msg.level);
@@ -3170,8 +3200,28 @@ void ConsolePanel::on_render() {
     ui::end_window();
 }
 
+// ── Source classification (M34) ────────────────────────────────────────────
+//
+// Prefix sniffing on the message text.  Order matters: "[Lua print]" must
+// be checked before "[Lua]" so the longer prefix wins.  Anything else is
+// treated as Engine — that's the silent default for spdlog-routed
+// messages so existing call sites keep behaving identically.
+LogSource classify_console_source(const std::string& text) {
+    if (text.rfind("[Lua print]", 0) == 0) return LogSource::LuaPrint;
+    if (text.rfind("[Lua]",       0) == 0) return LogSource::Lua;
+    if (text.rfind("[Script]",    0) == 0) return LogSource::ScriptError;
+    if (text.rfind("[Editor]",    0) == 0) return LogSource::Editor;
+    return LogSource::Engine;
+}
+
 void ConsolePanel::add_message(const std::string& text, LogLevel level) {
+    add_message(text, level, classify_console_source(text));
+}
+
+void ConsolePanel::add_message(const std::string& text, LogLevel level,
+                                LogSource source) {
     const f64 ts = ImGui::GetCurrentContext() ? ImGui::GetTime() : 0.0;
+    const u32 src_idx = static_cast<u32>(source);
 
     // Collapse mode: fold into the most recent matching entry.  Only the
     // last message is checked — Unity behavior: distinct messages between
@@ -3179,17 +3229,19 @@ void ConsolePanel::add_message(const std::string& text, LogLevel level) {
     const u64 key = console_dedup_hash(text, level);
     if (collapse_ && !messages_.empty()) {
         ConsoleMessage& back = messages_.back();
-        if (back.dedup_key == key && back.text == text && back.level == level) {
+        if (back.dedup_key == key && back.text == text &&
+            back.level == level && back.source == source) {
             ++back.count;
             back.timestamp = ts;
-            // Severity counters increment per *occurrence*, matching Unity's
-            // status-bar badge behavior.
+            // Severity + source counters increment per *occurrence*, matching
+            // Unity's status-bar badge behavior.
             switch (level) {
                 case LogLevel::Info:    ++info_count_;    break;
                 case LogLevel::Warning: ++warning_count_; break;
                 case LogLevel::Error:   ++error_count_;   break;
                 case LogLevel::Debug:   ++debug_count_;   break;
             }
+            ++source_counts_[src_idx];
             if (level == LogLevel::Error && error_pause_) error_pause_request_ = true;
             return;
         }
@@ -3198,6 +3250,7 @@ void ConsolePanel::add_message(const std::string& text, LogLevel level) {
     ConsoleMessage msg;
     msg.text = text;
     msg.level = level;
+    msg.source = source;
     msg.timestamp = ts;
     msg.dedup_key = key;
     messages_.push_back(std::move(msg));
@@ -3208,11 +3261,13 @@ void ConsolePanel::add_message(const std::string& text, LogLevel level) {
         case LogLevel::Error:   ++error_count_;   break;
         case LogLevel::Debug:   ++debug_count_;   break;
     }
+    ++source_counts_[src_idx];
     if (level == LogLevel::Error && error_pause_) error_pause_request_ = true;
 
     // Prune oldest while preserving severity-counter parity with the buffer.
     while (messages_.size() > max_messages_) {
         const LogLevel dropped = messages_.front().level;
+        const LogSource dropped_src = messages_.front().source;
         const u32 dropped_count = messages_.front().count;
         auto dec = [&](u32& c) { c = c > dropped_count ? c - dropped_count : 0; };
         switch (dropped) {
@@ -3221,6 +3276,7 @@ void ConsolePanel::add_message(const std::string& text, LogLevel level) {
             case LogLevel::Error:   dec(error_count_);   break;
             case LogLevel::Debug:   dec(debug_count_);   break;
         }
+        dec(source_counts_[static_cast<u32>(dropped_src)]);
         messages_.erase(messages_.begin());
     }
 }
@@ -3231,6 +3287,7 @@ void ConsolePanel::clear() {
     warning_count_ = 0;
     error_count_ = 0;
     debug_count_ = 0;
+    for (u32& c : source_counts_) c = 0;
     error_pause_request_ = false;
 }
 
@@ -3262,6 +3319,21 @@ bool ConsolePanel::is_level_shown(LogLevel level) const {
         case LogLevel::Debug:   return show_debug_;
     }
     return true;
+}
+
+void ConsolePanel::set_source_filter(LogSource source, bool show) {
+    const u32 idx = static_cast<u32>(source);
+    if (idx < kSourceCount) show_source_[idx] = show;
+}
+
+bool ConsolePanel::is_source_shown(LogSource source) const {
+    const u32 idx = static_cast<u32>(source);
+    return idx < kSourceCount ? show_source_[idx] : true;
+}
+
+u32 ConsolePanel::source_count(LogSource source) const {
+    const u32 idx = static_cast<u32>(source);
+    return idx < kSourceCount ? source_counts_[idx] : 0u;
 }
 
 // ── AssetBrowserPanel ───────────────────────────────────────────────────────

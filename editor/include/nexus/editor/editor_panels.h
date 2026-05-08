@@ -563,9 +563,34 @@ enum class LogLevel : u8 {
     Info, Warning, Error, Debug
 };
 
+// ── Source classification (M34) ─────────────────────────────────────────
+//
+// Every ConsoleMessage is tagged with the subsystem that produced it so
+// the panel can show per-source filter chips ([Engine] / [Lua] /
+// [Lua print] / [Script error]).  Existing call sites that use only the
+// `add_message(text, level)` overload have their source auto-classified
+// by prefix-sniffing the text — see `classify_console_source()` and the
+// editor_main wiring (M29 / M31 / M32) that already chose those prefixes.
+// New call sites should pass the source explicitly.
+enum class LogSource : u8 {
+    Engine,       // spdlog → ConsolePanelSink (no prefix)
+    Lua,          // Lua Console panel results — "[Lua] ..."
+    LuaPrint,     // Lua print() output (M32) — "[Lua print] ..."
+    ScriptError,  // ScriptEngine::set_error_handler (M31) — "[Script] ..."
+    Editor        // status messages emitted from the editor itself
+};
+
+/// Auto-classify a message's source from its leading prefix.  Used when
+/// callers invoke the legacy `add_message(text, level)` overload — the
+/// existing prefixes from M29/M31/M32 are stable so this stays a pure
+/// string-pattern match.  Returns LogSource::Engine for unknown prefixes
+/// so spdlog-routed messages keep their "Engine" classification.
+LogSource classify_console_source(const std::string& text);
+
 struct ConsoleMessage {
     std::string text;
     LogLevel level{LogLevel::Info};
+    LogSource source{LogSource::Engine};
     /// Wall-clock seconds since the editor process began — set by
     /// add_message at insertion time.  0 means "unset" (legacy callers).
     f64 timestamp{0.0};
@@ -585,6 +610,10 @@ public:
     const char* type_id() const override { return "ConsolePanel"; }
 
     void add_message(const std::string& text, LogLevel level = LogLevel::Info);
+    /// Source-aware overload (M34).  Caller supplies the producing
+    /// subsystem so the panel doesn't have to prefix-sniff.  Used by
+    /// editor_main when wiring Lua / Script error / Lua print sinks.
+    void add_message(const std::string& text, LogLevel level, LogSource source);
     void clear();
 
     const std::vector<ConsoleMessage>& messages() const { return messages_; }
@@ -597,9 +626,19 @@ public:
     u32 error_count() const { return error_count_; }
     u32 debug_count() const { return debug_count_; }
 
+    /// Per-source counters (M34) — feed the source filter chip badges.
+    u32 source_count(LogSource s) const;
+
     /// Filter by log level.
     void set_level_filter(LogLevel level, bool show);
     bool is_level_shown(LogLevel level) const;
+
+    /// Filter by source (M34) — multi-source chips, all sources visible
+    /// by default so existing UX is unchanged.  When every source is
+    /// hidden the panel still renders the toolbar so the user can
+    /// re-enable a chip without going through a menu.
+    void set_source_filter(LogSource source, bool show);
+    bool is_source_shown(LogSource source) const;
 
     /// Smart auto-scroll: scrolls to bottom only when the user was already at
     /// the bottom on the previous frame.  Toggling this off disables the
@@ -657,6 +696,12 @@ private:
     u32 warning_count_{0};
     u32 error_count_{0};
     u32 debug_count_{0};
+
+    // Per-source state (M34).  Aligned with LogSource enum order; new
+    // sources added to the enum must extend both arrays.
+    static constexpr u32 kSourceCount = 5;
+    bool show_source_[kSourceCount]{true, true, true, true, true};
+    u32  source_counts_[kSourceCount]{0, 0, 0, 0, 0};
     std::string search_;
 };
 

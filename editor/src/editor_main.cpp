@@ -858,7 +858,8 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                     [console](bool ok, const std::string& msg) {
                         console->add_message(
                             std::string("[Lua] ") + msg,
-                            ok ? LogLevel::Info : LogLevel::Error);
+                            ok ? LogLevel::Info : LogLevel::Error,
+                            LogSource::Lua);
                     });
             }
 
@@ -879,7 +880,8 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                         out += " — ";
                     }
                     out += err.message;
-                    console->add_message(std::move(out), LogLevel::Error);
+                    console->add_message(std::move(out), LogLevel::Error,
+                                         LogSource::ScriptError);
                 });
 
             // M32 — Lua print() flows into Console.  The shared `print`
@@ -892,7 +894,8 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                 [console](const std::string& msg) {
                     console->add_message(
                         std::string("[Lua print] ") + msg,
-                        LogLevel::Info);
+                        LogLevel::Info,
+                        LogSource::LuaPrint);
                 });
         }
 

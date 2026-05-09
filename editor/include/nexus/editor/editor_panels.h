@@ -1265,7 +1265,7 @@ public:
     /// affect evaluation).
     bool set_name(u32 index, std::string name);
 
-    void clear_watches() { watches_.clear(); }
+    void clear_watches() { watches_.clear(); dirty_ = true; }
     u32 watch_count() const { return static_cast<u32>(watches_.size()); }
     const std::vector<WatchEntry>& watches() const { return watches_; }
     const WatchEntry* watch_at(u32 index) const {
@@ -1301,11 +1301,25 @@ public:
     bool        save_to_file(const std::string& path) const;
     bool        load_from_file(const std::string& path);
 
+    // ── Dirty-flag persistence (M38) ───────────────────────────────────
+    //
+    // The panel marks itself dirty whenever the watch list mutates
+    // (add/remove/set_expression/set_name/clear).  Successful
+    // save_to_file / load_from_file / load_from_json clear the flag.
+    // editor_main checks is_dirty() on shutdown (and at a periodic
+    // throttle) to decide whether the on-disk watches.json needs to
+    // be rewritten — this keeps pinned expressions across crashes
+    // without doing disk I/O on every keystroke.
+    bool is_dirty() const { return dirty_; }
+    void clear_dirty() { dirty_ = false; }
+    void mark_persistence_dirty() { dirty_ = true; }
+
 private:
     std::vector<WatchEntry> watches_;
     Evaluator               evaluator_;
     f32                     eval_interval_{0.1f};   // 10 Hz default
     f32                     eval_accumulator_{0.0f};
+    bool                    dirty_{false};
 };
 
 } // namespace nexus::editor

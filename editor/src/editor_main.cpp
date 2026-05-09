@@ -933,6 +933,10 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                         }
                         return r;
                     });
+                // M38 — best-effort load of the persisted watch list.
+                // Absence is normal for a fresh project; the user just
+                // hasn't pinned any expressions yet.
+                (void)watch_panel->load_from_file("watches.json");
             }
 
             // M36 — double-clicking a [Script] error row jumps the user
@@ -2178,6 +2182,18 @@ static int run(int /*argc*/, char* /*argv*/[]) {
         }
 
         // ── Shutdown (reverse init order) ───────────────────────────────
+
+        // M38 — best-effort persist of the Watch panel.  Only writes
+        // when dirty so the file's mtime tracks actual user changes.
+        // Ignored on failure: a missing watches.json simply means the
+        // user has nothing to restore next launch.
+        if (auto* watch_panel = editor_state.panels()
+                .find_typed<WatchPanel>("Watch")) {
+            if (watch_panel->is_dirty()) {
+                (void)watch_panel->save_to_file("watches.json");
+            }
+        }
+
         renderer_3d.destroy_mesh(primitive_sphere);
         renderer_3d.destroy_mesh(primitive_plane);
         renderer_3d.destroy_mesh(primitive_cube);

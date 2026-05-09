@@ -4430,12 +4430,14 @@ u32 WatchPanel::add_watch(std::string expression, std::string name) {
     e.expression = std::move(expression);
     e.name       = name.empty() ? e.expression : std::move(name);
     watches_.push_back(std::move(e));
+    dirty_ = true;
     return static_cast<u32>(watches_.size() - 1);
 }
 
 bool WatchPanel::remove_watch(u32 index) {
     if (index >= watches_.size()) return false;
     watches_.erase(watches_.begin() + static_cast<std::ptrdiff_t>(index));
+    dirty_ = true;
     return true;
 }
 
@@ -4447,12 +4449,14 @@ bool WatchPanel::set_expression(u32 index, std::string expression) {
     w.last_error.clear();
     w.ok        = true;
     w.evaluated = false;
+    dirty_ = true;
     return true;
 }
 
 bool WatchPanel::set_name(u32 index, std::string name) {
     if (index >= watches_.size()) return false;
     watches_[index].name = std::move(name);
+    dirty_ = true;
     return true;
 }
 
@@ -4512,6 +4516,7 @@ bool WatchPanel::load_from_json(const std::string& json_text) {
         incoming.push_back(std::move(e));
     }
     watches_ = std::move(incoming);
+    dirty_   = false;  // freshly loaded from disk
     return true;
 }
 
@@ -4519,7 +4524,12 @@ bool WatchPanel::save_to_file(const std::string& path) const {
     std::ofstream out(path);
     if (!out) return false;
     out << save_to_json();
-    return out.good();
+    if (!out.good()) return false;
+    // const_cast: the visible-on-disk state is in sync, so we clear
+    // the dirty flag.  is_dirty() is a transient editor concern, not
+    // part of the panel's logical state.
+    const_cast<WatchPanel*>(this)->dirty_ = false;
+    return true;
 }
 
 bool WatchPanel::load_from_file(const std::string& path) {

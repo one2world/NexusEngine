@@ -644,6 +644,133 @@ TEST(WatchPanel, TypeIdAndDefaults) {
     EXPECT_FALSE(wp.has_evaluator());
 }
 
+// ── M38: dirty-flag persistence ──────────────────────────────────────────────
+
+TEST(WatchPanel, FreshPanelIsNotDirty) {
+    WatchPanel wp;
+    EXPECT_FALSE(wp.is_dirty());
+}
+
+TEST(WatchPanel, AddWatchSetsDirty) {
+    WatchPanel wp;
+    wp.add_watch("Math.PI");
+    EXPECT_TRUE(wp.is_dirty());
+}
+
+TEST(WatchPanel, RemoveWatchSetsDirty) {
+    WatchPanel wp;
+    wp.add_watch("a");
+    wp.clear_dirty();
+    EXPECT_TRUE(wp.remove_watch(0));
+    EXPECT_TRUE(wp.is_dirty());
+}
+
+TEST(WatchPanel, RemoveOOBDoesNotSetDirty) {
+    WatchPanel wp;
+    EXPECT_FALSE(wp.remove_watch(99));
+    EXPECT_FALSE(wp.is_dirty());
+}
+
+TEST(WatchPanel, SetExpressionSetsDirty) {
+    WatchPanel wp;
+    wp.add_watch("a");
+    wp.clear_dirty();
+    EXPECT_TRUE(wp.set_expression(0, "b"));
+    EXPECT_TRUE(wp.is_dirty());
+}
+
+TEST(WatchPanel, SetExpressionOOBDoesNotSetDirty) {
+    WatchPanel wp;
+    EXPECT_FALSE(wp.set_expression(0, "x"));
+    EXPECT_FALSE(wp.is_dirty());
+}
+
+TEST(WatchPanel, SetNameSetsDirty) {
+    WatchPanel wp;
+    wp.add_watch("expr");
+    wp.clear_dirty();
+    EXPECT_TRUE(wp.set_name(0, "Friendly"));
+    EXPECT_TRUE(wp.is_dirty());
+}
+
+TEST(WatchPanel, ClearWatchesSetsDirty) {
+    WatchPanel wp;
+    wp.clear_watches();   // even on empty panel — record the action
+    EXPECT_TRUE(wp.is_dirty());
+}
+
+TEST(WatchPanel, ClearDirtyResetsFlag) {
+    WatchPanel wp;
+    wp.add_watch("a");
+    EXPECT_TRUE(wp.is_dirty());
+    wp.clear_dirty();
+    EXPECT_FALSE(wp.is_dirty());
+}
+
+TEST(WatchPanel, TickDoesNotSetDirty) {
+    // Evaluation is transient; the watch list itself is unchanged so
+    // the on-disk file should not need rewriting.
+    WatchPanel wp;
+    wp.set_evaluator([](const std::string&) {
+        return WatchPanel::EvalResult{true, "v", ""};
+    });
+    wp.add_watch("x");
+    wp.clear_dirty();
+    wp.tick();
+    EXPECT_FALSE(wp.is_dirty());
+}
+
+TEST(WatchPanel, LoadFromJsonClearsDirty) {
+    WatchPanel wp;
+    wp.add_watch("seed");
+    EXPECT_TRUE(wp.is_dirty());
+    const std::string j = R"({"watches":[{"name":"a","expression":"b"}]})";
+    EXPECT_TRUE(wp.load_from_json(j));
+    EXPECT_FALSE(wp.is_dirty());
+}
+
+TEST(WatchPanel, LoadFromJsonFailureLeavesDirtyAlone) {
+    WatchPanel wp;
+    wp.add_watch("seed");
+    ASSERT_TRUE(wp.is_dirty());
+    EXPECT_FALSE(wp.load_from_json("not json"));
+    EXPECT_TRUE(wp.is_dirty());  // failed load must not clear pre-existing dirt
+}
+
+TEST(WatchPanel, SaveToFileClearsDirtyAndRoundTrips) {
+    namespace fs = std::filesystem;
+    const auto path = fs::temp_directory_path() /
+                      "nexus_test_watches_dirty.json";
+    fs::remove(path);
+
+    WatchPanel wp;
+    wp.add_watch("Math.PI", "pi");
+    wp.add_watch("Entity.count()");
+    ASSERT_TRUE(wp.is_dirty());
+
+    EXPECT_TRUE(wp.save_to_file(path.string()));
+    EXPECT_FALSE(wp.is_dirty());
+
+    WatchPanel restored;
+    EXPECT_TRUE(restored.load_from_file(path.string()));
+    EXPECT_FALSE(restored.is_dirty());
+    ASSERT_EQ(restored.watch_count(), 2u);
+    EXPECT_EQ(restored.watch_at(0)->name,       "pi");
+    EXPECT_EQ(restored.watch_at(1)->expression, "Entity.count()");
+
+    fs::remove(path);
+}
+
+TEST(WatchPanel, MarkPersistenceDirtyIsExposed) {
+    // Public hook for hosts that mutate watches via a non-canonical path
+    // (e.g. importing from another panel) and need to flag the on-disk
+    // file as stale without going through one of the standard mutators.
+    WatchPanel wp;
+    EXPECT_FALSE(wp.is_dirty());
+    wp.mark_persistence_dirty();
+    EXPECT_TRUE(wp.is_dirty());
+}
+
 // =============================================================================
 // AssetBrowserPanel
 // =============================================================================

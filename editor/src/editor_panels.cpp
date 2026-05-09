@@ -3199,6 +3199,37 @@ void ConsolePanel::on_render() {
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
             request_jump_at(static_cast<u32>(i));
         }
+        // M37 — right-click context menu.  Reveal / Open are gated on
+        // (msg.source_file != "") so engine logs and Lua print rows
+        // get a Copy-only menu while ScriptError rows get the full set.
+        if (ImGui::BeginPopupContextItem("##row_ctx")) {
+            if (ImGui::MenuItem("Copy")) {
+                ImGui::SetClipboardText(
+                    format_row_for_clipboard(static_cast<u32>(i)).c_str());
+            }
+            if (ImGui::MenuItem("Copy without timestamp")) {
+                ImGui::SetClipboardText(
+                    format_row_for_clipboard(static_cast<u32>(i), false).c_str());
+            }
+            const bool has_file = !msg.source_file.empty();
+            ImGui::Separator();
+            if (msg.source_line > 0 && on_jump_) {
+                if (ImGui::MenuItem("Jump to source")) {
+                    request_jump_at(static_cast<u32>(i));
+                }
+            }
+            if (has_file && on_reveal_) {
+                if (ImGui::MenuItem("Reveal in Asset Browser")) {
+                    request_reveal_at(static_cast<u32>(i));
+                }
+            }
+            if (has_file && on_open_) {
+                if (ImGui::MenuItem("Open externally")) {
+                    request_open_at(static_cast<u32>(i));
+                }
+            }
+            ImGui::EndPopup();
+        }
         ImGui::PopID();
         ImGui::PopStyleColor();
     }
@@ -3368,6 +3399,49 @@ bool ConsolePanel::request_jump_at(u32 index) {
     if (m.source_file.empty() || m.source_line == 0) return false;
     if (!on_jump_) return false;
     on_jump_(m.source_file, m.source_line);
+    return true;
+}
+
+std::string ConsolePanel::format_row_for_clipboard(u32 index,
+                                                    bool with_timestamp) const {
+    if (index >= messages_.size()) return {};
+    const auto& msg = messages_[index];
+
+    char ts[32];
+    char xbuf[16];
+    std::string out;
+    out.reserve(msg.text.size() + 64);
+    if (with_timestamp) {
+        format_timestamp(msg.timestamp, ts, sizeof(ts));
+        out += '[';
+        out += ts;
+        out += "] ";
+    }
+    out += level_prefix(msg.level);
+    out += ' ';
+    out += msg.text;
+    if (msg.count > 1) {
+        std::snprintf(xbuf, sizeof(xbuf), " (x%u)", msg.count);
+        out += xbuf;
+    }
+    return out;
+}
+
+bool ConsolePanel::request_reveal_at(u32 index) {
+    if (index >= messages_.size()) return false;
+    const auto& m = messages_[index];
+    if (m.source_file.empty()) return false;
+    if (!on_reveal_) return false;
+    on_reveal_(m.source_file);
+    return true;
+}
+
+bool ConsolePanel::request_open_at(u32 index) {
+    if (index >= messages_.size()) return false;
+    const auto& m = messages_[index];
+    if (m.source_file.empty()) return false;
+    if (!on_open_) return false;
+    on_open_(m.source_file);
     return true;
 }
 

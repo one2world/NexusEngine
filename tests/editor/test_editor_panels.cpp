@@ -422,6 +422,112 @@ TEST(ConsolePanel, JumpHandlerReplaceableLatestWins) {
     EXPECT_EQ(second, 1);
 }
 
+// ── M37: row context menu (Copy / Reveal / Open) ───────────────────────────
+
+TEST(ConsolePanel, FormatRowForClipboardEmptyOnOOB) {
+    ConsolePanel cp;
+    EXPECT_TRUE(cp.format_row_for_clipboard(0).empty());
+    EXPECT_TRUE(cp.format_row_for_clipboard(99).empty());
+}
+
+TEST(ConsolePanel, FormatRowForClipboardIncludesPrefixAndText) {
+    ConsolePanel cp;
+    cp.add_message("hello", LogLevel::Info);
+    const std::string out = cp.format_row_for_clipboard(0, /*with_timestamp=*/false);
+    // No timestamp, but still has level prefix + text.
+    EXPECT_NE(out.find("hello"), std::string::npos);
+    EXPECT_FALSE(out.empty());
+}
+
+TEST(ConsolePanel, FormatRowForClipboardHonorsCollapseCount) {
+    ConsolePanel cp;
+    cp.set_collapse_mode(true);
+    cp.add_message("dup", LogLevel::Warning);
+    cp.add_message("dup", LogLevel::Warning);
+    cp.add_message("dup", LogLevel::Warning);
+    ASSERT_EQ(cp.message_count(), 1u);
+    const std::string out = cp.format_row_for_clipboard(0, false);
+    EXPECT_NE(out.find("dup"),  std::string::npos);
+    EXPECT_NE(out.find("(x3)"), std::string::npos);
+}
+
+TEST(ConsolePanel, RevealNoOpWhenIndexOOB) {
+    ConsolePanel cp;
+    bool fired = false;
+    cp.set_on_reveal_in_browser([&](const std::string&) { fired = true; });
+    EXPECT_FALSE(cp.request_reveal_at(0));
+    EXPECT_FALSE(cp.request_reveal_at(99));
+    EXPECT_FALSE(fired);
+}
+
+TEST(ConsolePanel, RevealNoOpWhenRowHasNoFile) {
+    ConsolePanel cp;
+    cp.set_on_reveal_in_browser([](const std::string&) {});
+    cp.add_message("plain log", LogLevel::Info);
+    EXPECT_FALSE(cp.request_reveal_at(0));  // no source_file
+}
+
+TEST(ConsolePanel, RevealNoOpWhenHandlerUnregistered) {
+    ConsolePanel cp;
+    cp.add_message("[Script] x.lua:5 — boom", LogLevel::Error,
+                   LogSource::ScriptError, "x.lua", 5);
+    EXPECT_FALSE(cp.has_reveal_handler());
+    EXPECT_FALSE(cp.request_reveal_at(0));
+}
+
+TEST(ConsolePanel, RevealFiresHandlerWithFile) {
+    ConsolePanel cp;
+    std::string captured;
+    cp.set_on_reveal_in_browser(
+        [&](const std::string& f) { captured = f; });
+    cp.add_message("[Script] x.lua:5 — boom", LogLevel::Error,
+                   LogSource::ScriptError, "scripts/x.lua", 5);
+    EXPECT_TRUE(cp.request_reveal_at(0));
+    EXPECT_EQ(captured, "scripts/x.lua");
+}
+
+TEST(ConsolePanel, RevealAllowedWhenLineIsZero) {
+    // Reveal only requires source_file — line == 0 is fine for "open
+    // the folder" without claiming a specific cursor position.
+    ConsolePanel cp;
+    bool fired = false;
+    cp.set_on_reveal_in_browser([&](const std::string&) { fired = true; });
+    cp.add_message("[Script] x.lua — generic", LogLevel::Error,
+                   LogSource::ScriptError, "scripts/x.lua", 0);
+    EXPECT_TRUE(cp.request_reveal_at(0));
+    EXPECT_TRUE(fired);
+}
+
+TEST(ConsolePanel, OpenExternallyFiresWithFile) {
+    ConsolePanel cp;
+    std::string captured;
+    cp.set_on_open_externally([&](const std::string& f) { captured = f; });
+    cp.add_message("[Script] a.lua:1 — e", LogLevel::Error,
+                   LogSource::ScriptError, "a.lua", 1);
+    EXPECT_TRUE(cp.request_open_at(0));
+    EXPECT_EQ(captured, "a.lua");
+}
+
+TEST(ConsolePanel, OpenExternallyNoOpWithoutHandler) {
+    ConsolePanel cp;
+    cp.add_message("[Script] a.lua:1 — e", LogLevel::Error,
+                   LogSource::ScriptError, "a.lua", 1);
+    EXPECT_FALSE(cp.has_open_handler());
+    EXPECT_FALSE(cp.request_open_at(0));
+}
+
+TEST(ConsolePanel, ContextHandlersIndependent) {
+    // Reveal and Open handlers must not share state — toggling one
+    // doesn't affect the other.
+    ConsolePanel cp;
+    cp.set_on_reveal_in_browser([](const std::string&) {});
+    EXPECT_TRUE(cp.has_reveal_handler());
+    EXPECT_FALSE(cp.has_open_handler());
+    cp.set_on_open_externally([](const std::string&) {});
+    EXPECT_TRUE(cp.has_reveal_handler());
+    EXPECT_TRUE(cp.has_open_handler());
+}
+
 // =============================================================================
 // WatchPanel (M35)
 // =============================================================================

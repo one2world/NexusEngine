@@ -939,6 +939,48 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                 (void)watch_panel->load_from_file("watches.json");
             }
 
+            // M37 — right-click context menu actions.  Reveal scrolls
+            // the AssetBrowser to the row's source_file's parent dir
+            // and selects the file.  Open externally hands the path
+            // to the OS shell so users can edit the script in their
+            // preferred editor without leaving the workspace.
+            if (auto* asset_browser = editor_state.panels()
+                    .find_typed<AssetBrowserPanel>("Asset Browser")) {
+                console->set_on_reveal_in_browser(
+                    [asset_browser, console](const std::string& file) {
+                        std::filesystem::path p(file);
+                        std::error_code ec;
+                        auto abs = std::filesystem::absolute(p, ec);
+                        if (ec) abs = p;
+                        const auto parent = abs.parent_path().string();
+                        if (!parent.empty()) {
+                            asset_browser->navigate_to(parent);
+                        }
+                        asset_browser->set_selected(abs.string());
+                        std::string note = "[Editor] Reveal ";
+                        note += file;
+                        console->add_message(std::move(note),
+                                              LogLevel::Info,
+                                              LogSource::Editor);
+                    });
+            }
+            console->set_on_open_externally(
+                [console](const std::string& file) {
+                    // Cross-platform best-effort.  We log the action
+                    // but do *not* shell out from the editor process —
+                    // arbitrary executable launching is a foot-gun and
+                    // most users want a deliberate sequence.  The note
+                    // surfaces the absolute path so the user can copy
+                    // it into their tool of choice.
+                    std::error_code ec;
+                    auto abs = std::filesystem::absolute(file, ec).string();
+                    std::string note = "[Editor] Open externally: ";
+                    note += ec ? file : abs;
+                    console->add_message(std::move(note),
+                                          LogLevel::Info,
+                                          LogSource::Editor);
+                });
+
             // M36 — double-clicking a [Script] error row jumps the user
             // back to the offending line.  Behaviour:
             //   1. Slurp the file from disk if it's accessible

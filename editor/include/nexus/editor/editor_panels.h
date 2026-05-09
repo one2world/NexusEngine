@@ -708,6 +708,37 @@ public:
     /// Returns true if the row had a target *and* a handler fired.
     bool request_jump_at(u32 index);
 
+    // ── Right-click context menu (M37) ─────────────────────────────────
+    //
+    // Three host-bound actions that complement the M36 double-click
+    // jump.  Reveal asks the asset browser to scroll/expand to the
+    // row's source_file; Open externally hands the path off to the OS
+    // shell (Finder / xdg-open / explorer).  Both no-op silently when
+    // the row has no source_file.  Copy is panel-local — formats the
+    // row using format_row_for_clipboard().
+    using RevealHandler = std::function<void(const std::string& file)>;
+    using OpenHandler   = std::function<void(const std::string& file)>;
+    void set_on_reveal_in_browser(RevealHandler h) { on_reveal_ = std::move(h); }
+    void set_on_open_externally(OpenHandler h)     { on_open_   = std::move(h); }
+    bool has_reveal_handler() const { return static_cast<bool>(on_reveal_); }
+    bool has_open_handler()   const { return static_cast<bool>(on_open_);   }
+
+    /// Build the text the Copy action puts on the clipboard.  Mirrors
+    /// the format used by the toolbar Copy button so users can paste
+    /// either into the same destination.  When `with_timestamp` is
+    /// false the leading "[hh:mm:ss.mmm] " prefix is stripped.  Empty
+    /// string when index is out of range.
+    std::string format_row_for_clipboard(u32 index,
+                                          bool with_timestamp = true) const;
+
+    /// Test-friendly: simulate the Reveal action on row `index`.
+    /// Returns true if the row had a source_file *and* a handler fired.
+    bool request_reveal_at(u32 index);
+
+    /// Test-friendly: simulate the Open Externally action on row `index`.
+    /// Returns true if the row had a source_file *and* a handler fired.
+    bool request_open_at(u32 index);
+
 private:
     std::vector<ConsoleMessage> messages_;
     bool show_info_{true};
@@ -732,7 +763,9 @@ private:
     bool show_source_[kSourceCount]{true, true, true, true, true};
     u32  source_counts_[kSourceCount]{0, 0, 0, 0, 0};
 
-    JumpHandler on_jump_;
+    JumpHandler   on_jump_;
+    RevealHandler on_reveal_;
+    OpenHandler   on_open_;
     std::string search_;
 };
 

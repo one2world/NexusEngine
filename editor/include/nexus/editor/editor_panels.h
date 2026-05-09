@@ -739,6 +739,24 @@ public:
     /// Returns true if the row had a source_file *and* a handler fired.
     bool request_open_at(u32 index);
 
+    // ── Export to file (M40) ───────────────────────────────────────────
+    //
+    // Two granularities so users can share either the full transcript
+    // or just what's currently visible in the panel.  `filtered` honours
+    // the active level chips (M-pre), source chips (M34), and search
+    // box; `all` ignores them and dumps the full ring.  Format matches
+    // the toolbar Copy button so a saved log pastes into the same
+    // tools as a clipboard copy.
+    enum class ExportScope : u8 { All, Filtered };
+    std::string export_to_string(ExportScope scope = ExportScope::Filtered) const;
+    /// Write export_to_string() to disk.  Returns true on success;
+    /// failure to open the path is reported to NX_WARN by the caller
+    /// (the panel itself is silent).  Empty panels produce empty files
+    /// — that's intentional so a "Save" pressed on a fresh launch
+    /// doesn't surprise the user with leftover content.
+    bool export_to_file(const std::string& path,
+                        ExportScope scope = ExportScope::Filtered) const;
+
 private:
     std::vector<ConsoleMessage> messages_;
     bool show_info_{true};

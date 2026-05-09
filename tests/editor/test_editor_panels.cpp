@@ -5,6 +5,8 @@
 #include "nexus/editor/component_registry.h"
 #include "nexus/perf/profiler.h"
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 
 using namespace nexus;
 using namespace nexus::editor;
@@ -514,6 +516,113 @@ TEST(ConsolePanel, OpenExternallyNoOpWithoutHandler) {
                    LogSource::ScriptError, "a.lua", 1);
     EXPECT_FALSE(cp.has_open_handler());
     EXPECT_FALSE(cp.request_open_at(0));
+}
+
+// ── M40: export-to-file ────────────────────────────────────────────────────
+
+TEST(ConsolePanel, ExportEmptyPanelProducesEmptyString) {
+    ConsolePanel cp;
+    EXPECT_TRUE(cp.export_to_string(ConsolePanel::ExportScope::All).empty());
+    EXPECT_TRUE(cp.export_to_string(ConsolePanel::ExportScope::Filtered).empty());
+}
+
+TEST(ConsolePanel, ExportAllIgnoresLevelFilter) {
+    ConsolePanel cp;
+    cp.add_message("info row",  LogLevel::Info);
+    cp.add_message("error row", LogLevel::Error);
+    cp.set_level_filter(LogLevel::Info, false);  // hide info from view
+
+    const auto out = cp.export_to_string(ConsolePanel::ExportScope::All);
+    EXPECT_NE(out.find("info row"),  std::string::npos);
+    EXPECT_NE(out.find("error row"), std::string::npos);
+}
+
+TEST(ConsolePanel, ExportFilteredHonorsLevelFilter) {
+    ConsolePanel cp;
+    cp.add_message("info row",  LogLevel::Info);
+    cp.add_message("error row", LogLevel::Error);
+    cp.set_level_filter(LogLevel::Info, false);
+
+    const auto out = cp.export_to_string(ConsolePanel::ExportScope::Filtered);
+    EXPECT_EQ(out.find("info row"),  std::string::npos);
+    EXPECT_NE(out.find("error row"), std::string::npos);
+}
+
+TEST(ConsolePanel, ExportFilteredHonorsSourceFilter) {
+    ConsolePanel cp;
+    cp.add_message("a", LogLevel::Info, LogSource::Lua);
+    cp.add_message("b", LogLevel::Info, LogSource::ScriptError);
+    cp.set_source_filter(LogSource::Lua, false);
+
+    const auto out = cp.export_to_string(ConsolePanel::ExportScope::Filtered);
+    EXPECT_EQ(out.find(" a"), std::string::npos);
+    EXPECT_NE(out.find(" b"), std::string::npos);
+}
+
+TEST(ConsolePanel, ExportFilteredHonorsSearch) {
+    ConsolePanel cp;
+    cp.add_message("hello world",  LogLevel::Info);
+    cp.add_message("goodbye moon", LogLevel::Info);
+    cp.set_search("moon");
+
+    const auto out = cp.export_to_string(ConsolePanel::ExportScope::Filtered);
+    EXPECT_EQ(out.find("hello"),   std::string::npos);
+    EXPECT_NE(out.find("goodbye"), std::string::npos);
+}
+
+TEST(ConsolePanel, ExportIncludesCollapseCount) {
+    ConsolePanel cp;
+    cp.set_collapse_mode(true);
+    cp.add_message("dup", LogLevel::Info);
+    cp.add_message("dup", LogLevel::Info);
+    cp.add_message("dup", LogLevel::Info);
+    const auto out = cp.export_to_string(ConsolePanel::ExportScope::All);
+    EXPECT_NE(out.find("(x3)"), std::string::npos);
+}
+
+TEST(ConsolePanel, ExportTerminatesEachRowWithNewline) {
+    ConsolePanel cp;
+    cp.add_message("a", LogLevel::Info);
+    cp.add_message("b", LogLevel::Info);
+    const auto out = cp.export_to_string(ConsolePanel::ExportScope::All);
+    EXPECT_FALSE(out.empty());
+    EXPECT_EQ(out.back(), '\n');
+    // Two newlines for two rows.
+    size_t newlines = 0;
+    for (char c : out) if (c == '\n') ++newlines;
+    EXPECT_EQ(newlines, 2u);
+}
+
+TEST(ConsolePanel, ExportToFileWritesAndRoundTrips) {
+    namespace fs = std::filesystem;
+    const auto path = fs::temp_directory_path() /
+                      "nexus_test_console_export.log";
+    fs::remove(path);
+
+    ConsolePanel cp;
+    cp.add_message("first",  LogLevel::Info);
+    cp.add_message("second", LogLevel::Warning);
+    EXPECT_TRUE(cp.export_to_file(path.string(),
+                                   ConsolePanel::ExportScope::All));
+
+    std::ifstream in(path);
+    ASSERT_TRUE(in.good());
+    std::stringstream ss;
+    ss << in.rdbuf();
+    const std::string read = ss.str();
+    EXPECT_NE(read.find("first"),  std::string::npos);
+    EXPECT_NE(read.find("second"), std::string::npos);
+    fs::remove(path);
+}
+
+TEST(ConsolePanel, ExportToFileFailsOnUnwritablePath) {
+    // Path under a non-existent parent dir is unopenable on every
+    // POSIX-y filesystem we test on.
+    ConsolePanel cp;
+    cp.add_message("x", LogLevel::Info);
+    EXPECT_FALSE(cp.export_to_file(
+        "/nonexistent_dir_for_test_M40/no/way/console.log",
+        ConsolePanel::ExportScope::All));
 }
 
 TEST(ConsolePanel, ContextHandlersIndependent) {

@@ -31,6 +31,8 @@
 #include <cstring>
 #include <cstdio>
 #include <filesystem>
+#include <chrono>
+#include <ctime>
 #include <fstream>
 #include <sstream>
 #include <nlohmann/json.hpp>
@@ -3097,6 +3099,34 @@ void ConsolePanel::on_render() {
         }
         ImGui::SetClipboardText(out.c_str());
     }
+    // M40 — export the visible (or full) log to disk.  Filename is
+    // timestamped so multiple saves don't clobber each other.  Errors
+    // surface as a console row tagged [Editor] so users notice
+    // permission/full-disk failures without a popup dialog.
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Save")) {
+        const auto now = static_cast<std::time_t>(
+            std::chrono::system_clock::to_time_t(
+                std::chrono::system_clock::now()));
+        std::tm tm{};
+#if defined(_WIN32)
+        localtime_s(&tm, &now);
+#else
+        localtime_r(&now, &tm);
+#endif
+        char fname[64];
+        std::strftime(fname, sizeof(fname),
+                      "console-%Y%m%d-%H%M%S.log", &tm);
+        if (export_to_file(fname, ExportScope::Filtered)) {
+            std::string note = "[Editor] Console saved to ";
+            note += fname;
+            add_message(std::move(note), LogLevel::Info, LogSource::Editor);
+        } else {
+            std::string note = "[Editor] Console save failed: ";
+            note += fname;
+            add_message(std::move(note), LogLevel::Error, LogSource::Editor);
+        }
+    }
     ImGui::SameLine();
     ImGui::Checkbox("Collapse", &collapse_);
     ImGui::SameLine();
@@ -3443,6 +3473,41 @@ bool ConsolePanel::request_open_at(u32 index) {
     if (!on_open_) return false;
     on_open_(m.source_file);
     return true;
+}
+
+std::string ConsolePanel::export_to_string(ExportScope scope) const {
+    std::string out;
+    out.reserve(messages_.size() * 80);
+    char ts[32];
+    char xbuf[16];
+    for (const auto& msg : messages_) {
+        if (scope == ExportScope::Filtered) {
+            if (!is_level_shown(msg.level))   continue;
+            if (!is_source_shown(msg.source)) continue;
+            if (!icontains(msg.text, search_)) continue;
+        }
+        format_timestamp(msg.timestamp, ts, sizeof(ts));
+        out += '[';
+        out += ts;
+        out += "] ";
+        out += level_prefix(msg.level);
+        out += ' ';
+        out += msg.text;
+        if (msg.count > 1) {
+            std::snprintf(xbuf, sizeof(xbuf), " (x%u)", msg.count);
+            out += xbuf;
+        }
+        out += '\n';
+    }
+    return out;
+}
+
+bool ConsolePanel::export_to_file(const std::string& path,
+                                   ExportScope scope) const {
+    std::ofstream out(path);
+    if (!out) return false;
+    out << export_to_string(scope);
+    return out.good();
 }
 
 // ── AssetBrowserPanel ───────────────────────────────────────────────────────

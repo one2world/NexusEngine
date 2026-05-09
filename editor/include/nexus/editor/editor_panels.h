@@ -600,6 +600,12 @@ struct ConsoleMessage {
     /// SHA-1-style 64-bit hash of (text, level) used for collapse lookup.
     /// Computed once at insertion to avoid restringing on every frame.
     u64 dedup_key{0};
+    /// Optional source-file pointer (M36).  Populated for ScriptError
+    /// messages so a double-click can jump back to the offending line
+    /// without re-parsing the formatted text.  Empty file or
+    /// source_line == 0 ⇒ row has no jump target.
+    std::string source_file;
+    u32 source_line{0};
 };
 
 class ConsolePanel : public Panel {
@@ -614,6 +620,12 @@ public:
     /// subsystem so the panel doesn't have to prefix-sniff.  Used by
     /// editor_main when wiring Lua / Script error / Lua print sinks.
     void add_message(const std::string& text, LogLevel level, LogSource source);
+    /// Full overload (M36) — also carries a jump target so script
+    /// runtime errors stay clickable.  source_line == 0 marks the row
+    /// as non-clickable.  source_file is copied verbatim; resolution is
+    /// the host's job (the editor walks AssetRegistry to find it).
+    void add_message(const std::string& text, LogLevel level, LogSource source,
+                     std::string source_file, u32 source_line);
     void clear();
 
     const std::vector<ConsoleMessage>& messages() const { return messages_; }
@@ -679,6 +691,23 @@ public:
     void set_search(const std::string& s) { search_ = s; }
     const std::string& search() const { return search_; }
 
+    // ── Jump-to-source (M36) ───────────────────────────────────────────
+    //
+    // When the user double-clicks a console row that carries a non-empty
+    // (source_file, source_line) target, the panel fires this callback.
+    // The host wires it to LuaConsolePanel::set_source so script
+    // runtime errors land the user back on the offending line.  When no
+    // handler is registered, double-clicking is a silent no-op (parity
+    // with engine logs which never carry a target).
+    using JumpHandler =
+        std::function<void(const std::string& file, u32 line)>;
+    void set_on_jump_to_source(JumpHandler h) { on_jump_ = std::move(h); }
+    bool has_jump_handler() const { return static_cast<bool>(on_jump_); }
+
+    /// Test-friendly: simulate a double-click on the message at `index`.
+    /// Returns true if the row had a target *and* a handler fired.
+    bool request_jump_at(u32 index);
+
 private:
     std::vector<ConsoleMessage> messages_;
     bool show_info_{true};
@@ -702,6 +731,8 @@ private:
     static constexpr u32 kSourceCount = 5;
     bool show_source_[kSourceCount]{true, true, true, true, true};
     u32  source_counts_[kSourceCount]{0, 0, 0, 0, 0};
+
+    JumpHandler on_jump_;
     std::string search_;
 };
 

@@ -323,6 +323,105 @@ TEST(ConsolePanel, CollapseRequiresSameSourceForFold) {
     EXPECT_EQ(cp.source_count(LogSource::LuaPrint), 1u);
 }
 
+// ── M36: jump-to-source on script-error rows ───────────────────────────────
+
+TEST(ConsolePanel, JumpHandlerDefaultsUnregistered) {
+    ConsolePanel cp;
+    EXPECT_FALSE(cp.has_jump_handler());
+}
+
+TEST(ConsolePanel, JumpRequestNoOpWhenIndexOutOfRange) {
+    ConsolePanel cp;
+    bool fired = false;
+    cp.set_on_jump_to_source([&](const std::string&, u32) { fired = true; });
+    EXPECT_FALSE(cp.request_jump_at(0));
+    EXPECT_FALSE(cp.request_jump_at(99));
+    EXPECT_FALSE(fired);
+}
+
+TEST(ConsolePanel, JumpRequestNoOpWhenRowHasNoTarget) {
+    // Engine logs and Lua print rows don't carry file/line.
+    ConsolePanel cp;
+    cp.set_on_jump_to_source([](const std::string&, u32) {});
+    cp.add_message("plain log", LogLevel::Info);  // no target
+    EXPECT_FALSE(cp.request_jump_at(0));
+}
+
+TEST(ConsolePanel, JumpRequestNoOpWhenHandlerUnregistered) {
+    ConsolePanel cp;
+    cp.add_message("[Script] x.lua:5 — boom", LogLevel::Error,
+                   LogSource::ScriptError, "x.lua", 5);
+    // Even though the row has a target, no handler ⇒ silent no-op.
+    EXPECT_FALSE(cp.request_jump_at(0));
+}
+
+TEST(ConsolePanel, JumpRequestFiresHandlerWithFileAndLine) {
+    ConsolePanel cp;
+    std::string captured_file;
+    u32 captured_line = 0;
+    cp.set_on_jump_to_source(
+        [&](const std::string& f, u32 l) {
+            captured_file = f;
+            captured_line = l;
+        });
+
+    cp.add_message("[Script] scripts/main.lua:42 — bad call", LogLevel::Error,
+                   LogSource::ScriptError, "scripts/main.lua", 42);
+
+    EXPECT_TRUE(cp.request_jump_at(0));
+    EXPECT_EQ(captured_file, "scripts/main.lua");
+    EXPECT_EQ(captured_line, 42u);
+}
+
+TEST(ConsolePanel, JumpTargetSurvivesPrune) {
+    // The (file,line) pair must survive the same prune the message
+    // text survives — otherwise a long Console session would silently
+    // strip script-error click targets.
+    ConsolePanel cp;
+    cp.set_max_messages(2);
+    cp.set_on_jump_to_source([](const std::string&, u32) {});
+    cp.add_message("filler", LogLevel::Info);  // pruned
+    cp.add_message("[Script] a.lua:1 — e", LogLevel::Error,
+                   LogSource::ScriptError, "a.lua", 1);
+    cp.add_message("[Script] b.lua:7 — e", LogLevel::Error,
+                   LogSource::ScriptError, "b.lua", 7);
+
+    ASSERT_EQ(cp.message_count(), 2u);
+    EXPECT_EQ(cp.messages()[0].source_file, "a.lua");
+    EXPECT_EQ(cp.messages()[0].source_line, 1u);
+    EXPECT_EQ(cp.messages()[1].source_file, "b.lua");
+    EXPECT_EQ(cp.messages()[1].source_line, 7u);
+}
+
+TEST(ConsolePanel, JumpTargetIgnoredWhenLineIsZero) {
+    // A ScriptError without a known line (line == 0) is non-clickable
+    // even when source_file is set — UX rule: don't open the file at
+    // an unknown spot.
+    ConsolePanel cp;
+    bool fired = false;
+    cp.set_on_jump_to_source([&](const std::string&, u32) { fired = true; });
+    cp.add_message("[Script] x.lua — no line info", LogLevel::Error,
+                   LogSource::ScriptError, "x.lua", 0);
+    EXPECT_FALSE(cp.request_jump_at(0));
+    EXPECT_FALSE(fired);
+}
+
+TEST(ConsolePanel, JumpHandlerReplaceableLatestWins) {
+    ConsolePanel cp;
+    cp.add_message("[Script] f:1 — e", LogLevel::Error,
+                   LogSource::ScriptError, "f", 1);
+
+    int first = 0;
+    cp.set_on_jump_to_source([&](const std::string&, u32) { ++first; });
+
+    int second = 0;
+    cp.set_on_jump_to_source([&](const std::string&, u32) { ++second; });
+
+    EXPECT_TRUE(cp.request_jump_at(0));
+    EXPECT_EQ(first, 0);
+    EXPECT_EQ(second, 1);
+}
+
 // =============================================================================
 // AssetBrowserPanel
 // =============================================================================

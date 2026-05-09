@@ -48,7 +48,9 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <stdexcept>
@@ -880,8 +882,10 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                         out += " — ";
                     }
                     out += err.message;
+                    // M36 — carry file/line so the row is double-clickable.
                     console->add_message(std::move(out), LogLevel::Error,
-                                         LogSource::ScriptError);
+                                         LogSource::ScriptError,
+                                         err.source_file, err.line);
                 });
 
             // M32 — Lua print() flows into Console.  The shared `print`
@@ -897,6 +901,37 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                         LogLevel::Info,
                         LogSource::LuaPrint);
                 });
+
+            // M36 — double-clicking a [Script] error row jumps the user
+            // back to the offending line.  Behaviour:
+            //   1. Slurp the file from disk if it's accessible
+            //   2. Push it into the Lua Console buffer so the editor
+            //      lands on the source the user can re-run
+            //   3. Always log an [Editor] note showing where we jumped
+            // When the file isn't on disk (live-edited buffers, asset
+            // names without paths) we still log the request so the user
+            // knows the click registered.
+            if (auto* lua_panel = editor_state.panels()
+                    .find_typed<LuaConsolePanel>("Lua Console")) {
+                console->set_on_jump_to_source(
+                    [console, lua_panel](const std::string& file, u32 line) {
+                        std::string note = "[Editor] Jump to ";
+                        note += file;
+                        note += ":";
+                        note += std::to_string(line);
+                        std::ifstream f(file);
+                        if (f) {
+                            std::stringstream ss;
+                            ss << f.rdbuf();
+                            lua_panel->set_source(ss.str());
+                            note += " — buffered into Lua Console";
+                        } else {
+                            note += " — file not found on disk";
+                        }
+                        console->add_message(std::move(note), LogLevel::Info,
+                                             LogSource::Editor);
+                    });
+            }
         }
 
         // RAII guard: strip ConsolePanelSink entries from all loggers on any

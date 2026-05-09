@@ -3168,21 +3168,36 @@ void ConsolePanel::on_render() {
     ImGui::BeginChild("ConsoleLog", ImVec2(0, 0), true);
 
     char ts[32];
-    for (const auto& msg : messages_) {
+    for (size_t i = 0; i < messages_.size(); ++i) {
+        const auto& msg = messages_[i];
         if (!is_level_shown(msg.level)) continue;
         if (!is_source_shown(msg.source)) continue;
         if (!icontains(msg.text, search_)) continue;
 
         ImVec4 col = level_color(msg.level);
         format_timestamp(msg.timestamp, ts, sizeof(ts));
+
+        // Render the row as a selectable so double-click can fire the
+        // jump-to-source handler (M36).  We pre-format into a buffer
+        // because Selectable takes a single label and we still want
+        // the timestamp + level glyph + (x N) collapse badge.
+        char row[768];
         if (msg.count > 1) {
-            ImGui::TextColored(col, "[%s] %s %s  (x%u)",
-                               ts, level_prefix(msg.level),
-                               msg.text.c_str(), msg.count);
+            std::snprintf(row, sizeof(row), "[%s] %s %s  (x%u)",
+                          ts, level_prefix(msg.level),
+                          msg.text.c_str(), msg.count);
         } else {
-            ImGui::TextColored(col, "[%s] %s %s",
-                               ts, level_prefix(msg.level), msg.text.c_str());
+            std::snprintf(row, sizeof(row), "[%s] %s %s",
+                          ts, level_prefix(msg.level), msg.text.c_str());
         }
+        ImGui::PushStyleColor(ImGuiCol_Text, col);
+        ImGui::PushID(static_cast<int>(i));
+        ImGui::Selectable(row, false, ImGuiSelectableFlags_AllowDoubleClick);
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+            request_jump_at(static_cast<u32>(i));
+        }
+        ImGui::PopID();
+        ImGui::PopStyleColor();
     }
 
     // Smart auto-scroll: only force scroll when the user was already at the
@@ -3215,11 +3230,17 @@ LogSource classify_console_source(const std::string& text) {
 }
 
 void ConsolePanel::add_message(const std::string& text, LogLevel level) {
-    add_message(text, level, classify_console_source(text));
+    add_message(text, level, classify_console_source(text), {}, 0);
 }
 
 void ConsolePanel::add_message(const std::string& text, LogLevel level,
                                 LogSource source) {
+    add_message(text, level, source, {}, 0);
+}
+
+void ConsolePanel::add_message(const std::string& text, LogLevel level,
+                                LogSource source,
+                                std::string source_file, u32 source_line) {
     const f64 ts = ImGui::GetCurrentContext() ? ImGui::GetTime() : 0.0;
     const u32 src_idx = static_cast<u32>(source);
 
@@ -3253,6 +3274,8 @@ void ConsolePanel::add_message(const std::string& text, LogLevel level,
     msg.source = source;
     msg.timestamp = ts;
     msg.dedup_key = key;
+    msg.source_file = std::move(source_file);
+    msg.source_line = source_line;
     messages_.push_back(std::move(msg));
 
     switch (level) {
@@ -3334,6 +3357,15 @@ bool ConsolePanel::is_source_shown(LogSource source) const {
 u32 ConsolePanel::source_count(LogSource source) const {
     const u32 idx = static_cast<u32>(source);
     return idx < kSourceCount ? source_counts_[idx] : 0u;
+}
+
+bool ConsolePanel::request_jump_at(u32 index) {
+    if (index >= messages_.size()) return false;
+    const auto& m = messages_[index];
+    if (m.source_file.empty() || m.source_line == 0) return false;
+    if (!on_jump_) return false;
+    on_jump_(m.source_file, m.source_line);
+    return true;
 }
 
 // ── AssetBrowserPanel ───────────────────────────────────────────────────────

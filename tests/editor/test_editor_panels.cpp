@@ -423,6 +423,228 @@ TEST(ConsolePanel, JumpHandlerReplaceableLatestWins) {
 }
 
 // =============================================================================
+// WatchPanel (M35)
+// =============================================================================
+
+TEST(WatchPanel, AddAndRemoveWatch) {
+    WatchPanel wp;
+    EXPECT_EQ(wp.watch_count(), 0u);
+
+    u32 idx = wp.add_watch("Math.PI");
+    EXPECT_EQ(idx, 0u);
+    EXPECT_EQ(wp.watch_count(), 1u);
+    EXPECT_EQ(wp.watch_at(0)->expression, "Math.PI");
+    EXPECT_EQ(wp.watch_at(0)->name,       "Math.PI");  // defaults to expr
+
+    wp.add_watch("Entity.count()", "live entities");
+    EXPECT_EQ(wp.watch_count(), 2u);
+    EXPECT_EQ(wp.watch_at(1)->name, "live entities");
+
+    EXPECT_TRUE(wp.remove_watch(0));
+    EXPECT_EQ(wp.watch_count(), 1u);
+    EXPECT_EQ(wp.watch_at(0)->name, "live entities");
+
+    EXPECT_FALSE(wp.remove_watch(99));  // OOB
+}
+
+TEST(WatchPanel, SetExpressionResetsCachedEval) {
+    WatchPanel wp;
+    wp.set_evaluator([](const std::string& e) {
+        return WatchPanel::EvalResult{true, "v=" + e, ""};
+    });
+    wp.add_watch("a");
+    wp.tick();
+    EXPECT_TRUE(wp.watch_at(0)->evaluated);
+    EXPECT_EQ(wp.watch_at(0)->last_value, "v=a");
+
+    EXPECT_TRUE(wp.set_expression(0, "b"));
+    EXPECT_FALSE(wp.watch_at(0)->evaluated);
+    EXPECT_TRUE(wp.watch_at(0)->last_value.empty());
+}
+
+TEST(WatchPanel, SetExpressionRejectsOOB) {
+    WatchPanel wp;
+    EXPECT_FALSE(wp.set_expression(0, "x"));
+    EXPECT_FALSE(wp.set_name(0, "n"));
+}
+
+TEST(WatchPanel, SetNameDoesNotResetCachedEval) {
+    WatchPanel wp;
+    wp.set_evaluator([](const std::string&) {
+        return WatchPanel::EvalResult{true, "42", ""};
+    });
+    wp.add_watch("Math.answer");
+    wp.tick();
+    ASSERT_TRUE(wp.watch_at(0)->evaluated);
+
+    EXPECT_TRUE(wp.set_name(0, "Answer"));
+    EXPECT_TRUE(wp.watch_at(0)->evaluated);  // unaffected
+    EXPECT_EQ(wp.watch_at(0)->name, "Answer");
+}
+
+TEST(WatchPanel, TickWithoutEvaluatorIsSilentNoOp) {
+    WatchPanel wp;
+    wp.add_watch("anything");
+    wp.tick();
+    EXPECT_FALSE(wp.watch_at(0)->evaluated);
+}
+
+TEST(WatchPanel, TickEvaluatesAllWatches) {
+    WatchPanel wp;
+    int call_count = 0;
+    wp.set_evaluator([&](const std::string& e) {
+        ++call_count;
+        return WatchPanel::EvalResult{true, "<" + e + ">", ""};
+    });
+    wp.add_watch("a");
+    wp.add_watch("b");
+    wp.add_watch("c");
+
+    wp.tick();
+    EXPECT_EQ(call_count, 3);
+    EXPECT_EQ(wp.watch_at(0)->last_value, "<a>");
+    EXPECT_EQ(wp.watch_at(1)->last_value, "<b>");
+    EXPECT_EQ(wp.watch_at(2)->last_value, "<c>");
+    for (const auto& w : wp.watches()) {
+        EXPECT_TRUE(w.evaluated);
+        EXPECT_TRUE(w.ok);
+    }
+}
+
+TEST(WatchPanel, EvaluatorErrorSurfacesPerRow) {
+    WatchPanel wp;
+    wp.set_evaluator([](const std::string& e) {
+        if (e == "boom") return WatchPanel::EvalResult{false, "", "syntax err"};
+        return WatchPanel::EvalResult{true, "ok", ""};
+    });
+    wp.add_watch("good");
+    wp.add_watch("boom");
+    wp.tick();
+
+    EXPECT_TRUE(wp.watch_at(0)->ok);
+    EXPECT_EQ(wp.watch_at(0)->last_value, "ok");
+    EXPECT_TRUE(wp.watch_at(0)->last_error.empty());
+
+    EXPECT_FALSE(wp.watch_at(1)->ok);
+    EXPECT_EQ(wp.watch_at(1)->last_error, "syntax err");
+    EXPECT_TRUE(wp.watch_at(1)->last_value.empty());
+}
+
+TEST(WatchPanel, EmptyExpressionFlagsErrorWithoutCallingEvaluator) {
+    WatchPanel wp;
+    int eval_calls = 0;
+    wp.set_evaluator([&](const std::string&) {
+        ++eval_calls;
+        return WatchPanel::EvalResult{true, "x", ""};
+    });
+    wp.add_watch("");
+    wp.tick();
+    EXPECT_EQ(eval_calls, 0);
+    EXPECT_FALSE(wp.watch_at(0)->ok);
+    EXPECT_FALSE(wp.watch_at(0)->last_error.empty());
+}
+
+TEST(WatchPanel, TickIntervalThrottlesEvaluation) {
+    WatchPanel wp;
+    int call_count = 0;
+    wp.set_evaluator([&](const std::string&) {
+        ++call_count;
+        return WatchPanel::EvalResult{true, "v", ""};
+    });
+    wp.add_watch("x");
+    wp.set_eval_interval(0.1f);
+
+    // Below threshold — no eval.
+    wp.tick_interval(0.03f);
+    wp.tick_interval(0.03f);
+    EXPECT_EQ(call_count, 0);
+
+    // Crosses threshold.
+    wp.tick_interval(0.05f);
+    EXPECT_EQ(call_count, 1);
+
+    // Accumulator resets after fire.
+    wp.tick_interval(0.05f);
+    EXPECT_EQ(call_count, 1);
+    wp.tick_interval(0.06f);
+    EXPECT_EQ(call_count, 2);
+}
+
+TEST(WatchPanel, MarkDirtyForcesEvalNextTickInterval) {
+    WatchPanel wp;
+    int call_count = 0;
+    wp.set_evaluator([&](const std::string&) {
+        ++call_count;
+        return WatchPanel::EvalResult{true, "v", ""};
+    });
+    wp.add_watch("x");
+    wp.set_eval_interval(1.0f);
+
+    wp.tick_interval(0.01f);  // far below threshold
+    EXPECT_EQ(call_count, 0);
+
+    wp.mark_dirty();
+    wp.tick_interval(0.0f);   // any tick now fires
+    EXPECT_EQ(call_count, 1);
+}
+
+TEST(WatchPanel, JsonRoundTripPreservesNamesAndExpressions) {
+    WatchPanel wp;
+    wp.add_watch("Math.PI",         "pi");
+    wp.add_watch("Entity.count()",  "ents");
+    wp.add_watch("foo + bar");      // name defaults to expression
+
+    const std::string json = wp.save_to_json();
+
+    WatchPanel restored;
+    EXPECT_TRUE(restored.load_from_json(json));
+    ASSERT_EQ(restored.watch_count(), 3u);
+    EXPECT_EQ(restored.watch_at(0)->name,       "pi");
+    EXPECT_EQ(restored.watch_at(0)->expression, "Math.PI");
+    EXPECT_EQ(restored.watch_at(1)->name,       "ents");
+    EXPECT_EQ(restored.watch_at(2)->name,       "foo + bar");
+}
+
+TEST(WatchPanel, JsonLoadRejectsMalformed) {
+    WatchPanel wp;
+    wp.add_watch("seed");
+    EXPECT_FALSE(wp.load_from_json("not json"));
+    // Atomic on failure: existing state untouched.
+    EXPECT_EQ(wp.watch_count(), 1u);
+    EXPECT_EQ(wp.watch_at(0)->expression, "seed");
+}
+
+TEST(WatchPanel, JsonLoadAtomicWhenAnArrayElementIsBadlyTyped) {
+    WatchPanel wp;
+    wp.add_watch("seed");
+    // Second element is not an object — must reject without partial mutation.
+    const std::string bad = R"({"watches":[{"name":"a","expression":"b"}, 7]})";
+    EXPECT_FALSE(wp.load_from_json(bad));
+    EXPECT_EQ(wp.watch_count(), 1u);
+    EXPECT_EQ(wp.watch_at(0)->expression, "seed");
+}
+
+TEST(WatchPanel, ClearWatchesEmptiesList) {
+    WatchPanel wp;
+    wp.add_watch("a");
+    wp.add_watch("b");
+    wp.clear_watches();
+    EXPECT_EQ(wp.watch_count(), 0u);
+}
+
+TEST(WatchPanel, NegativeIntervalClampsToZero) {
+    WatchPanel wp;
+    wp.set_eval_interval(-1.0f);
+    EXPECT_FLOAT_EQ(wp.eval_interval(), 0.0f);
+}
+
+TEST(WatchPanel, TypeIdAndDefaults) {
+    WatchPanel wp;
+    EXPECT_STREQ(wp.type_id(), "WatchPanel");
+    EXPECT_FALSE(wp.has_evaluator());
+}
+
+// =============================================================================
 // AssetBrowserPanel
 // =============================================================================
 

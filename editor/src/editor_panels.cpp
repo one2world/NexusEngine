@@ -31,6 +31,9 @@
 #include <cstring>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <nlohmann/json.hpp>
 
 namespace nexus::editor {
 
@@ -4415,6 +4418,189 @@ void RuntimeStatsPanel::on_render() {
                                   ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Text("Emitters:   %u",   snapshot_.particle_emitters);
         ImGui::Text("Alive:      %u",   snapshot_.particles_alive);
+    }
+
+    ImGui::End();
+}
+
+// ── WatchPanel (M35) ────────────────────────────────────────────────────────
+
+u32 WatchPanel::add_watch(std::string expression, std::string name) {
+    WatchEntry e;
+    e.expression = std::move(expression);
+    e.name       = name.empty() ? e.expression : std::move(name);
+    watches_.push_back(std::move(e));
+    return static_cast<u32>(watches_.size() - 1);
+}
+
+bool WatchPanel::remove_watch(u32 index) {
+    if (index >= watches_.size()) return false;
+    watches_.erase(watches_.begin() + static_cast<std::ptrdiff_t>(index));
+    return true;
+}
+
+bool WatchPanel::set_expression(u32 index, std::string expression) {
+    if (index >= watches_.size()) return false;
+    auto& w = watches_[index];
+    w.expression = std::move(expression);
+    w.last_value.clear();
+    w.last_error.clear();
+    w.ok        = true;
+    w.evaluated = false;
+    return true;
+}
+
+bool WatchPanel::set_name(u32 index, std::string name) {
+    if (index >= watches_.size()) return false;
+    watches_[index].name = std::move(name);
+    return true;
+}
+
+void WatchPanel::tick() {
+    if (!evaluator_) return;
+    for (auto& w : watches_) {
+        if (w.expression.empty()) {
+            w.ok        = false;
+            w.last_value.clear();
+            w.last_error = "(empty expression)";
+            w.evaluated  = true;
+            continue;
+        }
+        EvalResult r = evaluator_(w.expression);
+        w.ok         = r.ok;
+        w.last_value = std::move(r.value);
+        w.last_error = std::move(r.error);
+        w.evaluated  = true;
+    }
+}
+
+void WatchPanel::tick_interval(f32 dt) {
+    eval_accumulator_ += dt < 0.0f ? 0.0f : dt;
+    if (eval_accumulator_ < eval_interval_) return;
+    eval_accumulator_ = 0.0f;
+    tick();
+}
+
+std::string WatchPanel::save_to_json() const {
+    nlohmann::json j;
+    j["watches"] = nlohmann::json::array();
+    for (const auto& w : watches_) {
+        j["watches"].push_back({
+            {"name",       w.name},
+            {"expression", w.expression}
+        });
+    }
+    return j.dump(2);
+}
+
+bool WatchPanel::load_from_json(const std::string& json_text) {
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::parse(json_text);
+    } catch (const nlohmann::json::parse_error&) {
+        return false;
+    }
+    if (!j.contains("watches") || !j["watches"].is_array()) return false;
+    std::vector<WatchEntry> incoming;
+    incoming.reserve(j["watches"].size());
+    for (const auto& item : j["watches"]) {
+        if (!item.is_object()) return false;  // atomic — partial loads forbidden
+        WatchEntry e;
+        e.name       = item.value("name", std::string{});
+        e.expression = item.value("expression", std::string{});
+        if (e.name.empty()) e.name = e.expression;
+        incoming.push_back(std::move(e));
+    }
+    watches_ = std::move(incoming);
+    return true;
+}
+
+bool WatchPanel::save_to_file(const std::string& path) const {
+    std::ofstream out(path);
+    if (!out) return false;
+    out << save_to_json();
+    return out.good();
+}
+
+bool WatchPanel::load_from_file(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) return false;
+    std::stringstream ss;
+    ss << in.rdbuf();
+    return load_from_json(ss.str());
+}
+
+void WatchPanel::on_render() {
+    if (!visible_) return;
+    if (!ImGui::Begin(title_.c_str(), &visible_)) {
+        ImGui::End();
+        return;
+    }
+
+    // ── Toolbar ───────────────────────────────────────────────────────
+    if (ImGui::SmallButton("Refresh")) mark_dirty();
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Clear")) clear_watches();
+    ImGui::SameLine();
+    ImGui::Text("(%u watches, %.1f Hz)",
+                 watch_count(),
+                 eval_interval_ > 0.0f ? 1.0f / eval_interval_ : 0.0f);
+
+    // ── Per-row UI — name + expression + last value/error ─────────────
+    int remove_idx = -1;
+    for (u32 i = 0; i < watches_.size(); ++i) {
+        auto& w = watches_[i];
+        ImGui::PushID(static_cast<int>(i));
+        char name_buf[128];
+        std::snprintf(name_buf, sizeof(name_buf), "%s", w.name.c_str());
+        ImGui::SetNextItemWidth(120.0f);
+        if (ImGui::InputText("##name", name_buf, sizeof(name_buf))) {
+            w.name = name_buf;
+        }
+        ImGui::SameLine();
+        char expr_buf[256];
+        std::snprintf(expr_buf, sizeof(expr_buf), "%s", w.expression.c_str());
+        ImGui::SetNextItemWidth(220.0f);
+        if (ImGui::InputText("##expr", expr_buf, sizeof(expr_buf),
+                              ImGuiInputTextFlags_EnterReturnsTrue)) {
+            set_expression(i, expr_buf);
+        }
+        ImGui::SameLine();
+        if (w.evaluated) {
+            if (w.ok) {
+                ImGui::TextColored(ImVec4(0.7f, 1.0f, 0.7f, 1.0f),
+                                    "= %s", w.last_value.c_str());
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.55f, 1.0f),
+                                    "! %s", w.last_error.c_str());
+            }
+        } else {
+            ImGui::TextDisabled("(not evaluated yet)");
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("X")) remove_idx = static_cast<int>(i);
+        ImGui::PopID();
+    }
+    if (remove_idx >= 0) remove_watch(static_cast<u32>(remove_idx));
+
+    // ── Add row ───────────────────────────────────────────────────────
+    static char new_buf[256] = "";
+    ImGui::Separator();
+    ImGui::SetNextItemWidth(-90.0f);
+    bool submit = ImGui::InputTextWithHint(
+        "##new_watch", "Lua expression…",
+        new_buf, sizeof(new_buf), ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Add Watch") || submit) {
+        if (new_buf[0] != '\0') {
+            add_watch(new_buf);
+            new_buf[0] = '\0';
+        }
+    }
+
+    if (!evaluator_) {
+        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.4f, 1.0f),
+                            "No evaluator bound — values won't refresh.");
     }
 
     ImGui::End();

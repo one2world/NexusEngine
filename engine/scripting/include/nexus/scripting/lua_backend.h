@@ -51,6 +51,15 @@ public:
     /// Get a global variable.
     [[nodiscard]] ScriptValue get_global(const std::string& name) const;
 
+    /// Evaluate a Lua-style expression and return the result.  Public
+    /// entry point for the editor's Watch panel (M35) — keeps the
+    /// expression-evaluator outside of `execute()` so callers don't
+    /// have to scrape `last_error()` / read a synthetic global.
+    /// On parse failure returns ScriptValue::nil() and sets last_error_.
+    ScriptValue evaluate(const std::string& expr) {
+        return evaluate_expression(expr);
+    }
+
 private:
     // Parsed representation of a function call expression.
     struct ParsedCall {

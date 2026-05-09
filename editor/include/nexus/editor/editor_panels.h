@@ -1208,4 +1208,104 @@ private:
     Supplier supplier_;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// WatchPanel — pinned Lua expression evaluator (M35)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Lets the user pin Lua-side expressions ("entity_count()",
+// "Math.PI", "tostring(player.health)") and see their value
+// re-evaluated every frame — Unity's "Watch" / VSCode's debugger watch
+// pane in spirit.  Decoupled from LuaBackend through an Evaluator
+// callback so the panel stays library-agnostic and headless-testable.
+class WatchPanel : public Panel {
+public:
+    WatchPanel() : Panel("Watch") {}
+    void on_render() override;
+    const char* type_id() const override { return "WatchPanel"; }
+
+    /// Outcome of one expression evaluation.  Mirrors
+    /// LuaConsolePanel::RunResult so the editor can wire either panel
+    /// to the same backend with minimal adapters.
+    struct EvalResult {
+        bool        ok{true};
+        std::string value;       // empty when !ok
+        std::string error;       // empty when ok
+    };
+    using Evaluator = std::function<EvalResult(const std::string& expr)>;
+
+    void set_evaluator(Evaluator e) { evaluator_ = std::move(e); }
+    bool has_evaluator() const { return static_cast<bool>(evaluator_); }
+
+    /// One pinned watch.  `name` is the user-facing label (defaults to
+    /// the expression itself), `expression` is the Lua text.  The
+    /// `last_*` fields are written by tick() so the renderer doesn't
+    /// re-evaluate on every ImGui call.
+    struct WatchEntry {
+        std::string name;
+        std::string expression;
+        std::string last_value;
+        std::string last_error;
+        bool        ok{true};
+        bool        evaluated{false};  // false until the first tick()
+    };
+
+    /// Append a new watch.  `name` empty ⇒ name = expression.  Returns
+    /// the index of the new entry so the host can address it.
+    u32 add_watch(std::string expression, std::string name = "");
+
+    /// Remove watch at index.  No-op when out of range.  Returns true
+    /// when removal happened so the host knows whether to refresh.
+    bool remove_watch(u32 index);
+
+    /// Replace the expression of an existing watch in-place.  Clears
+    /// the cached evaluation so the next tick() refreshes.
+    bool set_expression(u32 index, std::string expression);
+
+    /// Replace the friendly name of an existing watch (does not
+    /// affect evaluation).
+    bool set_name(u32 index, std::string name);
+
+    void clear_watches() { watches_.clear(); }
+    u32 watch_count() const { return static_cast<u32>(watches_.size()); }
+    const std::vector<WatchEntry>& watches() const { return watches_; }
+    const WatchEntry* watch_at(u32 index) const {
+        return index < watches_.size() ? &watches_[index] : nullptr;
+    }
+
+    /// Evaluate every watch once through the bound Evaluator.  Safe to
+    /// call without an evaluator: every entry stays in its cached
+    /// state.  Throttle via `set_eval_interval()` so the editor doesn't
+    /// thrash the script engine on every frame.
+    void tick();
+
+    /// Frame-rate-bounded variant: invoked with the elapsed time since
+    /// the last tick; eval only fires when the accumulator crosses
+    /// `eval_interval()`.  Lets editor_main call tick_interval(dt) in
+    /// the docked-loop without bookkeeping.
+    void tick_interval(f32 dt);
+
+    /// Re-evaluate immediately on the next tick(), bypassing the
+    /// throttle.  Used by the inline "Refresh" button.
+    void mark_dirty() { eval_accumulator_ = eval_interval_; }
+
+    f32 eval_interval() const { return eval_interval_; }
+    void set_eval_interval(f32 sec) { eval_interval_ = sec < 0.0f ? 0.0f : sec; }
+
+    // ── Persistence (parity with ParticleEditorPanel / LuaConsolePanel) ──
+    /// Serialise the watch list (names + expressions) into JSON.  The
+    /// last_value / last_error fields are deliberately *not* serialised
+    /// — they're transient runtime state.  Round-trip-safe with
+    /// load_from_json().
+    std::string save_to_json() const;
+    bool        load_from_json(const std::string& json);
+    bool        save_to_file(const std::string& path) const;
+    bool        load_from_file(const std::string& path);
+
+private:
+    std::vector<WatchEntry> watches_;
+    Evaluator               evaluator_;
+    f32                     eval_interval_{0.1f};   // 10 Hz default
+    f32                     eval_accumulator_{0.0f};
+};
+
 } // namespace nexus::editor

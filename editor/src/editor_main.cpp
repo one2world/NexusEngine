@@ -382,6 +382,14 @@ static void register_default_panels(EditorState& state) {
         stats_panel->set_visible(false);
         panels.add_panel(std::move(stats_panel));
     }
+    {
+        // M35 — Watch panel; evaluator is bound after the script engine
+        // is constructed below.  Hidden by default to keep the docked
+        // workspace tidy until the user opens it from Window menu.
+        auto watch_panel = std::make_unique<WatchPanel>();
+        watch_panel->set_visible(false);
+        panels.add_panel(std::move(watch_panel));
+    }
 
     // Set up default dock layout.
     auto& dock = panels.dock_space();
@@ -901,6 +909,31 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                         LogLevel::Info,
                         LogSource::LuaPrint);
                 });
+
+            // M35 — Watch panel evaluator.  Routes each pinned
+            // expression through LuaBackend::evaluate so users can
+            // observe live values without writing a script.  Errors
+            // surface in the panel's per-row red label, not the
+            // Console — Watch is a passive observer.
+            if (auto* watch_panel = editor_state.panels()
+                    .find_typed<WatchPanel>("Watch")) {
+                watch_panel->set_evaluator(
+                    [&lua_backend](const std::string& expr)
+                        -> nexus::editor::WatchPanel::EvalResult {
+                        nexus::editor::WatchPanel::EvalResult r;
+                        nexus::scripting::ScriptValue v =
+                            lua_backend.evaluate(expr);
+                        const auto& last = lua_backend.last_error();
+                        if (!last.empty()) {
+                            r.ok    = false;
+                            r.error = last;
+                        } else {
+                            r.ok    = true;
+                            r.value = v.to_string();
+                        }
+                        return r;
+                    });
+            }
 
             // M36 — double-clicking a [Script] error row jumps the user
             // back to the offending line.  Behaviour:
@@ -2017,6 +2050,16 @@ static int run(int /*argc*/, char* /*argv*/[]) {
 
             // Update and render editor panels (these call ImGui widgets)
             editor_state.panels().update(dt);
+
+            // M35 — pump the Watch panel evaluator.  tick_interval()
+            // throttles to the configured rate (10 Hz default) so the
+            // script engine doesn't get hammered when many watches
+            // are pinned.
+            if (auto* watch_panel = editor_state.panels()
+                    .find_typed<WatchPanel>("Watch")) {
+                watch_panel->tick_interval(dt);
+            }
+
             editor_state.panels().render();
 
             // ── Status bar (pinned to bottom of main viewport) ─────────

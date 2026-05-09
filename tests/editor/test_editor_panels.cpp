@@ -976,6 +976,66 @@ TEST(WatchPanel, SaveToFileClearsDirtyAndRoundTrips) {
     fs::remove(path);
 }
 
+// ── M39: per-row clipboard format ─────────────────────────────────────────
+
+TEST(WatchPanel, FormatRowForClipboardEmptyOnOOB) {
+    WatchPanel wp;
+    EXPECT_TRUE(wp.format_row_for_clipboard(0).empty());
+    EXPECT_TRUE(wp.format_row_for_clipboard(99).empty());
+}
+
+TEST(WatchPanel, FormatRowForClipboardBeforeEvaluation) {
+    WatchPanel wp;
+    wp.add_watch("Math.PI", "pi");
+    EXPECT_EQ(wp.format_row_for_clipboard(0), "pi = (not evaluated yet)");
+}
+
+TEST(WatchPanel, FormatRowForClipboardOkUsesEqualsSeparator) {
+    WatchPanel wp;
+    wp.set_evaluator([](const std::string&) {
+        return WatchPanel::EvalResult{true, "3.14159", ""};
+    });
+    wp.add_watch("Math.PI", "pi");
+    wp.tick();
+    EXPECT_EQ(wp.format_row_for_clipboard(0), "pi = 3.14159");
+}
+
+TEST(WatchPanel, FormatRowForClipboardErrorUsesColonSeparator) {
+    WatchPanel wp;
+    wp.set_evaluator([](const std::string&) {
+        return WatchPanel::EvalResult{false, "", "syntax err near 'foo'"};
+    });
+    wp.add_watch("foo+", "broken");
+    wp.tick();
+    EXPECT_EQ(wp.format_row_for_clipboard(0),
+              "broken: syntax err near 'foo'");
+}
+
+TEST(WatchPanel, FormatRowForClipboardUsesNameNotExpression) {
+    // The clipboard text is a human-shareable value, so it leads with
+    // the friendly name (defaults to expression when not customised).
+    WatchPanel wp;
+    wp.set_evaluator([](const std::string&) {
+        return WatchPanel::EvalResult{true, "5", ""};
+    });
+    wp.add_watch("Entity.count()");  // name == expression
+    wp.tick();
+    EXPECT_EQ(wp.format_row_for_clipboard(0), "Entity.count() = 5");
+}
+
+TEST(WatchPanel, FormatRowForClipboardEmptyValueStringRoundTrips) {
+    // ScriptValue::nil().to_string() returns "nil"; an empty string
+    // would mean an unusual evaluator wrapper.  The formatter must
+    // preserve both faithfully — no normalisation.
+    WatchPanel wp;
+    wp.set_evaluator([](const std::string&) {
+        return WatchPanel::EvalResult{true, "", ""};  // explicit empty
+    });
+    wp.add_watch("x");
+    wp.tick();
+    EXPECT_EQ(wp.format_row_for_clipboard(0), "x = ");
+}
+
 TEST(WatchPanel, MarkPersistenceDirtyIsExposed) {
     // Public hook for hosts that mutate watches via a non-canonical path
     // (e.g. importing from another panel) and need to flag the on-disk

@@ -1339,6 +1339,14 @@ public:
     /// throttle.  Used by the inline "Refresh" button.
     void mark_dirty() { eval_accumulator_ = eval_interval_; }
 
+    /// Build the clipboard text for one row (M39).  Format:
+    ///   "<name> = <last_value>"           when ok
+    ///   "<name>: <last_error>"            when !ok
+    ///   "<name> = (not evaluated yet)"    before the first tick
+    /// Empty string when index is out of range.  Pure helper so tests
+    /// can verify the format without exercising ImGui's clipboard.
+    std::string format_row_for_clipboard(u32 index) const;
+
     f32 eval_interval() const { return eval_interval_; }
     void set_eval_interval(f32 sec) { eval_interval_ = sec < 0.0f ? 0.0f : sec; }
 

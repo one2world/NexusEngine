@@ -4617,6 +4617,22 @@ void WatchPanel::tick() {
     }
 }
 
+std::string WatchPanel::format_row_for_clipboard(u32 index) const {
+    if (index >= watches_.size()) return {};
+    const auto& w = watches_[index];
+    std::string out = w.name;
+    if (!w.evaluated) {
+        out += " = (not evaluated yet)";
+    } else if (w.ok) {
+        out += " = ";
+        out += w.last_value;
+    } else {
+        out += ": ";
+        out += w.last_error;
+    }
+    return out;
+}
+
 void WatchPanel::tick_interval(f32 dt) {
     eval_accumulator_ += dt < 0.0f ? 0.0f : dt;
     if (eval_accumulator_ < eval_interval_) return;
@@ -4725,6 +4741,10 @@ void WatchPanel::on_render() {
             }
         } else {
             ImGui::TextDisabled("(not evaluated yet)");
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("C")) {
+            ImGui::SetClipboardText(format_row_for_clipboard(i).c_str());
         }
         ImGui::SameLine();
         if (ImGui::SmallButton("X")) remove_idx = static_cast<int>(i);

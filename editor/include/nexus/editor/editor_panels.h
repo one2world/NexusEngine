@@ -542,6 +542,39 @@ public:
     /// callback bound.  Empty path is rejected without firing the cb.
     bool request_script_import(u32 entity, const std::string& path);
 
+    // ── Browse-from-AssetBrowser (M43) ─────────────────────────────────
+    //
+    // Closes the M33 UX gap of typing a script path manually: when the
+    // user has a `.lua` file selected in the Asset Browser, the
+    // Script inspector grows a "Browse" button that pulls the current
+    // selection into the import path.  Decoupled through a resolver
+    // callback so the inspector doesn't need a direct AssetBrowserPanel
+    // pointer (and stays headless-testable).
+    using AssetSelectionResolver = std::function<std::string()>;
+    void set_asset_selection_resolver(AssetSelectionResolver r) {
+        on_asset_selection_ = std::move(r);
+    }
+    bool has_asset_selection_resolver() const {
+        return static_cast<bool>(on_asset_selection_);
+    }
+
+    /// Returns the resolver's current selection iff it ends in ".lua"
+    /// (case-insensitive); empty string otherwise.  The filter is
+    /// deliberate — Browse is wired to the script-import row and
+    /// must not let users one-click a `.png` into the script slot.
+    std::string get_browsable_lua_path() const;
+
+    /// Test-friendly mutator that mirrors the Browse button behaviour:
+    /// queries the resolver, filters by extension, writes into the
+    /// import path buffer.  Returns true when the buffer was updated.
+    bool browse_script_import_path();
+
+    /// Read-only accessor on the import-path buffer.  Lets tests
+    /// verify Browse populated the field without exercising ImGui.
+    std::string current_script_import_path() const {
+        return std::string(script_import_path_);
+    }
+
     /// Track pending edits.
     void push_edit(const PropertyEdit& edit) { pending_edits_.push_back(edit); }
     std::vector<PropertyEdit> drain_edits();
@@ -564,6 +597,7 @@ private:
     class ComponentRegistry* component_registry_{nullptr};
     AssetPathResolvers asset_paths_{};
     ScriptImportCallback on_script_import_;
+    AssetSelectionResolver on_asset_selection_;
     // Script-import path buffer kept across frames so the user's typed
     // path persists while the .lua field is open.
     char script_import_path_[512] = {};

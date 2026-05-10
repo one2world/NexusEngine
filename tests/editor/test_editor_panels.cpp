@@ -266,6 +266,95 @@ TEST(InspectorPanelScriptImport, CallbackFalseReturnLeavesComponentAlone) {
     EXPECT_TRUE(after.initialized);  // unaffected
 }
 
+// ── M43: Browse-from-AssetBrowser resolver ────────────────────────────────
+
+TEST(InspectorPanelScriptImport, BrowseDefaultsHaveNoResolver) {
+    InspectorPanel ip;
+    EXPECT_FALSE(ip.has_asset_selection_resolver());
+}
+
+TEST(InspectorPanelScriptImport, BrowseEmptyWithoutResolver) {
+    InspectorPanel ip;
+    EXPECT_TRUE(ip.get_browsable_lua_path().empty());
+    EXPECT_FALSE(ip.browse_script_import_path());
+    EXPECT_TRUE(ip.current_script_import_path().empty());
+}
+
+TEST(InspectorPanelScriptImport, BrowseFiltersNonLuaSelection) {
+    InspectorPanel ip;
+    ip.set_asset_selection_resolver([] {
+        return std::string("assets/textures/foo.png");
+    });
+    EXPECT_TRUE(ip.get_browsable_lua_path().empty());
+    EXPECT_FALSE(ip.browse_script_import_path());
+}
+
+TEST(InspectorPanelScriptImport, BrowseAcceptsLuaSelection) {
+    InspectorPanel ip;
+    ip.set_asset_selection_resolver([] {
+        return std::string("assets/scripts/player.lua");
+    });
+    EXPECT_EQ(ip.get_browsable_lua_path(), "assets/scripts/player.lua");
+    EXPECT_TRUE(ip.browse_script_import_path());
+    EXPECT_EQ(ip.current_script_import_path(),
+              "assets/scripts/player.lua");
+}
+
+TEST(InspectorPanelScriptImport, BrowseIsCaseInsensitiveOnExtension) {
+    InspectorPanel ip;
+    ip.set_asset_selection_resolver([] {
+        return std::string("Scripts/Boss.LUA");
+    });
+    EXPECT_EQ(ip.get_browsable_lua_path(), "Scripts/Boss.LUA");
+    EXPECT_TRUE(ip.browse_script_import_path());
+    EXPECT_EQ(ip.current_script_import_path(), "Scripts/Boss.LUA");
+}
+
+TEST(InspectorPanelScriptImport, BrowseRejectsEmptyOrTooShortSelection) {
+    InspectorPanel ip;
+    ip.set_asset_selection_resolver([] { return std::string(""); });
+    EXPECT_TRUE(ip.get_browsable_lua_path().empty());
+    EXPECT_FALSE(ip.browse_script_import_path());
+
+    ip.set_asset_selection_resolver([] { return std::string(".lu"); });
+    EXPECT_TRUE(ip.get_browsable_lua_path().empty());
+}
+
+TEST(InspectorPanelScriptImport, BrowseRejectsLuaInMiddleOfPath) {
+    // "foo.lua.bak" is not a .lua asset.  Suffix match only.
+    InspectorPanel ip;
+    ip.set_asset_selection_resolver([] {
+        return std::string("foo.lua.bak");
+    });
+    EXPECT_TRUE(ip.get_browsable_lua_path().empty());
+    EXPECT_FALSE(ip.browse_script_import_path());
+}
+
+TEST(InspectorPanelScriptImport, BrowseDoesNotImportByItself) {
+    // Browse only fills the path field; importing still requires
+    // a separate Import-button click that goes through the validation
+    // path in request_script_import().
+    Scene scene;
+    auto e = scene.registry().create();
+    auto& sc = scene.registry().add_component<
+        nexus::scripting::ScriptComponent>(e, {});
+    sc.script_name = "preserved";
+    sc.initialized = true;
+
+    InspectorPanel ip;
+    ip.bind_scene(&scene);
+    ip.set_asset_selection_resolver([] {
+        return std::string("scripts/foo.lua");
+    });
+
+    EXPECT_TRUE(ip.browse_script_import_path());
+    auto& after = scene.registry().get_component<
+        nexus::scripting::ScriptComponent>(e);
+    // No mutation — Browse is purely a UI helper.
+    EXPECT_EQ(after.script_name, "preserved");
+    EXPECT_TRUE(after.initialized);
+}
+
 TEST(InspectorPanelScriptImport, EmptyOutNameRejectedWithoutMutation) {
     // A callback that returns true but leaves out_name empty would
     // produce an unbindable script — refuse and keep state intact.

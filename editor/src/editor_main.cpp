@@ -939,6 +939,22 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                 (void)watch_panel->load_from_file("watches.json");
             }
 
+            // M43 — Script inspector Browse button pulls the current
+            // AssetBrowser selection.  The resolver is queried each
+            // frame so the button stays in sync as the user clicks
+            // around the browser.  Filter to .lua is enforced inside
+            // InspectorPanel::get_browsable_lua_path().
+            if (inspector) {
+                auto* asset_browser = editor_state.panels()
+                    .find_typed<AssetBrowserPanel>("Asset Browser");
+                if (asset_browser) {
+                    inspector->set_asset_selection_resolver(
+                        [asset_browser]() {
+                            return asset_browser->selected();
+                        });
+                }
+            }
+
             // M33 — Script Inspector hot-import.  Reads the .lua file
             // off disk, registers it with ScriptEngine for hot-reload,
             // and returns the file stem as the canonical script_name.

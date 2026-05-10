@@ -2690,6 +2690,19 @@ void InspectorPanel::on_render() {
             // no-ops would confuse users into thinking the field
             // is broken.
             if (on_script_import_) {
+                // Browse button (M43) — pulls the AssetBrowser's
+                // current selection into the path buffer, but only
+                // when it's a `.lua` file.  Disabled when no
+                // resolver bound or the selection isn't a .lua.
+                const bool browse_available =
+                    !get_browsable_lua_path().empty();
+                ImGui::BeginDisabled(!browse_available);
+                if (ImGui::SmallButton("Browse##script_import_browse")) {
+                    browse_script_import_path();
+                }
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+
                 ImGui::SetNextItemWidth(-110.0f);
                 ImGui::InputTextWithHint(
                     "##script_import_path",
@@ -3006,6 +3019,35 @@ void InspectorPanel::on_render() {
     if (entity_locked) ImGui::EndDisabled();
 
     ui::end_window();
+}
+
+std::string InspectorPanel::get_browsable_lua_path() const {
+    if (!on_asset_selection_) return {};
+    std::string sel = on_asset_selection_();
+    if (sel.size() < 4) return {};
+    // Case-insensitive ".lua" suffix check.  Avoids std::filesystem
+    // since users may type platform-mixed paths during testing.
+    auto ends_with_lua = [](const std::string& s) {
+        if (s.size() < 4) return false;
+        const auto tail = s.substr(s.size() - 4);
+        if (tail.size() != 4) return false;
+        return (tail[0] == '.') &&
+               (tail[1] == 'l' || tail[1] == 'L') &&
+               (tail[2] == 'u' || tail[2] == 'U') &&
+               (tail[3] == 'a' || tail[3] == 'A');
+    };
+    return ends_with_lua(sel) ? sel : std::string{};
+}
+
+bool InspectorPanel::browse_script_import_path() {
+    const std::string sel = get_browsable_lua_path();
+    if (sel.empty()) return false;
+    // Truncate to buffer cap leaving room for null terminator.
+    const size_t cap = sizeof(script_import_path_) - 1;
+    const size_t n = sel.size() < cap ? sel.size() : cap;
+    std::memcpy(script_import_path_, sel.data(), n);
+    script_import_path_[n] = '\0';
+    return true;
 }
 
 bool InspectorPanel::request_script_import(u32 entity,

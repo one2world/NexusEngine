@@ -3,11 +3,13 @@
 #include <nexus/core/types.h>
 #include <nexus/core/math.h>
 #include <nexus/rhi/rhi.h>
+#include <nexus/renderer/surface_material.h>
 #include <nexus/renderer/camera.h>
 #include <nexus/renderer/shadow_map.h>
 #include <vector>
 #include <memory>
 #include <functional>
+#include <unordered_map>
 
 namespace nexus {
 
@@ -108,21 +110,64 @@ public:
     void add_spot_light(const SpotLight& light);
 
     /// Hemispheric ambient — sky-tinted on top, ground-tinted underneath,
-    /// blended by surface normal.y.  Replaces a flat "ambient = 0.1 *
-    /// lightColor" baseline that produced near-black back-hemispheres
-    /// and a hard light/dark border on smooth surfaces.  Hosts can
-    /// override the defaults to match a sunset / overcast / night-time
-    /// mood.  Applied once per fragment in the shader's main().
+    /// blended by surface normal.y.  Scene-level fill that every material
+    /// receives in proportion to its `ambient_response` field.  Hosts
+    /// override the defaults to match a sunset / overcast / night mood.
     void set_ambient_sky(Vec3 color)    { ambient_sky_    = color; }
     void set_ambient_ground(Vec3 color) { ambient_ground_ = color; }
     Vec3 ambient_sky()    const { return ambient_sky_;    }
     Vec3 ambient_ground() const { return ambient_ground_; }
 
+    // ── Material table (M-mat) ─────────────────────────────────────────
+    //
+    // The renderer owns a u32 → SurfaceMaterial map.  MeshRendererComponent
+    // references entries by `material_id`; on draw_mesh() the renderer
+    // looks up the material and pushes its fields into u_Material_*
+    // uniforms.  material_id == 0 falls back to a built-in default
+    // (neutral white, mild specular, no wrap) so legacy call sites and
+    // freshly-created entities keep rendering.
+    //
+    // Materials are stored by value (POD struct) — registering a new
+    // material with the same id replaces the previous one, which makes
+    // hot-tweaking from the editor / scripts trivial: just call
+    // upload_material() again with the new struct.
+    void upload_material(u32 id, const SurfaceMaterial& material);
+
+    /// Lookup; returns the bound material or the default if id is unknown.
+    const SurfaceMaterial& get_material(u32 id) const;
+
+    /// Replace the default material applied when material_id == 0.
+    /// Lets a host set a project-wide neutral surface look without
+    /// forcing every entity to carry an explicit material_id.
+    void set_default_material(const SurfaceMaterial& m) { default_material_ = m; }
+    const SurfaceMaterial& default_material() const { return default_material_; }
+
+    /// Number of entries currently in the material table (excludes
+    /// the implicit default at id 0).  Diagnostic only.
+    u32 material_count() const;
+
     void upload_mesh(Mesh& mesh);
     void destroy_mesh(Mesh& mesh);
 
+    /// Material-aware draw entry point.  `material_id` selects an entry
+    /// uploaded via upload_material; 0 falls back to default_material_.
+    /// `tint` is multiplied per-fragment over the material's albedo
+    /// (legacy MeshRendererComponent.tint behaviour, kept for cheap
+    /// instance variation).  Material's albedo provides the base
+    /// surface colour, lighting parameters (specular weight, shininess,
+    /// wrap, ambient response, emissive) come from the material.
     void draw_mesh(const Mesh& mesh, const Mat4& transform,
-                   Vec4 color = Vec4{1.0f}, rhi::TextureHandle texture = rhi::INVALID_HANDLE);
+                   u32 material_id, Vec4 tint = Vec4{1.0f},
+                   rhi::TextureHandle texture = rhi::INVALID_HANDLE);
+
+    /// Legacy overload — material_id defaults to 0 (default material).
+    /// Kept so existing call sites compile while we migrate them to
+    /// pass MeshRendererComponent.material_id.
+    void draw_mesh(const Mesh& mesh, const Mat4& transform,
+                   Vec4 tint = Vec4{1.0f},
+                   rhi::TextureHandle texture = rhi::INVALID_HANDLE) {
+        draw_mesh(mesh, transform, 0u, tint, texture);
+    }
 
     /// Simple frustum culling check against a bounding sphere.
     [[nodiscard]] bool is_visible(Vec3 center, float radius) const;
@@ -158,6 +203,12 @@ private:
     // override per-frame.
     Vec3 ambient_sky_   {0.32f, 0.36f, 0.42f};
     Vec3 ambient_ground_{0.18f, 0.16f, 0.14f};
+
+    // Material table.  Indexed by MeshRendererComponent.material_id.
+    // material_id 0 falls back to default_material_; entries here
+    // override the default for any explicit id.
+    std::unordered_map<u32, SurfaceMaterial> material_table_;
+    SurfaceMaterial                          default_material_{};
 
     Mat4 view_projection_{1.0f};
     Vec3 camera_position_{0.0f};

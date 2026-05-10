@@ -129,6 +129,66 @@ int main() {
         { kMeshSphere, &sphere_mesh },
     };
 
+    // ── Material catalog ───────────────────────────────────────────────
+    // Each surface gets its own SurfaceMaterial.  Lighting "knobs"
+    // (specular weight, shininess, diffuse wrap, ambient response,
+    // emissive) live here, NOT in the shader.  A polished sphere can
+    // sit next to a matte ground plane without one preset flattening
+    // the other.
+    constexpr nexus::u32 kMatGround = 100;
+    constexpr nexus::u32 kMatRedPlastic = 101;
+    constexpr nexus::u32 kMatBlueSphere = 102;
+    constexpr nexus::u32 kMatGoldCube   = 103;
+
+    {
+        nexus::SurfaceMaterial m;
+        // Matte ground — wide diffuse wrap so it reads as a soft fill,
+        // very low specular so footprints don't shine.
+        m.albedo            = nexus::Vec4(0.30f, 0.50f, 0.30f, 1.0f);
+        m.specular_strength = 0.05f;
+        m.shininess         = 8.0f;
+        m.diffuse_wrap      = 0.20f;
+        m.ambient_response  = 1.0f;
+        renderer_3d.upload_material(kMatGround, m);
+    }
+    {
+        nexus::SurfaceMaterial m;
+        // Glossy red plastic — tight highlight, mild wrap.
+        m.albedo            = nexus::Vec4(0.80f, 0.30f, 0.20f, 1.0f);
+        m.specular_color    = nexus::Vec3(1.0f, 1.0f, 1.0f);
+        m.specular_strength = 0.6f;
+        m.shininess         = 96.0f;
+        m.diffuse_wrap      = 0.10f;
+        m.ambient_response  = 0.85f;
+        renderer_3d.upload_material(kMatRedPlastic, m);
+    }
+    {
+        nexus::SurfaceMaterial m;
+        // Smooth blue ceramic — wide wrap to make the bouncing sphere
+        // read as evenly lit (the demo that motivated this rewrite).
+        m.albedo            = nexus::Vec4(0.20f, 0.60f, 0.90f, 1.0f);
+        m.specular_color    = nexus::Vec3(1.0f, 1.0f, 1.0f);
+        m.specular_strength = 0.4f;
+        m.shininess         = 48.0f;
+        m.diffuse_wrap      = 0.30f;
+        m.ambient_response  = 1.0f;
+        renderer_3d.upload_material(kMatBlueSphere, m);
+    }
+    {
+        nexus::SurfaceMaterial m;
+        // Warm gold — coloured specular, very tight highlight, slight
+        // emissive tint so it reads as "metal".
+        m.albedo            = nexus::Vec4(0.90f, 0.80f, 0.20f, 1.0f);
+        m.specular_color    = nexus::Vec3(1.0f, 0.85f, 0.45f);
+        m.specular_strength = 0.9f;
+        m.shininess         = 128.0f;
+        m.diffuse_wrap      = 0.05f;
+        m.ambient_response  = 0.7f;
+        m.emissive          = nexus::Vec3(0.10f, 0.08f, 0.02f);
+        m.emissive_strength = 1.0f;
+        renderer_3d.upload_material(kMatGoldCube, m);
+    }
+
     // Sun (directional light).
     {
         nexus::Entity sun = scene.create_entity_3d("Sun");
@@ -157,46 +217,48 @@ int main() {
         auto& gt = reg.get_component<nexus::Transform3DComponent>(ground);
         gt.position = nexus::Vec3(0.0f, -1.0f, 0.0f);
         auto& mr = reg.add_component<nexus::MeshRendererComponent>(ground, {});
-        mr.mesh_id = kMeshPlane;
-        mr.tint    = nexus::Vec4(0.3f, 0.5f, 0.3f, 1.0f);
+        mr.mesh_id     = kMeshPlane;
+        mr.material_id = kMatGround;
+        // Tint stays at default (1,1,1,1) — material's albedo is the
+        // single source of truth for surface colour.
     }
 
-    // Cube — driven by spinner.lua.
+    // Cube — driven by spinner.lua, glossy red plastic.
     {
         nexus::Entity cube = scene.create_entity_3d("SpinningCube");
         auto& tc = reg.get_component<nexus::Transform3DComponent>(cube);
         tc.position = nexus::Vec3(0.0f, 0.5f, 0.0f);
         auto& mr = reg.add_component<nexus::MeshRendererComponent>(cube, {});
-        mr.mesh_id = kMeshCube;
-        mr.tint    = nexus::Vec4(0.8f, 0.3f, 0.2f, 1.0f);
+        mr.mesh_id     = kMeshCube;
+        mr.material_id = kMatRedPlastic;
         nexus::scripting::ScriptComponent sc;
         sc.script_name = "spinner";
         sc.enabled     = true;
         reg.add_component<nexus::scripting::ScriptComponent>(cube, std::move(sc));
     }
 
-    // Sphere — driven by bouncer.lua.
+    // Sphere — driven by bouncer.lua, smooth blue ceramic.
     {
         nexus::Entity ball = scene.create_entity_3d("BouncingSphere");
         auto& tc = reg.get_component<nexus::Transform3DComponent>(ball);
         tc.position = nexus::Vec3(3.0f, 0.0f, 0.0f);
         auto& mr = reg.add_component<nexus::MeshRendererComponent>(ball, {});
-        mr.mesh_id = kMeshSphere;
-        mr.tint    = nexus::Vec4(0.2f, 0.6f, 0.9f, 1.0f);
+        mr.mesh_id     = kMeshSphere;
+        mr.material_id = kMatBlueSphere;
         nexus::scripting::ScriptComponent sc;
         sc.script_name = "bouncer";
         sc.enabled     = true;
         reg.add_component<nexus::scripting::ScriptComponent>(ball, std::move(sc));
     }
 
-    // Cube2 — driven by pulse_scaler.lua.
+    // Cube2 — driven by pulse_scaler.lua, warm gold.
     {
         nexus::Entity cube2 = scene.create_entity_3d("PulsingCube");
         auto& tc = reg.get_component<nexus::Transform3DComponent>(cube2);
         tc.position = nexus::Vec3(-3.0f, 0.0f, -2.0f);
         auto& mr = reg.add_component<nexus::MeshRendererComponent>(cube2, {});
-        mr.mesh_id = kMeshCube;
-        mr.tint    = nexus::Vec4(0.9f, 0.8f, 0.2f, 1.0f);
+        mr.mesh_id     = kMeshCube;
+        mr.material_id = kMatGoldCube;
         nexus::scripting::ScriptComponent sc;
         sc.script_name = "pulse_scaler";
         sc.enabled     = true;
@@ -322,7 +384,8 @@ int main() {
                     nexus::Transform3DComponent& tc) {
                     auto it = mesh_table.find(mr.mesh_id);
                     if (it == mesh_table.end() || it->second == nullptr) return;
-                    renderer_3d.draw_mesh(*it->second, tc.world_matrix, mr.tint);
+                    renderer_3d.draw_mesh(*it->second, tc.world_matrix,
+                                            mr.material_id, mr.tint);
                 });
 
             renderer_3d.end();

@@ -69,17 +69,27 @@ uniform float u_SpotLight_Range[MAX_SPOT_LIGHTS];
 uniform float u_SpotLight_InnerCos[MAX_SPOT_LIGHTS];
 uniform float u_SpotLight_OuterCos[MAX_SPOT_LIGHTS];
 
-// Hemispheric ambient — cheap GI approximation that softens the
-// vanilla-Lambert terminator.  Surfaces facing up pick up a tinted
-// sky colour, surfaces facing down pick up a warm ground bounce.
-// `t = normal.y * 0.5 + 0.5` maps [-1,1] → [0,1].  The blended
-// colour replaces the previous flat `0.1 * lightColor` ambient
-// which gave back-faces a near-black appearance and produced a
-// hard dark/light border on smooth surfaces (visible on the
-// sandbox's blue sphere).  Magnitude (~0.30) was tuned so the
-// dark hemisphere reads as "ambient-lit" rather than "shadowed".
+// Hemispheric ambient — scene-level fill that every surface receives in
+// proportion to its `ambient_response` material parameter.  Sky/ground
+// colours come from set_ambient_sky / set_ambient_ground (defaults
+// chosen for an overcast preset).
 uniform vec3 u_AmbientSky;     // RGB tint applied where normal.y > 0
 uniform vec3 u_AmbientGround;  // RGB tint applied where normal.y < 0
+
+// ── Material uniforms ──────────────────────────────────────────────
+//
+// Every "knob" that used to be hardcoded in the shader (specular
+// power, specular weight, diffuse wrap, ambient response) now comes
+// from the SurfaceMaterial bound by ForwardRenderer3D::draw_mesh.
+// Different materials get different looks without re-compiling shaders.
+uniform vec4  u_Material_Albedo;
+uniform vec3  u_Material_Specular;
+uniform float u_Material_SpecStrength;
+uniform float u_Material_Shininess;
+uniform float u_Material_DiffuseWrap;
+uniform float u_Material_AmbientResponse;
+uniform vec3  u_Material_Emissive;
+uniform float u_Material_EmissiveStrength;
 
 vec3 hemispheric_ambient(vec3 normal) {
     float t = normal.y * 0.5 + 0.5;
@@ -87,120 +97,93 @@ vec3 hemispheric_ambient(vec3 normal) {
 }
 
 // Wrap-diffuse — softens Lambert's discontinuous max(0, n·l) cliff
-// into a smooth shoulder.  Without this every light source draws its
-// own terminator (a great circle where dot=0); on a sphere lit by N
-// lights you'd see N intersecting "lines".  Pushes the cosine-fall
-// past the equator by `wrap` and renormalises so peak brightness
-// stays at 1 at n·l = 1.
-//
-//   wrap = 0    → vanilla Lambert (hard terminator)
-//   wrap = 1    → Half-Lambert (no terminator at all, very flat)
-//   wrap ≈ 0.25 → soft area-light look used by most modern realtime
-//                  renderers without IBL.  Tuned to keep the
-//                  directional cue but kill the visible seam.
+// into a smooth shoulder when the surface's material asks for it.
+//   wrap = 0    → vanilla Lambert (physically correct, hard terminator)
+//   wrap = 1    → Half-Lambert (no terminator, very flat)
+// Each material picks its own wrap value via SurfaceMaterial.diffuse_wrap.
 float wrap_diffuse(vec3 normal, vec3 lightDir, float wrap) {
     float ndl = dot(normal, lightDir);
     return max((ndl + wrap) / (1.0 + wrap), 0.0);
 }
 
-vec3 calcDirectionalLight(vec3 normal, vec3 viewDir) {
-    vec3 lightDir = normalize(-u_DirLight_Direction);
-
-    // Diffuse with wrap softening — replaces vanilla Lambert.
-    float diff = wrap_diffuse(normal, lightDir, 0.25);
-
-    // Specular (Blinn-Phong).  Gated on the *raw* n·l > 0 so it
-    // never shows on the truly back-facing hemisphere — even with
-    // wrap diffuse the unlit side has no specular contribution
-    // (specular is a reflection model, not a wrap).
+// Per-light Blinn-Phong with material-driven shininess + specular weight.
+// `lightColor`, `lightIntensity`, and any per-light attenuation are baked
+// into the caller so this stays purely local: surface response × light
+// energy = contribution.
+vec3 lit_brdf(vec3 normal, vec3 lightDir, vec3 viewDir, vec3 lightColor) {
+    float diff = wrap_diffuse(normal, lightDir, u_Material_DiffuseWrap);
     vec3 halfwayDir = normalize(lightDir + viewDir);
     float spec = (dot(normal, lightDir) > 0.0)
-        ? pow(max(dot(normal, halfwayDir), 0.0), 32.0)
+        ? pow(max(dot(normal, halfwayDir), 0.0), u_Material_Shininess)
         : 0.0;
+    vec3 diffuse  = diff * lightColor;
+    vec3 specular = spec * u_Material_SpecStrength * u_Material_Specular * lightColor;
+    return diffuse + specular;
+}
 
-    vec3 diffuse  = diff * u_DirLight_Color;
-    vec3 specular = spec * 0.5 * u_DirLight_Color;
-
-    return (diffuse + specular) * u_DirLight_Intensity;
+vec3 calcDirectionalLight(vec3 normal, vec3 viewDir) {
+    vec3 lightDir = normalize(-u_DirLight_Direction);
+    return lit_brdf(normal, lightDir, viewDir, u_DirLight_Color)
+         * u_DirLight_Intensity;
 }
 
 vec3 calcPointLight(int i, vec3 normal, vec3 fragPos, vec3 viewDir) {
-    vec3 lightDir = u_PointLight_Position[i] - fragPos;
-    float distance = length(lightDir);
-    lightDir = normalize(lightDir);
+    vec3 lightVec  = u_PointLight_Position[i] - fragPos;
+    float distance = length(lightVec);
+    vec3 lightDir  = normalize(lightVec);
 
-    // Attenuation
-    float attenuation = 1.0 / (1.0 + (distance / u_PointLight_Radius[i]) *
-                                       (distance / u_PointLight_Radius[i]));
+    // Inverse-square style attenuation (clamped by radius).
+    float r = u_PointLight_Radius[i];
+    float attenuation = 1.0 / (1.0 + (distance / r) * (distance / r));
 
-    // Wrap-diffuse — same softening as the directional light so a
-    // bright orbiting point light doesn't paint its own visible
-    // great-circle terminator on smooth surfaces.
-    float diff = wrap_diffuse(normal, lightDir, 0.25);
-
-    // Specular gated on raw n·l > 0 (see calcDirectionalLight).
-    vec3 halfwayDir = normalize(lightDir + viewDir);
-    float spec = (dot(normal, lightDir) > 0.0)
-        ? pow(max(dot(normal, halfwayDir), 0.0), 32.0)
-        : 0.0;
-
-    vec3 diffuse  = diff * u_PointLight_Color[i];
-    vec3 specular = spec * 0.5 * u_PointLight_Color[i];
-
-    return (diffuse + specular) * attenuation * u_PointLight_Intensity[i];
+    return lit_brdf(normal, lightDir, viewDir, u_PointLight_Color[i])
+         * attenuation * u_PointLight_Intensity[i];
 }
 
 vec3 calcSpotLight(int i, vec3 normal, vec3 fragPos, vec3 viewDir) {
-    vec3 lightDir = u_SpotLight_Position[i] - fragPos;
-    float distance = length(lightDir);
-    lightDir = normalize(lightDir);
+    vec3 lightVec  = u_SpotLight_Position[i] - fragPos;
+    float distance = length(lightVec);
+    vec3 lightDir  = normalize(lightVec);
 
-    // Attenuation
-    float attenuation = 1.0 / (1.0 + (distance / u_SpotLight_Range[i]) *
-                                       (distance / u_SpotLight_Range[i]));
+    float r = u_SpotLight_Range[i];
+    float attenuation = 1.0 / (1.0 + (distance / r) * (distance / r));
 
-    // Spotlight cone
     float theta = dot(lightDir, normalize(-u_SpotLight_Direction[i]));
     float epsilon = u_SpotLight_InnerCos[i] - u_SpotLight_OuterCos[i];
-    float spotIntensity = clamp((theta - u_SpotLight_OuterCos[i]) / max(epsilon, 0.001), 0.0, 1.0);
+    float spotIntensity = clamp((theta - u_SpotLight_OuterCos[i]) /
+                                  max(epsilon, 0.001), 0.0, 1.0);
 
-    // Wrap-diffuse — keep a small wrap so the cone's edge stays soft
-    // even when the surface is near-grazing.
-    float diff = wrap_diffuse(normal, lightDir, 0.25);
-
-    // Specular gated on raw n·l > 0.
-    vec3 halfwayDir = normalize(lightDir + viewDir);
-    float spec = (dot(normal, lightDir) > 0.0)
-        ? pow(max(dot(normal, halfwayDir), 0.0), 32.0)
-        : 0.0;
-
-    vec3 diffuse  = diff * u_SpotLight_Color[i];
-    vec3 specular = spec * 0.5 * u_SpotLight_Color[i];
-
-    return (diffuse + specular) * attenuation * spotIntensity * u_SpotLight_Intensity[i];
+    return lit_brdf(normal, lightDir, viewDir, u_SpotLight_Color[i])
+         * attenuation * spotIntensity * u_SpotLight_Intensity[i];
 }
 
 void main() {
-    vec3 normal = normalize(v_Normal);
+    vec3 normal  = normalize(v_Normal);
     vec3 viewDir = normalize(u_CameraPos - v_FragPos);
 
-    // Hemispheric ambient first — guarantees every fragment has a
-    // floor brightness, avoiding the near-black back-hemisphere
-    // produced by a flat 0.1 ambient.
-    vec3 result = hemispheric_ambient(normal);
+    // 1. Ambient fill — scaled by how much the material accepts.
+    vec3 light_sum = hemispheric_ambient(normal) * u_Material_AmbientResponse;
 
-    result += calcDirectionalLight(normal, viewDir);
-
+    // 2. Per-light contributions — each light's BRDF response.
+    light_sum += calcDirectionalLight(normal, viewDir);
     for (int i = 0; i < u_NumPointLights; ++i) {
-        result += calcPointLight(i, normal, v_FragPos, viewDir);
+        light_sum += calcPointLight(i, normal, v_FragPos, viewDir);
     }
-
     for (int i = 0; i < u_NumSpotLights; ++i) {
-        result += calcSpotLight(i, normal, v_FragPos, viewDir);
+        light_sum += calcSpotLight(i, normal, v_FragPos, viewDir);
     }
 
-    vec4 texColor = texture(u_Texture, v_TexCoord);
-    FragColor = vec4(result, 1.0) * texColor * u_Color;
+    // 3. Albedo modulation — material albedo × per-instance tint × texture.
+    //    Tint is the legacy MeshRendererComponent.tint (still useful as
+    //    an instance-level multiplier on top of the asset's albedo).
+    vec4 tex      = texture(u_Texture, v_TexCoord);
+    vec4 baseRgba = u_Material_Albedo * u_Color * tex;
+    vec3 lit      = light_sum * baseRgba.rgb;
+
+    // 4. Emissive bypasses lighting entirely.
+    vec3 emissive = u_Material_Emissive * u_Material_EmissiveStrength;
+
+    FragColor = vec4(lit + emissive, baseRgba.a);
 }
 )";
 
@@ -430,8 +413,42 @@ void ForwardRenderer3D::destroy_mesh(Mesh& mesh) {
     mesh.vbo = rhi::INVALID_HANDLE;
 }
 
+// Push every material parameter as a uniform.  Called once per draw with
+// the resolved SurfaceMaterial — keeps push_material out of the hot inner
+// loop while still letting each draw use its own material.
+static void push_material_uniforms(rhi::RHI* rhi,
+                                    rhi::ShaderHandle shader,
+                                    const SurfaceMaterial& m) {
+    rhi->set_uniform_vec4 (shader, "u_Material_Albedo",            m.albedo);
+    rhi->set_uniform_vec3 (shader, "u_Material_Specular",          m.specular_color);
+    rhi->set_uniform_float(shader, "u_Material_SpecStrength",      m.specular_strength);
+    rhi->set_uniform_float(shader, "u_Material_Shininess",         m.shininess);
+    rhi->set_uniform_float(shader, "u_Material_DiffuseWrap",       m.diffuse_wrap);
+    rhi->set_uniform_float(shader, "u_Material_AmbientResponse",   m.ambient_response);
+    rhi->set_uniform_vec3 (shader, "u_Material_Emissive",          m.emissive);
+    rhi->set_uniform_float(shader, "u_Material_EmissiveStrength",  m.emissive_strength);
+}
+
+void ForwardRenderer3D::upload_material(u32 id, const SurfaceMaterial& m) {
+    // material_id 0 always means "use default"; reject so callers can't
+    // accidentally redirect every default-tinted entity to a custom mat.
+    if (id == 0) return;
+    material_table_[id] = m;
+}
+
+const SurfaceMaterial& ForwardRenderer3D::get_material(u32 id) const {
+    if (id == 0) return default_material_;
+    auto it = material_table_.find(id);
+    return it != material_table_.end() ? it->second : default_material_;
+}
+
+u32 ForwardRenderer3D::material_count() const {
+    return static_cast<u32>(material_table_.size());
+}
+
 void ForwardRenderer3D::draw_mesh(const Mesh& mesh, const Mat4& transform,
-                                  Vec4 color, rhi::TextureHandle texture) {
+                                  u32 material_id, Vec4 tint,
+                                  rhi::TextureHandle texture) {
     if (!in_frame_) return;
 
     // Frustum culling — derive the world-space bounding sphere from the
@@ -470,7 +487,16 @@ void ForwardRenderer3D::draw_mesh(const Mesh& mesh, const Mat4& transform,
     Mat4 normal_matrix = glm::transpose(glm::inverse(transform));
     rhi_->set_uniform_mat4(shader_, "u_NormalMatrix", normal_matrix);
 
-    rhi_->set_uniform_vec4(shader_, "u_Color", color);
+    // Resolve material → push every per-surface uniform.  The shader's
+    // BRDF reads `u_Material_*` for shininess / specular weight /
+    // diffuse wrap / ambient response — none of those values come from
+    // the renderer or the shader source any more.
+    push_material_uniforms(rhi_, shader_, get_material(material_id));
+
+    // Per-instance tint multiplied on top of the material's albedo
+    // (legacy MeshRendererComponent.tint usage, kept for cheap
+    // recolouring without authoring a new material asset).
+    rhi_->set_uniform_vec4(shader_, "u_Color", tint);
 
     rhi::TextureHandle tex = (texture != rhi::INVALID_HANDLE) ? texture : white_texture_;
     rhi_->bind_texture(tex, 0);

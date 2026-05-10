@@ -245,7 +245,8 @@ void ViewportPanel::render_scene_to_fbo() {
                     if (mr.mesh_id == 0) return;
                     auto it = mesh_registry_.find(mr.mesh_id);
                     if (it == mesh_registry_.end() || !it->second) return;
-                    renderer_3d_->draw_mesh(*it->second, tc.world_matrix, mr.tint);
+                    renderer_3d_->draw_mesh(*it->second, tc.world_matrix,
+                                              mr.material_id, mr.tint);
                     ++stats.mesh_draw_calls;
                     ++stats.draw_calls;
                     const auto& m = *it->second;

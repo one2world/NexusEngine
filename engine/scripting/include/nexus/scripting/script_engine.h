@@ -123,6 +123,13 @@ public:
     /// Get script source by name.
     std::string get_script_source(const std::string& name) const;
 
+    /// Get the on-disk file path for a registered script, or "" when
+    /// the script was registered as inline source (file_path empty)
+    /// or when the name isn't registered.  Editor's Script inspector
+    /// uses this to reveal the bound script in the Asset Browser
+    /// (M44).
+    std::string get_script_path(const std::string& name) const;
+
     /// Registered script count.
     u32 script_count() const;
 

@@ -2675,6 +2675,20 @@ void InspectorPanel::on_render() {
                 sc.initialized = false;
             }
 
+            // M44 — Reveal the bound script in the Asset Browser.
+            // Disabled when the row has no script_name or no host
+            // wired the reveal callback (silent no-op would just
+            // confuse users into thinking the button is broken).
+            if (on_script_reveal_) {
+                ImGui::SameLine();
+                const bool can_reveal = !sc.script_name.empty();
+                ImGui::BeginDisabled(!can_reveal);
+                if (ImGui::SmallButton("Reveal##script_reveal")) {
+                    request_script_reveal(target);
+                }
+                ImGui::EndDisabled();
+            }
+
             ImGui::TextDisabled(sc.initialized
                 ? "Status: initialised (on_create fired)"
                 : "Status: pending — on_create runs next tick");
@@ -3048,6 +3062,21 @@ bool InspectorPanel::browse_script_import_path() {
     std::memcpy(script_import_path_, sel.data(), n);
     script_import_path_[n] = '\0';
     return true;
+}
+
+bool InspectorPanel::request_script_reveal(u32 entity) {
+    if (!on_script_reveal_) return false;
+    if (!scene_) return false;
+    auto& reg = scene_->registry();
+    if (!reg.alive(static_cast<Entity>(entity))) return false;
+    if (!reg.has_component<nexus::scripting::ScriptComponent>(
+            static_cast<Entity>(entity))) {
+        return false;
+    }
+    const auto& sc = reg.get_component<
+        nexus::scripting::ScriptComponent>(static_cast<Entity>(entity));
+    if (sc.script_name.empty()) return false;
+    return on_script_reveal_(sc.script_name);
 }
 
 bool InspectorPanel::request_script_import(u32 entity,

@@ -952,6 +952,48 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                         [asset_browser]() {
                             return asset_browser->selected();
                         });
+
+                    // M44 — Reveal the bound script in the Asset
+                    // Browser.  Looks up the on-disk file_path that
+                    // ScriptEngine remembered at register_script
+                    // time; missing path ⇒ Reveal fails (the script
+                    // was registered as inline source and has no
+                    // disk artifact to scroll to).
+                    inspector->set_on_script_reveal(
+                        [asset_browser, &script_engine, console]
+                        (const std::string& script_name) -> bool {
+                            std::string path =
+                                script_engine.get_script_path(script_name);
+                            if (path.empty()) {
+                                if (console) {
+                                    std::string note = "[Editor] Reveal '";
+                                    note += script_name;
+                                    note += "' — script has no on-disk file";
+                                    console->add_message(std::move(note),
+                                                          LogLevel::Warning,
+                                                          LogSource::Editor);
+                                }
+                                return false;
+                            }
+                            std::error_code ec;
+                            auto abs = std::filesystem::absolute(path, ec);
+                            if (ec) abs = std::filesystem::path(path);
+                            const auto parent = abs.parent_path().string();
+                            if (!parent.empty()) {
+                                asset_browser->navigate_to(parent);
+                            }
+                            asset_browser->set_selected(abs.string());
+                            if (console) {
+                                std::string note = "[Editor] Reveal '";
+                                note += script_name;
+                                note += "' → ";
+                                note += abs.string();
+                                console->add_message(std::move(note),
+                                                      LogLevel::Info,
+                                                      LogSource::Editor);
+                            }
+                            return true;
+                        });
                 }
             }
 

@@ -203,6 +203,30 @@ TEST(ScriptEngine, MissingScriptSourceEmpty) {
     EXPECT_EQ(engine.get_script_source("nonexistent"), "");
 }
 
+// ── M44: get_script_path companion to get_script_source ──────────────────
+
+TEST(ScriptEngine, GetScriptPathReturnsRegisteredFilePath) {
+    ScriptEngine engine;
+    engine.register_script("player",
+                            "on_create = function() end",
+                            "scripts/player.lua");
+    EXPECT_EQ(engine.get_script_path("player"), "scripts/player.lua");
+}
+
+TEST(ScriptEngine, GetScriptPathEmptyForInlineSource) {
+    // register_script with no file_path argument ⇒ inline source,
+    // no on-disk path.  Reveal-in-Asset-Browser uses this signal
+    // to know it can't scroll to a non-existent file.
+    ScriptEngine engine;
+    engine.register_script("inline", "x = 1");
+    EXPECT_EQ(engine.get_script_path("inline"), "");
+}
+
+TEST(ScriptEngine, GetScriptPathEmptyForUnknownName) {
+    ScriptEngine engine;
+    EXPECT_EQ(engine.get_script_path("never_registered"), "");
+}
+
 TEST(ScriptEngine, ReloadNonexistentReturnsFalse) {
     ScriptEngine engine;
     EXPECT_FALSE(engine.reload_script("missing"));

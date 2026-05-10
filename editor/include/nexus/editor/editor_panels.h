@@ -569,6 +569,27 @@ public:
     /// import path buffer.  Returns true when the buffer was updated.
     bool browse_script_import_path();
 
+    // ── Reveal-bound-script in Asset Browser (M44) ─────────────────────
+    //
+    // Inverse of M43: when the inspector's target entity already has a
+    // ScriptComponent.script_name bound, a "Reveal" button opens the
+    // Asset Browser at that script's on-disk file.  Path resolution
+    // is the host's job — the editor knows ScriptEngine, the inspector
+    // doesn't.  Callback returns true on successful reveal.
+    using ScriptRevealCallback =
+        std::function<bool(const std::string& script_name)>;
+    void set_on_script_reveal(ScriptRevealCallback cb) {
+        on_script_reveal_ = std::move(cb);
+    }
+    bool has_script_reveal_callback() const {
+        return static_cast<bool>(on_script_reveal_);
+    }
+
+    /// Headless entry point.  Validates target alive, ScriptComponent
+    /// present, script_name non-empty, callback bound; returns the
+    /// callback's bool when all pre-conditions hold.
+    bool request_script_reveal(u32 entity);
+
     /// Read-only accessor on the import-path buffer.  Lets tests
     /// verify Browse populated the field without exercising ImGui.
     std::string current_script_import_path() const {
@@ -598,6 +619,7 @@ private:
     AssetPathResolvers asset_paths_{};
     ScriptImportCallback on_script_import_;
     AssetSelectionResolver on_asset_selection_;
+    ScriptRevealCallback on_script_reveal_;
     // Script-import path buffer kept across frames so the user's typed
     // path persists while the .lua field is open.
     char script_import_path_[512] = {};

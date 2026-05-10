@@ -254,6 +254,11 @@ std::string ScriptEngine::get_script_source(const std::string& name) const {
     return it != scripts_.end() ? it->second.source : "";
 }
 
+std::string ScriptEngine::get_script_path(const std::string& name) const {
+    auto it = scripts_.find(name);
+    return it != scripts_.end() ? it->second.file_path : "";
+}
+
 u32 ScriptEngine::script_count() const {
     return static_cast<u32>(scripts_.size());
 }

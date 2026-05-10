@@ -330,6 +330,99 @@ TEST(InspectorPanelScriptImport, BrowseRejectsLuaInMiddleOfPath) {
     EXPECT_FALSE(ip.browse_script_import_path());
 }
 
+// ── M44: Reveal bound script in Asset Browser ─────────────────────────────
+
+TEST(InspectorPanelScriptImport, RevealDefaultsHaveNoCallback) {
+    InspectorPanel ip;
+    EXPECT_FALSE(ip.has_script_reveal_callback());
+}
+
+TEST(InspectorPanelScriptImport, RevealRejectsWhenSceneUnbound) {
+    InspectorPanel ip;
+    ip.set_on_script_reveal([](const std::string&) { return true; });
+    EXPECT_FALSE(ip.request_script_reveal(0));
+}
+
+TEST(InspectorPanelScriptImport, RevealRejectsDeadEntity) {
+    Scene scene;
+    InspectorPanel ip;
+    ip.bind_scene(&scene);
+    bool fired = false;
+    ip.set_on_script_reveal(
+        [&](const std::string&) { fired = true; return true; });
+    EXPECT_FALSE(ip.request_script_reveal(0xDEADBEEF));
+    EXPECT_FALSE(fired);
+}
+
+TEST(InspectorPanelScriptImport, RevealRejectsEntityWithoutScriptComponent) {
+    Scene scene;
+    auto e = scene.registry().create();
+    InspectorPanel ip;
+    ip.bind_scene(&scene);
+    bool fired = false;
+    ip.set_on_script_reveal(
+        [&](const std::string&) { fired = true; return true; });
+    EXPECT_FALSE(ip.request_script_reveal(static_cast<u32>(e)));
+    EXPECT_FALSE(fired);
+}
+
+TEST(InspectorPanelScriptImport, RevealRejectsEmptyScriptName) {
+    Scene scene;
+    auto e = scene.registry().create();
+    scene.registry().add_component<nexus::scripting::ScriptComponent>(e, {});
+    InspectorPanel ip;
+    ip.bind_scene(&scene);
+    bool fired = false;
+    ip.set_on_script_reveal(
+        [&](const std::string&) { fired = true; return true; });
+    EXPECT_FALSE(ip.request_script_reveal(static_cast<u32>(e)));
+    EXPECT_FALSE(fired);
+}
+
+TEST(InspectorPanelScriptImport, RevealRejectsWhenCallbackUnbound) {
+    Scene scene;
+    auto e = scene.registry().create();
+    auto& sc = scene.registry().add_component<
+        nexus::scripting::ScriptComponent>(e, {});
+    sc.script_name = "foo";
+    InspectorPanel ip;
+    ip.bind_scene(&scene);
+    EXPECT_FALSE(ip.request_script_reveal(static_cast<u32>(e)));
+}
+
+TEST(InspectorPanelScriptImport, RevealFiresWithBoundScriptName) {
+    Scene scene;
+    auto e = scene.registry().create();
+    auto& sc = scene.registry().add_component<
+        nexus::scripting::ScriptComponent>(e, {});
+    sc.script_name = "player";
+
+    InspectorPanel ip;
+    ip.bind_scene(&scene);
+    std::string captured;
+    ip.set_on_script_reveal([&](const std::string& name) {
+        captured = name;
+        return true;
+    });
+
+    EXPECT_TRUE(ip.request_script_reveal(static_cast<u32>(e)));
+    EXPECT_EQ(captured, "player");
+}
+
+TEST(InspectorPanelScriptImport, RevealReturnsCallbackResult) {
+    Scene scene;
+    auto e = scene.registry().create();
+    auto& sc = scene.registry().add_component<
+        nexus::scripting::ScriptComponent>(e, {});
+    sc.script_name = "foo";
+
+    InspectorPanel ip;
+    ip.bind_scene(&scene);
+    ip.set_on_script_reveal([](const std::string&) { return false; });
+    // Pre-conditions hold but callback says no — caller honours that.
+    EXPECT_FALSE(ip.request_script_reveal(static_cast<u32>(e)));
+}
+
 TEST(InspectorPanelScriptImport, BrowseDoesNotImportByItself) {
     // Browse only fills the path field; importing still requires
     // a separate Import-button click that goes through the validation

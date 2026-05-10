@@ -1,3 +1,33 @@
+// NexusEngine Sandbox — exercises the engine end-to-end with Scene + ECS
+// + real Lua scripts driving entity transforms.
+//
+// Scene composition (built once at startup):
+//   - Sun         : directional light entity, fixed direction
+//   - PointLight  : orbiting point light (animated by C++ for now —
+//                    light components don't expose script transforms yet)
+//   - Ground      : static plane mesh
+//   - Cube        : MeshRenderer, animated by `spinner.lua`     (yaw spin)
+//   - Sphere      : MeshRenderer, animated by `bouncer.lua`     (vertical bounce)
+//   - Cube2       : MeshRenderer, animated by `pulse_scaler.lua` (uniform pulse)
+//   - 2D shapes   : a small Quad/Circle/Rect group rendered when Space toggles
+//                    to 2D mode.  Same renderer surface as the old demo,
+//                    just behind a Scene-aware iteration.
+//
+// Per-frame loop:
+//   1. Poll input
+//   2. Run ScriptSystem.update_scripts(registry, dt) — every entity with a
+//      ScriptComponent fires `<script_name>.on_update(entity, dt)`, which is
+//      defined in Lua.  The script mutates Transform3DComponent.position /
+//      .rotation / .scale.
+//   3. Hierarchy::propagate_transforms_3d — recompute world_matrix from
+//      the script-modified locals.  Renderer reads world_matrix.
+//   4. Walk the registry to drive renderer_3d (lights + meshes).
+//
+// Demonstrates: ScriptComponent + Lua dispatch, Entity.set_rotation_euler,
+// Entity.set_position, Entity.set_scale, Math.sin/cos/abs, the Lua
+// stdlib (math.* / tostring / print) — all running through PUC-Rio
+// Lua 5.4.
+
 #include "nexus/core/log.h"
 #include "nexus/core/timer.h"
 #include "nexus/core/math.h"
@@ -7,6 +37,17 @@
 #include "nexus/rhi/gl_functions.h"
 #include "nexus/renderer/batch_renderer_2d.h"
 #include "nexus/renderer/forward_renderer_3d.h"
+#include "nexus/scene/scene.h"
+#include "nexus/scene/registry.h"
+#include "nexus/scene/components.h"
+#include "nexus/scene/hierarchy.h"
+#include "nexus/scripting/script_engine.h"
+#include "nexus/scripting/lua_backend.h"
+#include "nexus/scripting/script_component.h"
+#include "nexus/scripting/engine_bindings.h"
+
+#include <filesystem>
+#include <unordered_map>
 
 // Forward declare GLFW proc address getter
 struct GLFWwindow;
@@ -15,48 +56,186 @@ extern "C" {
     GLFWglproc glfwGetProcAddress(const char* procname);
 }
 
+namespace {
+
+// Resolve a script asset path.  We look for sandbox/assets/scripts/
+// relative to (a) the executable's directory and (b) the source-tree
+// fallback so `./build/sandbox/nexus-sandbox` works whether run from the
+// repo root or the build dir.
+std::string resolve_script(const std::string& name) {
+    namespace fs = std::filesystem;
+    const std::string filename = name + ".lua";
+    const fs::path candidates[] = {
+        fs::path("sandbox") / "assets" / "scripts" / filename,
+        fs::path("../sandbox") / "assets" / "scripts" / filename,
+        fs::path("../../sandbox") / "assets" / "scripts" / filename,
+        fs::path("assets") / "scripts" / filename,
+    };
+    std::error_code ec;
+    for (const auto& p : candidates) {
+        if (fs::exists(p, ec)) return fs::absolute(p, ec).string();
+    }
+    return filename;  // last resort — execute_file will report the failure
+}
+
+} // namespace
+
 int main() {
     nexus::Log::init();
     NX_APP_INFO("Sandbox starting...");
 
     nexus::WindowConfig config;
-    config.title = "NexusEngine Sandbox";
+    config.title = "NexusEngine Sandbox — Lua-driven scene";
     nexus::Window window(config);
     NX_APP_INFO("Window created: {}x{}", config.width, config.height);
 
     nexus::Input::init(window.native_handle());
 
-    // Load OpenGL functions
     if (!nexus::rhi::gl::load(reinterpret_cast<nexus::rhi::gl::GLLoadProc>(glfwGetProcAddress))) {
         NX_ERROR("Failed to load OpenGL functions");
         return 1;
     }
 
-    // Create RHI
     auto rhi = nexus::rhi::RHI::create();
     rhi->init();
 
-    // Initialize renderers
     nexus::BatchRenderer2D renderer_2d;
     renderer_2d.init(rhi.get());
 
     nexus::ForwardRenderer3D renderer_3d;
     renderer_3d.init(rhi.get());
 
-    // Create primitive meshes
-    auto cube_mesh = nexus::create_cube_mesh();
-    renderer_3d.upload_mesh(cube_mesh);
-
-    auto plane_mesh = nexus::create_plane_mesh(20.0f, 4);
-    renderer_3d.upload_mesh(plane_mesh);
-
+    // Primitive meshes uploaded once; we keep handles to them by id so
+    // MeshRendererComponent.mesh_id can route entities to their geometry.
+    auto cube_mesh   = nexus::create_cube_mesh();
+    auto plane_mesh  = nexus::create_plane_mesh(20.0f, 4);
     auto sphere_mesh = nexus::create_sphere_mesh(0.5f, 16, 32);
+    renderer_3d.upload_mesh(cube_mesh);
+    renderer_3d.upload_mesh(plane_mesh);
     renderer_3d.upload_mesh(sphere_mesh);
 
-    // Set up cameras
+    // ── Scene + ECS ─────────────────────────────────────────────────────
+    nexus::Scene scene;
+    auto& reg = scene.registry();
+
+    // Mesh-id table: MeshRendererComponent.mesh_id is just a u32 the
+    // sandbox owns; map back to the actual Mesh object during render.
+    constexpr nexus::u32 kMeshCube   = 1;
+    constexpr nexus::u32 kMeshPlane  = 2;
+    constexpr nexus::u32 kMeshSphere = 3;
+    std::unordered_map<nexus::u32, const nexus::Mesh*> mesh_table {
+        { kMeshCube,   &cube_mesh   },
+        { kMeshPlane,  &plane_mesh  },
+        { kMeshSphere, &sphere_mesh },
+    };
+
+    // Sun (directional light).
+    {
+        nexus::Entity sun = scene.create_entity_3d("Sun");
+        auto& dl = reg.add_component<nexus::DirectionalLightComponent>(sun, {});
+        dl.direction = nexus::Vec3(-0.5f, -1.0f, -0.3f);
+        dl.color     = nexus::Vec3(1.0f, 0.95f, 0.8f);
+        dl.intensity = 1.0f;
+    }
+
+    // Orbiting point light — driven by C++ each frame because there's no
+    // script binding for PointLightComponent yet.  Position lives in the
+    // entity's Transform3DComponent and the renderer pulls
+    // tc.world_matrix[3] as the light's world position.
+    nexus::Entity point_light = nexus::INVALID_ENTITY;
+    {
+        point_light = scene.create_entity_3d("PointLight");
+        auto& pl = reg.add_component<nexus::PointLightComponent>(point_light, {});
+        pl.color     = nexus::Vec3(0.2f, 0.5f, 1.0f);
+        pl.intensity = 2.0f;
+        pl.radius    = 8.0f;
+    }
+
+    // Ground plane.
+    {
+        nexus::Entity ground = scene.create_entity_3d("Ground");
+        auto& gt = reg.get_component<nexus::Transform3DComponent>(ground);
+        gt.position = nexus::Vec3(0.0f, -1.0f, 0.0f);
+        auto& mr = reg.add_component<nexus::MeshRendererComponent>(ground, {});
+        mr.mesh_id = kMeshPlane;
+        mr.tint    = nexus::Vec4(0.3f, 0.5f, 0.3f, 1.0f);
+    }
+
+    // Cube — driven by spinner.lua.
+    {
+        nexus::Entity cube = scene.create_entity_3d("SpinningCube");
+        auto& tc = reg.get_component<nexus::Transform3DComponent>(cube);
+        tc.position = nexus::Vec3(0.0f, 0.5f, 0.0f);
+        auto& mr = reg.add_component<nexus::MeshRendererComponent>(cube, {});
+        mr.mesh_id = kMeshCube;
+        mr.tint    = nexus::Vec4(0.8f, 0.3f, 0.2f, 1.0f);
+        nexus::scripting::ScriptComponent sc;
+        sc.script_name = "spinner";
+        sc.enabled     = true;
+        reg.add_component<nexus::scripting::ScriptComponent>(cube, std::move(sc));
+    }
+
+    // Sphere — driven by bouncer.lua.
+    {
+        nexus::Entity ball = scene.create_entity_3d("BouncingSphere");
+        auto& tc = reg.get_component<nexus::Transform3DComponent>(ball);
+        tc.position = nexus::Vec3(3.0f, 0.0f, 0.0f);
+        auto& mr = reg.add_component<nexus::MeshRendererComponent>(ball, {});
+        mr.mesh_id = kMeshSphere;
+        mr.tint    = nexus::Vec4(0.2f, 0.6f, 0.9f, 1.0f);
+        nexus::scripting::ScriptComponent sc;
+        sc.script_name = "bouncer";
+        sc.enabled     = true;
+        reg.add_component<nexus::scripting::ScriptComponent>(ball, std::move(sc));
+    }
+
+    // Cube2 — driven by pulse_scaler.lua.
+    {
+        nexus::Entity cube2 = scene.create_entity_3d("PulsingCube");
+        auto& tc = reg.get_component<nexus::Transform3DComponent>(cube2);
+        tc.position = nexus::Vec3(-3.0f, 0.0f, -2.0f);
+        auto& mr = reg.add_component<nexus::MeshRendererComponent>(cube2, {});
+        mr.mesh_id = kMeshCube;
+        mr.tint    = nexus::Vec4(0.9f, 0.8f, 0.2f, 1.0f);
+        nexus::scripting::ScriptComponent sc;
+        sc.script_name = "pulse_scaler";
+        sc.enabled     = true;
+        reg.add_component<nexus::scripting::ScriptComponent>(cube2, std::move(sc));
+    }
+
+    // ── Scripting ───────────────────────────────────────────────────────
+    nexus::scripting::ScriptEngine script_engine;
+    nexus::scripting::bind_all(script_engine, reg);  // boots Lua + binds API
+    auto& lua_backend = script_engine.lua_backend();
+
+    // Surface Lua errors / print() calls in the Sandbox console so
+    // misbehaving scripts are visible without an editor.
+    script_engine.set_error_handler(
+        [](const nexus::scripting::ScriptError& err) {
+            NX_ERROR("[Lua] {}", err.message);
+        });
+    script_engine.set_print_sink(
+        [](const std::string& msg) { NX_APP_INFO("[Lua] {}", msg); });
+
+    // Load each script asset.  Each .lua file defines its module table
+    // with .on_create / .on_update / .on_destroy hooks; ScriptSystem
+    // dispatches into them by script_name.
+    for (const char* name : { "spinner", "bouncer", "pulse_scaler" }) {
+        const std::string path = resolve_script(name);
+        if (!lua_backend.execute_file(path)) {
+            NX_ERROR("Failed to load script '{}': {}", path, lua_backend.last_error());
+        } else {
+            NX_APP_INFO("Loaded script: {}", path);
+        }
+    }
+
+    nexus::scripting::ScriptSystem script_system(&script_engine);
+    script_system.initialize_scripts(reg);
+
+    // ── Cameras ─────────────────────────────────────────────────────────
     nexus::Camera2D camera_2d;
     camera_2d.set_projection(static_cast<float>(config.width),
-                             static_cast<float>(config.height));
+                              static_cast<float>(config.height));
 
     nexus::Camera3D camera_3d;
     camera_3d.position = nexus::Vec3(0.0f, 3.0f, 8.0f);
@@ -66,8 +245,7 @@ int main() {
     nexus::Timer timer;
     bool show_3d = true;
 
-    NX_APP_INFO("Press SPACE to toggle 2D/3D view");
-    NX_APP_INFO("Press ESC to exit");
+    NX_APP_INFO("SPACE: toggle 2D/3D    ESC: exit");
 
     while (!window.should_close()) {
         window.poll_events();
@@ -75,130 +253,119 @@ int main() {
         timer.tick();
 
         if (nexus::Input::key_pressed(nexus::Key::Escape)) break;
-
-        // Toggle 2D/3D mode
         if (nexus::Input::key_pressed(nexus::Key::Space)) {
             show_3d = !show_3d;
             NX_APP_INFO("Switched to {} mode", show_3d ? "3D" : "2D");
         }
 
-        float time = static_cast<float>(timer.elapsed());
+        const float dt   = timer.delta_time();
+        const float time = static_cast<float>(timer.elapsed());
+
+        // ── Run scripts ─────────────────────────────────────────────────
+        // Each ScriptComponent's <script_name>.on_update(entity, dt) is
+        // called; the Lua side mutates Transform3DComponent fields in
+        // place via Entity.set_position / set_rotation_euler / set_scale.
+        script_system.update_scripts(reg, dt);
+
+        // C++-driven point light orbit (no script binding for lights).
+        if (point_light != nexus::INVALID_ENTITY &&
+            reg.has_component<nexus::Transform3DComponent>(point_light)) {
+            auto& pt = reg.get_component<nexus::Transform3DComponent>(point_light);
+            pt.position = nexus::Vec3(std::cos(time) * 3.0f, 1.5f,
+                                       std::sin(time) * 3.0f);
+        }
+
+        // ── Propagate scripts' local-space edits into world_matrix ──────
+        nexus::Hierarchy::propagate_transforms_3d(reg);
 
         rhi->begin_frame();
         rhi->set_viewport(0, 0, window.width(), window.height());
 
         if (show_3d) {
-            // ── 3D Scene ────────────────────────────────────────────────
             rhi->clear(nexus::Vec4{0.1f, 0.1f, 0.15f, 1.0f});
 
-            // Slowly orbit camera
-            float cam_angle = time * 0.3f;
+            // Slowly orbit camera around origin so the user sees motion
+            // even before scripts kick in.
+            const float cam_angle = time * 0.3f;
             camera_3d.position = nexus::Vec3(
-                std::sin(cam_angle) * 8.0f,
-                3.0f,
-                std::cos(cam_angle) * 8.0f
-            );
+                std::sin(cam_angle) * 8.0f, 3.0f, std::cos(cam_angle) * 8.0f);
             camera_3d.look_at(nexus::Vec3(0.0f, 0.0f, 0.0f));
             camera_3d.set_perspective(window.aspect_ratio());
 
             renderer_3d.begin(camera_3d);
 
-            // Directional light
-            nexus::DirectionalLight sun;
-            sun.direction = nexus::Vec3(-0.5f, -1.0f, -0.3f);
-            sun.color     = nexus::Vec3(1.0f, 0.95f, 0.8f);
-            sun.intensity = 1.0f;
-            renderer_3d.set_directional_light(sun);
+            // Lights — pulled from ECS so any future script that
+            // mutates them is honoured.
+            reg.each<nexus::DirectionalLightComponent>(
+                [&](nexus::Entity, nexus::DirectionalLightComponent& dl) {
+                    nexus::DirectionalLight light;
+                    light.direction = dl.direction;
+                    light.color     = dl.color;
+                    light.intensity = dl.intensity;
+                    renderer_3d.set_directional_light(light);
+                });
+            reg.each<nexus::PointLightComponent, nexus::Transform3DComponent>(
+                [&](nexus::Entity, nexus::PointLightComponent& pl,
+                    nexus::Transform3DComponent& tc) {
+                    nexus::PointLight light;
+                    light.position  = nexus::Vec3(tc.world_matrix[3]);
+                    light.color     = pl.color;
+                    light.intensity = pl.intensity;
+                    light.radius    = pl.radius;
+                    renderer_3d.add_point_light(light);
+                });
 
-            // Orbiting point light
-            nexus::PointLight point;
-            point.position = nexus::Vec3(std::cos(time) * 3.0f, 1.5f,
-                                         std::sin(time) * 3.0f);
-            point.color    = nexus::Vec3(0.2f, 0.5f, 1.0f);
-            point.intensity = 2.0f;
-            point.radius   = 8.0f;
-            renderer_3d.add_point_light(point);
-
-            // Ground plane
-            nexus::Mat4 plane_xform(1.0f);
-            plane_xform = glm::translate(plane_xform, nexus::Vec3(0.0f, -1.0f, 0.0f));
-            renderer_3d.draw_mesh(plane_mesh, plane_xform,
-                                  nexus::Vec4(0.3f, 0.5f, 0.3f, 1.0f));
-
-            // Rotating cube
-            nexus::Mat4 cube_xform(1.0f);
-            cube_xform = glm::translate(cube_xform, nexus::Vec3(0.0f, 0.5f, 0.0f));
-            cube_xform = glm::rotate(cube_xform, time * 0.5f, nexus::Vec3(0.0f, 1.0f, 0.0f));
-            cube_xform = glm::rotate(cube_xform, time * 0.3f, nexus::Vec3(1.0f, 0.0f, 0.0f));
-            renderer_3d.draw_mesh(cube_mesh, cube_xform,
-                                  nexus::Vec4(0.8f, 0.3f, 0.2f, 1.0f));
-
-            // Sphere
-            nexus::Mat4 sphere_xform(1.0f);
-            sphere_xform = glm::translate(sphere_xform, nexus::Vec3(3.0f, 0.0f, 0.0f));
-            float bounce = std::abs(std::sin(time * 2.0f)) * 1.5f;
-            sphere_xform = glm::translate(sphere_xform, nexus::Vec3(0.0f, bounce, 0.0f));
-            renderer_3d.draw_mesh(sphere_mesh, sphere_xform,
-                                  nexus::Vec4(0.2f, 0.6f, 0.9f, 1.0f));
-
-            // Second cube
-            nexus::Mat4 cube2_xform(1.0f);
-            cube2_xform = glm::translate(cube2_xform, nexus::Vec3(-3.0f, 0.0f, -2.0f));
-            cube2_xform = glm::rotate(cube2_xform, -time * 0.7f, nexus::Vec3(0.0f, 1.0f, 0.0f));
-            cube2_xform = glm::scale(cube2_xform, nexus::Vec3(1.5f));
-            renderer_3d.draw_mesh(cube_mesh, cube2_xform,
-                                  nexus::Vec4(0.9f, 0.8f, 0.2f, 1.0f));
+            // Mesh draws — Transform3DComponent.world_matrix already has
+            // the script-driven values folded in.
+            reg.each<nexus::MeshRendererComponent, nexus::Transform3DComponent>(
+                [&](nexus::Entity, nexus::MeshRendererComponent& mr,
+                    nexus::Transform3DComponent& tc) {
+                    auto it = mesh_table.find(mr.mesh_id);
+                    if (it == mesh_table.end() || it->second == nullptr) return;
+                    renderer_3d.draw_mesh(*it->second, tc.world_matrix, mr.tint);
+                });
 
             renderer_3d.end();
         } else {
-            // ── 2D Scene ────────────────────────────────────────────────
             rhi->clear(nexus::Vec4{0.15f, 0.15f, 0.2f, 1.0f});
-
             renderer_2d.reset_stats();
             renderer_2d.begin(camera_2d);
 
-            // Grid of colored quads
+            // Procedural grid + accent shapes — pure visual filler so
+            // the 2D toggle remains useful while the 3D scene shows the
+            // Lua-driven entities.
             for (int y = 0; y < 8; ++y) {
                 for (int x = 0; x < 10; ++x) {
-                    float r = static_cast<float>(x) / 10.0f;
-                    float g = static_cast<float>(y) / 8.0f;
-                    float b = 0.5f + 0.5f * std::sin(time + static_cast<float>(x + y));
+                    const float r = static_cast<float>(x) / 10.0f;
+                    const float g = static_cast<float>(y) / 8.0f;
+                    const float b = 0.5f + 0.5f *
+                        std::sin(time + static_cast<float>(x + y));
                     renderer_2d.draw_quad(
                         nexus::Vec2(100.0f + static_cast<float>(x) * 110.0f,
-                                    80.0f + static_cast<float>(y) * 75.0f),
+                                    80.0f  + static_cast<float>(y) * 75.0f),
                         nexus::Vec2(100.0f, 65.0f),
-                        nexus::Vec4(r, g, b, 1.0f)
-                    );
+                        nexus::Vec4(r, g, b, 1.0f));
                 }
             }
-
-            // Rotating quad
-            renderer_2d.draw_quad(
-                nexus::Vec2(640.0f, 400.0f),
-                nexus::Vec2(80.0f, 80.0f),
-                time,
-                nexus::Vec4(1.0f, 0.3f, 0.3f, 0.9f)
-            );
-
-            // Shapes
+            renderer_2d.draw_quad(nexus::Vec2(640.0f, 400.0f),
+                                   nexus::Vec2(80.0f, 80.0f), time,
+                                   nexus::Vec4(1.0f, 0.3f, 0.3f, 0.9f));
             renderer_2d.draw_circle(nexus::Vec2(200.0f, 600.0f), 40.0f,
-                                    nexus::Vec4(0.2f, 0.8f, 0.4f, 1.0f));
+                                     nexus::Vec4(0.2f, 0.8f, 0.4f, 1.0f));
             renderer_2d.draw_rect(nexus::Vec2(400.0f, 580.0f),
-                                  nexus::Vec2(150.0f, 50.0f),
-                                  nexus::Vec4(0.9f, 0.9f, 0.2f, 1.0f), 2.0f);
-
+                                   nexus::Vec2(150.0f, 50.0f),
+                                   nexus::Vec4(0.9f, 0.9f, 0.2f, 1.0f), 2.0f);
             renderer_2d.end();
         }
 
         rhi->end_frame();
         window.swap_buffers();
-
-        if (timer.frame_count() % 120 == 0 && timer.frame_count() > 0) {
-            NX_APP_INFO("FPS: {:.1f}", timer.fps());
-        }
     }
 
-    // Cleanup
+    // Drain on_destroy hooks before the registry tears down, so scripts
+    // can release per-entity state cleanly.
+    script_system.destroy_scripts(reg);
+
     renderer_3d.destroy_mesh(sphere_mesh);
     renderer_3d.destroy_mesh(plane_mesh);
     renderer_3d.destroy_mesh(cube_mesh);

@@ -10,6 +10,8 @@ target_link_libraries(nexus-sandbox
         Nexus::Platform
         Nexus::RHI
         Nexus::Renderer
+        Nexus::Scene
+        Nexus::Scripting
 )
 
 nexus_set_compiler_flags(nexus-sandbox)

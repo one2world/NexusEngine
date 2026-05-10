@@ -104,6 +104,62 @@ void bind_entity_api(ScriptEngine& engine, Registry& registry) {
         [&registry](const std::vector<ScriptValue>&) -> ScriptValue {
             return ScriptValue(static_cast<i32>(registry.size()));
         }, 0, 0, "Get total entity count");
+
+    // Entity.set_rotation_euler(entity, rx, ry, rz) — radians, XYZ Euler.
+    // Updates the local rotation; world_matrix is recomputed by the
+    // scene's hierarchy step (called once per frame before render).
+    engine.register_function("Entity", "set_rotation_euler",
+        [&registry](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.size() < 4 || !args[0].is_entity()) return ScriptValue::nil();
+            u32 e = args[0].as_entity();
+            if (!registry.alive(e)) return ScriptValue::nil();
+            if (!registry.has_component<Transform3DComponent>(e)) return ScriptValue::nil();
+            auto& t = registry.get_component<Transform3DComponent>(e);
+            const Vec3 euler(args[1].as_float(),
+                              args[2].as_float(),
+                              args[3].as_float());
+            t.rotation = glm::quat(euler);
+            return ScriptValue::nil();
+        }, 4, 4, "Set entity rotation from XYZ Euler radians");
+
+    // Entity.get_rotation_euler(entity) -> vec3 (radians).
+    engine.register_function("Entity", "get_rotation_euler",
+        [&registry](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.empty() || !args[0].is_entity()) return ScriptValue(Vec3(0.0f));
+            u32 e = args[0].as_entity();
+            if (!registry.alive(e) ||
+                !registry.has_component<Transform3DComponent>(e)) {
+                return ScriptValue(Vec3(0.0f));
+            }
+            auto& t = registry.get_component<Transform3DComponent>(e);
+            return ScriptValue(glm::eulerAngles(t.rotation));
+        }, 1, 1, "Get entity rotation as XYZ Euler radians");
+
+    // Entity.set_scale(entity, sx, sy, sz) — non-uniform scale.
+    engine.register_function("Entity", "set_scale",
+        [&registry](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.size() < 4 || !args[0].is_entity()) return ScriptValue::nil();
+            u32 e = args[0].as_entity();
+            if (!registry.alive(e) ||
+                !registry.has_component<Transform3DComponent>(e)) {
+                return ScriptValue::nil();
+            }
+            registry.get_component<Transform3DComponent>(e).scale =
+                Vec3(args[1].as_float(), args[2].as_float(), args[3].as_float());
+            return ScriptValue::nil();
+        }, 4, 4, "Set entity 3D scale");
+
+    // Entity.get_scale(entity) -> vec3.
+    engine.register_function("Entity", "get_scale",
+        [&registry](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.empty() || !args[0].is_entity()) return ScriptValue(Vec3(1.0f));
+            u32 e = args[0].as_entity();
+            if (!registry.alive(e) ||
+                !registry.has_component<Transform3DComponent>(e)) {
+                return ScriptValue(Vec3(1.0f));
+            }
+            return ScriptValue(registry.get_component<Transform3DComponent>(e).scale);
+        }, 1, 1, "Get entity 3D scale");
 }
 
 // ── Math Bindings ───────────────────────────────────────────────────────────

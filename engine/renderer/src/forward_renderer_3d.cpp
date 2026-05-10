@@ -86,20 +86,35 @@ vec3 hemispheric_ambient(vec3 normal) {
     return mix(u_AmbientGround, u_AmbientSky, t);
 }
 
+// Wrap-diffuse — softens Lambert's discontinuous max(0, n·l) cliff
+// into a smooth shoulder.  Without this every light source draws its
+// own terminator (a great circle where dot=0); on a sphere lit by N
+// lights you'd see N intersecting "lines".  Pushes the cosine-fall
+// past the equator by `wrap` and renormalises so peak brightness
+// stays at 1 at n·l = 1.
+//
+//   wrap = 0    → vanilla Lambert (hard terminator)
+//   wrap = 1    → Half-Lambert (no terminator at all, very flat)
+//   wrap ≈ 0.25 → soft area-light look used by most modern realtime
+//                  renderers without IBL.  Tuned to keep the
+//                  directional cue but kill the visible seam.
+float wrap_diffuse(vec3 normal, vec3 lightDir, float wrap) {
+    float ndl = dot(normal, lightDir);
+    return max((ndl + wrap) / (1.0 + wrap), 0.0);
+}
+
 vec3 calcDirectionalLight(vec3 normal, vec3 viewDir) {
     vec3 lightDir = normalize(-u_DirLight_Direction);
 
-    // Diffuse — vanilla Lambert.  The hemispheric ambient term is
-    // applied once in main(); the directional light only contributes
-    // the lit hemisphere here.
-    float diff = max(dot(normal, lightDir), 0.0);
+    // Diffuse with wrap softening — replaces vanilla Lambert.
+    float diff = wrap_diffuse(normal, lightDir, 0.25);
 
-    // Specular (Blinn-Phong).  Specular is gated on diff so it never
-    // shows on the unlit hemisphere — without the gate the half-vector
-    // can produce a wrap-around highlight that looks like a glitch on
-    // smooth surfaces.
+    // Specular (Blinn-Phong).  Gated on the *raw* n·l > 0 so it
+    // never shows on the truly back-facing hemisphere — even with
+    // wrap diffuse the unlit side has no specular contribution
+    // (specular is a reflection model, not a wrap).
     vec3 halfwayDir = normalize(lightDir + viewDir);
-    float spec = (diff > 0.0)
+    float spec = (dot(normal, lightDir) > 0.0)
         ? pow(max(dot(normal, halfwayDir), 0.0), 32.0)
         : 0.0;
 
@@ -118,12 +133,16 @@ vec3 calcPointLight(int i, vec3 normal, vec3 fragPos, vec3 viewDir) {
     float attenuation = 1.0 / (1.0 + (distance / u_PointLight_Radius[i]) *
                                        (distance / u_PointLight_Radius[i]));
 
-    // Diffuse
-    float diff = max(dot(normal, lightDir), 0.0);
+    // Wrap-diffuse — same softening as the directional light so a
+    // bright orbiting point light doesn't paint its own visible
+    // great-circle terminator on smooth surfaces.
+    float diff = wrap_diffuse(normal, lightDir, 0.25);
 
-    // Specular
+    // Specular gated on raw n·l > 0 (see calcDirectionalLight).
     vec3 halfwayDir = normalize(lightDir + viewDir);
-    float spec = pow(max(dot(normal, halfwayDir), 0.0), 32.0);
+    float spec = (dot(normal, lightDir) > 0.0)
+        ? pow(max(dot(normal, halfwayDir), 0.0), 32.0)
+        : 0.0;
 
     vec3 diffuse  = diff * u_PointLight_Color[i];
     vec3 specular = spec * 0.5 * u_PointLight_Color[i];
@@ -145,12 +164,15 @@ vec3 calcSpotLight(int i, vec3 normal, vec3 fragPos, vec3 viewDir) {
     float epsilon = u_SpotLight_InnerCos[i] - u_SpotLight_OuterCos[i];
     float spotIntensity = clamp((theta - u_SpotLight_OuterCos[i]) / max(epsilon, 0.001), 0.0, 1.0);
 
-    // Diffuse
-    float diff = max(dot(normal, lightDir), 0.0);
+    // Wrap-diffuse — keep a small wrap so the cone's edge stays soft
+    // even when the surface is near-grazing.
+    float diff = wrap_diffuse(normal, lightDir, 0.25);
 
-    // Specular
+    // Specular gated on raw n·l > 0.
     vec3 halfwayDir = normalize(lightDir + viewDir);
-    float spec = pow(max(dot(normal, halfwayDir), 0.0), 32.0);
+    float spec = (dot(normal, lightDir) > 0.0)
+        ? pow(max(dot(normal, halfwayDir), 0.0), 32.0)
+        : 0.0;
 
     vec3 diffuse  = diff * u_SpotLight_Color[i];
     vec3 specular = spec * 0.5 * u_SpotLight_Color[i];

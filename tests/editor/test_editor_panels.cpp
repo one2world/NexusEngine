@@ -4,6 +4,9 @@
 #include "nexus/editor/undo_redo.h"
 #include "nexus/editor/component_registry.h"
 #include "nexus/perf/profiler.h"
+#include "nexus/scene/scene.h"
+#include "nexus/scene/registry.h"
+#include "nexus/scripting/script_component.h"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -156,6 +159,134 @@ TEST(InspectorPanel, PendingEdits) {
 TEST(InspectorPanel, TypeId) {
     InspectorPanel ip;
     EXPECT_STREQ(ip.type_id(), "InspectorPanel");
+}
+
+// ── M33: Script hot-import ─────────────────────────────────────────────────
+
+TEST(InspectorPanelScriptImport, DefaultsHaveNoCallback) {
+    InspectorPanel ip;
+    EXPECT_FALSE(ip.has_script_import_callback());
+}
+
+TEST(InspectorPanelScriptImport, RequestRejectsEmptyPath) {
+    InspectorPanel ip;
+    bool fired = false;
+    ip.set_on_script_import(
+        [&](const std::string&, std::string&) { fired = true; return true; });
+    EXPECT_FALSE(ip.request_script_import(0, ""));
+    EXPECT_FALSE(fired);
+}
+
+TEST(InspectorPanelScriptImport, RequestRejectsWhenSceneUnbound) {
+    InspectorPanel ip;
+    ip.set_on_script_import(
+        [](const std::string&, std::string&) { return true; });
+    EXPECT_FALSE(ip.request_script_import(0, "x.lua"));
+}
+
+TEST(InspectorPanelScriptImport, RequestRejectsDeadEntity) {
+    Scene scene;
+    InspectorPanel ip;
+    ip.bind_scene(&scene);
+    bool fired = false;
+    ip.set_on_script_import(
+        [&](const std::string&, std::string&) { fired = true; return true; });
+    EXPECT_FALSE(ip.request_script_import(0xDEADBEEF, "x.lua"));
+    EXPECT_FALSE(fired);
+}
+
+TEST(InspectorPanelScriptImport, RequestRejectsEntityWithoutScriptComponent) {
+    Scene scene;
+    auto e = scene.registry().create();  // no ScriptComponent attached
+    InspectorPanel ip;
+    ip.bind_scene(&scene);
+    bool fired = false;
+    ip.set_on_script_import(
+        [&](const std::string&, std::string&) { fired = true; return true; });
+    EXPECT_FALSE(ip.request_script_import(static_cast<u32>(e), "x.lua"));
+    EXPECT_FALSE(fired);
+}
+
+TEST(InspectorPanelScriptImport, RequestRejectsWhenCallbackUnbound) {
+    Scene scene;
+    auto e = scene.registry().create();
+    scene.registry().add_component<nexus::scripting::ScriptComponent>(e, {});
+    InspectorPanel ip;
+    ip.bind_scene(&scene);
+    EXPECT_FALSE(ip.request_script_import(static_cast<u32>(e), "x.lua"));
+}
+
+TEST(InspectorPanelScriptImport, SuccessUpdatesScriptComponent) {
+    Scene scene;
+    auto e = scene.registry().create();
+    auto& sc = scene.registry().add_component<
+        nexus::scripting::ScriptComponent>(e, {});
+    sc.script_name = "old_name";
+    sc.initialized = true;
+
+    InspectorPanel ip;
+    ip.bind_scene(&scene);
+    ip.set_on_script_import(
+        [](const std::string& path, std::string& out_name) {
+            EXPECT_EQ(path, "scripts/foo.lua");
+            out_name = "foo";
+            return true;
+        });
+
+    EXPECT_TRUE(ip.request_script_import(static_cast<u32>(e),
+                                          "scripts/foo.lua"));
+
+    auto& after = scene.registry().get_component<
+        nexus::scripting::ScriptComponent>(e);
+    EXPECT_EQ(after.script_name, "foo");
+    EXPECT_FALSE(after.initialized);  // forces ScriptSystem rebind
+}
+
+TEST(InspectorPanelScriptImport, CallbackFalseReturnLeavesComponentAlone) {
+    Scene scene;
+    auto e = scene.registry().create();
+    auto& sc = scene.registry().add_component<
+        nexus::scripting::ScriptComponent>(e, {});
+    sc.script_name = "preserved";
+    sc.initialized = true;
+
+    InspectorPanel ip;
+    ip.bind_scene(&scene);
+    ip.set_on_script_import(
+        [](const std::string&, std::string& out_name) {
+            out_name = "ignored";  // should not be applied
+            return false;
+        });
+
+    EXPECT_FALSE(ip.request_script_import(static_cast<u32>(e), "x.lua"));
+
+    auto& after = scene.registry().get_component<
+        nexus::scripting::ScriptComponent>(e);
+    EXPECT_EQ(after.script_name, "preserved");
+    EXPECT_TRUE(after.initialized);  // unaffected
+}
+
+TEST(InspectorPanelScriptImport, EmptyOutNameRejectedWithoutMutation) {
+    // A callback that returns true but leaves out_name empty would
+    // produce an unbindable script — refuse and keep state intact.
+    Scene scene;
+    auto e = scene.registry().create();
+    auto& sc = scene.registry().add_component<
+        nexus::scripting::ScriptComponent>(e, {});
+    sc.script_name = "preserved";
+    sc.initialized = true;
+
+    InspectorPanel ip;
+    ip.bind_scene(&scene);
+    ip.set_on_script_import(
+        [](const std::string&, std::string&) { return true; });
+
+    EXPECT_FALSE(ip.request_script_import(static_cast<u32>(e), "x.lua"));
+
+    auto& after = scene.registry().get_component<
+        nexus::scripting::ScriptComponent>(e);
+    EXPECT_EQ(after.script_name, "preserved");
+    EXPECT_TRUE(after.initialized);
 }
 
 // =============================================================================

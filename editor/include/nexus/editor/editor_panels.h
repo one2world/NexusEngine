@@ -513,6 +513,35 @@ public:
         return asset_paths_;
     }
 
+    // ── Script hot-import (M33) ────────────────────────────────────────
+    //
+    // The Script inspector grows an "Import .lua" row that lets the
+    // user point at a script asset on disk and bind it to the
+    // selected entity's ScriptComponent in one click.  The host wires
+    // this to a callback that:
+    //   1. Reads the file
+    //   2. Registers it with ScriptEngine for hot-reload
+    //   3. Returns the canonical script_name (file stem) the panel
+    //      assigns onto the component.
+    // Callback signature:
+    //   bool import(const std::string& path, std::string& out_name);
+    // On `true`, the panel writes out_name into ScriptComponent.script_name
+    // and clears `initialized` so ScriptSystem rebinds next tick.
+    using ScriptImportCallback =
+        std::function<bool(const std::string& path, std::string& out_name)>;
+    void set_on_script_import(ScriptImportCallback cb) {
+        on_script_import_ = std::move(cb);
+    }
+    bool has_script_import_callback() const {
+        return static_cast<bool>(on_script_import_);
+    }
+
+    /// Headless entry point for tests.  Returns true when the callback
+    /// fired *and* succeeded *and* the target's ScriptComponent was
+    /// updated.  Validates: target alive, ScriptComponent present,
+    /// callback bound.  Empty path is rejected without firing the cb.
+    bool request_script_import(u32 entity, const std::string& path);
+
     /// Track pending edits.
     void push_edit(const PropertyEdit& edit) { pending_edits_.push_back(edit); }
     std::vector<PropertyEdit> drain_edits();
@@ -534,6 +563,10 @@ private:
     class EditorSelection* ext_selection_{nullptr};
     class ComponentRegistry* component_registry_{nullptr};
     AssetPathResolvers asset_paths_{};
+    ScriptImportCallback on_script_import_;
+    // Script-import path buffer kept across frames so the user's typed
+    // path persists while the .lua field is open.
+    char script_import_path_[512] = {};
     // Add-component popup state.  The search buffer is kept across frames
     // so the user's typed query persists while the popup is open.
     char add_component_search_[128] = {};

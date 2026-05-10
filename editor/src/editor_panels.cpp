@@ -2678,6 +2678,37 @@ void InspectorPanel::on_render() {
             ImGui::TextDisabled(sc.initialized
                 ? "Status: initialised (on_create fired)"
                 : "Status: pending — on_create runs next tick");
+
+            // ── M33: hot-import a .lua asset onto this entity ────────
+            //
+            // Path field + Import button.  The host-supplied callback
+            // reads the file, registers it with ScriptEngine, and
+            // returns the canonical script_name; the inspector then
+            // writes that name into ScriptComponent.script_name and
+            // clears `initialized` so ScriptSystem rebinds.  When the
+            // callback isn't bound, the row is hidden — silent
+            // no-ops would confuse users into thinking the field
+            // is broken.
+            if (on_script_import_) {
+                ImGui::SetNextItemWidth(-110.0f);
+                ImGui::InputTextWithHint(
+                    "##script_import_path",
+                    "scripts/foo.lua",
+                    script_import_path_, sizeof(script_import_path_));
+                ImGui::SameLine();
+                const bool can_import =
+                    script_import_path_[0] != '\0';
+                ImGui::BeginDisabled(!can_import);
+                if (ImGui::SmallButton("Import .lua")) {
+                    if (request_script_import(target,
+                                                script_import_path_)) {
+                        // Clear the buffer so a subsequent click
+                        // doesn't re-import the same path.
+                        script_import_path_[0] = '\0';
+                    }
+                }
+                ImGui::EndDisabled();
+            }
         }
     }
 
@@ -2975,6 +3006,27 @@ void InspectorPanel::on_render() {
     if (entity_locked) ImGui::EndDisabled();
 
     ui::end_window();
+}
+
+bool InspectorPanel::request_script_import(u32 entity,
+                                            const std::string& path) {
+    if (path.empty()) return false;
+    if (!on_script_import_) return false;
+    if (!scene_) return false;
+    auto& reg = scene_->registry();
+    if (!reg.alive(static_cast<Entity>(entity))) return false;
+    if (!reg.has_component<nexus::scripting::ScriptComponent>(
+            static_cast<Entity>(entity))) {
+        return false;
+    }
+    std::string out_name;
+    if (!on_script_import_(path, out_name)) return false;
+    if (out_name.empty()) return false;
+    auto& sc = reg.get_component<nexus::scripting::ScriptComponent>(
+        static_cast<Entity>(entity));
+    sc.script_name = std::move(out_name);
+    sc.initialized = false;  // ScriptSystem rebinds next tick
+    return true;
 }
 
 std::vector<PropertyEdit> InspectorPanel::drain_edits() {

@@ -939,6 +939,46 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                 (void)watch_panel->load_from_file("watches.json");
             }
 
+            // M33 — Script Inspector hot-import.  Reads the .lua file
+            // off disk, registers it with ScriptEngine for hot-reload,
+            // and returns the file stem as the canonical script_name.
+            // Errors surface in the Console as ScriptError rows so the
+            // user notices missing files / unreadable paths.
+            if (inspector) {
+                inspector->set_on_script_import(
+                    [&script_engine, console](const std::string& path,
+                                                std::string& out_name) -> bool {
+                        std::ifstream f(path);
+                        if (!f) {
+                            if (console) {
+                                std::string note = "[Script] import failed: ";
+                                note += path;
+                                note += " — file not readable";
+                                console->add_message(std::move(note),
+                                                      LogLevel::Error,
+                                                      LogSource::ScriptError);
+                            }
+                            return false;
+                        }
+                        std::stringstream ss;
+                        ss << f.rdbuf();
+                        std::string source = ss.str();
+                        std::filesystem::path p(path);
+                        out_name = p.stem().string();
+                        if (out_name.empty()) out_name = path;
+                        script_engine.register_script(out_name, source, path);
+                        if (console) {
+                            std::string note = "[Editor] Imported ";
+                            note += path;
+                            note += " as '" + out_name + "'";
+                            console->add_message(std::move(note),
+                                                  LogLevel::Info,
+                                                  LogSource::Editor);
+                        }
+                        return true;
+                    });
+            }
+
             // M37 — right-click context menu actions.  Reveal scrolls
             // the AssetBrowser to the row's source_file's parent dir
             // and selects the file.  Open externally hands the path

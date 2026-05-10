@@ -487,9 +487,216 @@ void register_os_library(ScriptEngine& engine) {
         }, 0, 0, "Epoch time in seconds");
 }
 
+// ── Basic Library ───────────────────────────────────────────────────────────
+//
+// Globals every Lua program assumes — `print`, `tostring`, `tonumber`,
+// `type`, `assert`, `error`, `select`, `ipairs`, `pairs`, `rawequal`,
+// `rawget`, `rawset`, `unpack`.  Registered as plain (no module) names so
+// callers write `tostring(x)` instead of `lua.tostring(x)`.
+
+void register_basic_library(ScriptEngine& engine) {
+    // print — joins arguments with single spaces, routes to print sink
+    // when one is bound (editor wires it to ConsolePanel) and otherwise
+    // falls back to the engine logger.  Holds an engine ref by reference
+    // because ScriptEngine outlives every lambda registered through it.
+    engine.register_function("", "print",
+        [&engine](const std::vector<ScriptValue>& args) -> ScriptValue {
+            std::string msg;
+            for (size_t i = 0; i < args.size(); ++i) {
+                if (i > 0) msg += " ";
+                msg += args[i].to_string();
+            }
+            if (engine.has_print_sink()) {
+                engine.print_sink()(msg);
+            } else {
+                NX_INFO("[Script] {}", msg);
+            }
+            return ScriptValue::nil();
+        }, 0, 255, "Print values to the console");
+
+    // tostring — universal value→string coercion.  Mirrors ScriptValue::to_string.
+    engine.register_function("", "tostring",
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.empty()) return ScriptValue("nil");
+            return ScriptValue(args[0].to_string());
+        }, 1, 1, "Convert any value to a string");
+
+    // tonumber — string→number coercion.  Returns nil if parse fails.
+    // Honours optional base (2..36); when base is supplied the input is
+    // parsed as an integer in that base (matching Lua semantics).
+    engine.register_function("", "tonumber",
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.empty()) return ScriptValue::nil();
+            const auto& v = args[0];
+            // Numbers pass through untouched.
+            if (v.is_int())   return v;
+            if (v.is_float()) return v;
+            if (!v.is_string()) return ScriptValue::nil();
+
+            const std::string& s = v.as_string();
+            // Trim leading / trailing whitespace.
+            size_t start = 0;
+            while (start < s.size() &&
+                   std::isspace(static_cast<unsigned char>(s[start]))) ++start;
+            size_t end = s.size();
+            while (end > start &&
+                   std::isspace(static_cast<unsigned char>(s[end - 1]))) --end;
+            if (start == end) return ScriptValue::nil();
+            const std::string trimmed = s.substr(start, end - start);
+
+            try {
+                if (args.size() >= 2 && args[1].is_number()) {
+                    int base = static_cast<int>(args[1].as_float());
+                    if (base < 2 || base > 36) return ScriptValue::nil();
+                    size_t pos = 0;
+                    long long n = std::stoll(trimmed, &pos, base);
+                    if (pos != trimmed.size()) return ScriptValue::nil();
+                    return ScriptValue(static_cast<i32>(n));
+                }
+                size_t pos = 0;
+                // Try integer first to preserve precision.
+                if (trimmed.find('.') == std::string::npos &&
+                    trimmed.find('e') == std::string::npos &&
+                    trimmed.find('E') == std::string::npos) {
+                    long long n = std::stoll(trimmed, &pos, 10);
+                    if (pos != trimmed.size()) return ScriptValue::nil();
+                    return ScriptValue(static_cast<i32>(n));
+                }
+                double d = std::stod(trimmed, &pos);
+                if (pos != trimmed.size()) return ScriptValue::nil();
+                return ScriptValue(static_cast<float>(d));
+            } catch (const std::exception&) {
+                return ScriptValue::nil();
+            }
+        }, 1, 2, "Convert a value to a number, or nil if not coercible");
+
+    // type — name of the dynamic type.
+    engine.register_function("", "type",
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.empty()) return ScriptValue("nil");
+            switch (args[0].type()) {
+                case ScriptValue::Type::Nil:      return ScriptValue("nil");
+                case ScriptValue::Type::Bool:     return ScriptValue("boolean");
+                case ScriptValue::Type::Int:      return ScriptValue("number");
+                case ScriptValue::Type::Float:    return ScriptValue("number");
+                case ScriptValue::Type::String:   return ScriptValue("string");
+                case ScriptValue::Type::Vec2:     return ScriptValue("userdata");
+                case ScriptValue::Type::Vec3:     return ScriptValue("userdata");
+                case ScriptValue::Type::Vec4:     return ScriptValue("userdata");
+                case ScriptValue::Type::Entity:   return ScriptValue("userdata");
+                case ScriptValue::Type::Function: return ScriptValue("function");
+                case ScriptValue::Type::Table:    return ScriptValue("table");
+            }
+            return ScriptValue("unknown");
+        }, 1, 1, "Get the Lua type name of a value");
+
+    // assert(v, message) — throw on falsy.  Returns its first argument
+    // unchanged so it can be used inline: `local x = assert(parse())`.
+    engine.register_function("", "assert",
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.empty() || !args[0].truthy()) {
+                std::string msg = "assertion failed!";
+                if (args.size() >= 2) msg = args[1].to_string();
+                throw std::runtime_error(msg);
+            }
+            return args[0];
+        }, 1, 255, "Throw a runtime error when the first argument is falsy");
+
+    // error(msg) — explicit throw.  In real Lua this also takes a level
+    // argument; here we ignore level since our interpreter doesn't carry
+    // one through the call stack.
+    engine.register_function("", "error",
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            std::string msg = args.empty() ? "error" : args[0].to_string();
+            throw std::runtime_error(msg);
+        }, 1, 2, "Raise a runtime error with the given message");
+
+    // select(n, ...) — varargs slicing.  `select('#', ...)` returns count.
+    engine.register_function("", "select",
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.empty()) return ScriptValue::nil();
+            const auto& sel = args[0];
+            if (sel.is_string() && sel.as_string() == "#") {
+                return ScriptValue(static_cast<i32>(args.size() - 1));
+            }
+            if (!sel.is_number()) return ScriptValue::nil();
+            int n = static_cast<int>(sel.as_float());
+            // Negative n indexes from the end (Lua semantics).
+            const int total = static_cast<int>(args.size()) - 1;
+            int idx = n < 0 ? total + n + 1 : n;
+            if (idx < 1 || idx > total) return ScriptValue::nil();
+            return args[static_cast<size_t>(idx)];
+        }, 1, 255, "Return arguments from position n onwards (or '#' for count)");
+
+    // ipairs — sequential integer-keyed iteration.  Our interpreter
+    // doesn't run real for/in loops on iterators, so we expose this as a
+    // helper that returns the table itself; `for i,v in ipairs(t) do`
+    // is supported by the LuaBackend's parser.
+    engine.register_function("", "ipairs",
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.empty() || !args[0].is_table()) return ScriptValue::nil();
+            return args[0];
+        }, 1, 1, "Iterator helper for sequentially-keyed tables");
+
+    // pairs — generic table iteration.  Same caveat as ipairs.
+    engine.register_function("", "pairs",
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.empty() || !args[0].is_table()) return ScriptValue::nil();
+            return args[0];
+        }, 1, 1, "Iterator helper for arbitrary table keys");
+
+    // rawequal — bypass any future __eq metamethod.  Until we have
+    // metatables, this is identical to `==`, but keeping the function
+    // available avoids "function not found" errors in user scripts.
+    engine.register_function("", "rawequal",
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.size() < 2) return ScriptValue(false);
+            return ScriptValue(args[0] == args[1]);
+        }, 2, 2, "Compare two values without invoking metamethods");
+
+    // rawget(t, k) — table[k] without metamethods.
+    engine.register_function("", "rawget",
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.size() < 2 || !args[0].is_table() || !args[1].is_string()) {
+                return ScriptValue::nil();
+            }
+            return args[0].get_field(args[1].as_string());
+        }, 2, 2, "Get a table field without invoking metamethods");
+
+    // rawset(t, k, v) — table[k] = v without metamethods.  Returns the
+    // table for chaining (Lua semantics).
+    engine.register_function("", "rawset",
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.size() < 3 || !args[0].is_table() || !args[1].is_string()) {
+                return ScriptValue::nil();
+            }
+            args[0].set_field(args[1].as_string(), args[2]);
+            return args[0];
+        }, 3, 3, "Set a table field without invoking metamethods");
+
+    // unpack(t [, i [, j]]) — return table elements [i..j] as varargs.
+    // Our interpreter can't natively spread, so this returns the first
+    // element only.  Documented as such.  We also alias as table.unpack
+    // (Lua 5.2+).
+    auto unpack_impl =
+        [](const std::vector<ScriptValue>& args) -> ScriptValue {
+            if (args.empty() || !args[0].is_table()) return ScriptValue::nil();
+            auto tbl = args[0].as_table();
+            int i = args.size() >= 2 && args[1].is_number()
+                ? static_cast<int>(args[1].as_float()) : 1;
+            auto it = tbl->find(std::to_string(i));
+            return it != tbl->end() ? it->second : ScriptValue::nil();
+        };
+    engine.register_function("", "unpack",      unpack_impl, 1, 3,
+                              "Return the first element of an array-keyed table");
+    engine.register_function("table", "unpack", unpack_impl, 1, 3,
+                              "Return the first element of an array-keyed table");
+}
+
 // ── Register All ────────────────────────────────────────────────────────────
 
 void register_lua_stdlib(ScriptEngine& engine) {
+    register_basic_library(engine);
     register_math_library(engine);
     register_string_library(engine);
     register_table_library(engine);

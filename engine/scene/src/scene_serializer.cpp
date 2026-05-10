@@ -146,19 +146,21 @@ static json serialize_entity(const Registry& reg, Entity e) {
     if (reg.has_component<CameraComponent>(e)) {
         auto& c = reg.get_component<CameraComponent>(e);
         entity_json["camera"] = {
-            {"is_primary", c.is_primary},
+            {"is_primary",      c.is_primary},
             {"is_orthographic", c.is_orthographic},
-            {"fov", c.fov},
-            {"ortho_size", c.ortho_size},
-            {"near_clip", c.near_clip},
-            {"far_clip", c.far_clip}
+            {"fov",             c.fov},
+            {"ortho_size",      c.ortho_size},
+            {"near_clip",       c.near_clip},
+            {"far_clip",        c.far_clip},
+            {"orientation",     quat_to_json(c.orientation)}
         };
     }
 
     if (reg.has_component<DirectionalLightComponent>(e)) {
         auto& l = reg.get_component<DirectionalLightComponent>(e);
         entity_json["directional_light"] = {
-            {"color", vec3_to_json(l.color)},
+            {"direction", vec3_to_json(l.direction)},
+            {"color",     vec3_to_json(l.color)},
             {"intensity", l.intensity}
         };
     }
@@ -407,6 +409,14 @@ static Entity deserialize_entity(Registry& reg, const json& j,
         comp.ortho_size = c["ortho_size"].get<float>();
         comp.near_clip = c["near_clip"].get<float>();
         comp.far_clip = c["far_clip"].get<float>();
+        // Optional for backward compatibility with v2 files: pre-bump
+        // streams stored CameraComponent without orientation, so absence
+        // means "no recorded orientation" — leave the struct's default
+        // (identity quaternion) in place.  Snapshots produced after the
+        // bump always include it.
+        if (c.contains("orientation")) {
+            comp.orientation = json_to_quat(c["orientation"]);
+        }
         reg.add_component<CameraComponent>(e, comp);
     }
 
@@ -415,6 +425,9 @@ static Entity deserialize_entity(Registry& reg, const json& j,
         DirectionalLightComponent comp;
         comp.color = json_to_vec3(l["color"]);
         comp.intensity = l["intensity"].get<float>();
+        if (l.contains("direction")) {
+            comp.direction = json_to_vec3(l["direction"]);
+        }
         reg.add_component<DirectionalLightComponent>(e, comp);
     }
 
@@ -564,7 +577,10 @@ static Entity deserialize_entity(Registry& reg, const json& j,
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
-static constexpr int SCENE_FORMAT_VERSION = 2;
+// v3: CameraComponent.orientation + DirectionalLightComponent.direction
+//     now serialized.  Loader still accepts v1/v2 files (missing fields
+//     fall back to component defaults).
+static constexpr int SCENE_FORMAT_VERSION = 3;
 
 std::string SceneSerializer::to_json() const {
     json root;

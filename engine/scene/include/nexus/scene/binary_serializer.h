@@ -53,7 +53,10 @@ public:
     bool load(const std::string& filepath);
 
     /// Current format version.
-    static constexpr u32 FORMAT_VERSION = 1;
+    /// v1: original component schema.
+    /// v2: CameraComponent gains orientation (qw,qx,qy,qz);
+    ///     DirectionalLightComponent gains leading direction vec3.
+    static constexpr u32 FORMAT_VERSION = 2;
 
     /// Magic bytes.
     static constexpr u32 MAGIC = 0x0053584E; // "NXS\0" little-endian
@@ -120,7 +123,8 @@ private:
 
     void serialize_entity(const Registry& reg, Entity e, WriteBuffer& buf) const;
     Entity deserialize_entity(Registry& reg, ReadCursor& cursor,
-                              std::unordered_map<u32, Entity>& id_map) const;
+                              std::unordered_map<u32, Entity>& id_map,
+                              u32 file_version) const;
 };
 
 } // namespace nexus

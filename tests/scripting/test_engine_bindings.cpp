@@ -445,17 +445,162 @@ TEST(BindAll, PrintSinkSeparatesArgsWithSingleSpace) {
     EXPECT_EQ(captured, "1 2 3");
 }
 
-TEST(BindAll, TypeFunction) {
+TEST(BindAll, TypeFunctionMatchesLuaSpec) {
+    // `type()` returns canonical Lua type names: int and float collapse
+    // to "number"; Vec/Entity/Function are exposed as "userdata" /
+    // "function" so user scripts can be written against the standard
+    // Lua reference.  Engine-specific subtype information lives on
+    // dedicated helpers (Math.is_vec3, Entity.alive, ...).
     ScriptEngine engine;
     Registry registry;
     bind_all(engine, registry);
 
-    EXPECT_EQ(engine.call_function("type", {ScriptValue(42)}).as_string(), "int");
-    EXPECT_EQ(engine.call_function("type", {ScriptValue("hi")}).as_string(), "string");
-    EXPECT_EQ(engine.call_function("type", {ScriptValue(true)}).as_string(), "bool");
-    EXPECT_EQ(engine.call_function("type", {ScriptValue(1.0f)}).as_string(), "float");
-    EXPECT_EQ(engine.call_function("type", {ScriptValue::nil()}).as_string(), "nil");
-    EXPECT_EQ(engine.call_function("type", {ScriptValue(Vec3(0))}).as_string(), "vec3");
-    EXPECT_EQ(engine.call_function("type", {ScriptValue::entity(1)}).as_string(), "entity");
-    EXPECT_EQ(engine.call_function("type", {ScriptValue::table()}).as_string(), "table");
+    EXPECT_EQ(engine.call_function("type", {ScriptValue(42)}).as_string(),       "number");
+    EXPECT_EQ(engine.call_function("type", {ScriptValue("hi")}).as_string(),     "string");
+    EXPECT_EQ(engine.call_function("type", {ScriptValue(true)}).as_string(),     "boolean");
+    EXPECT_EQ(engine.call_function("type", {ScriptValue(1.0f)}).as_string(),     "number");
+    EXPECT_EQ(engine.call_function("type", {ScriptValue::nil()}).as_string(),    "nil");
+    EXPECT_EQ(engine.call_function("type", {ScriptValue(Vec3(0))}).as_string(),  "userdata");
+    EXPECT_EQ(engine.call_function("type", {ScriptValue::entity(1)}).as_string(),"userdata");
+    EXPECT_EQ(engine.call_function("type", {ScriptValue::table()}).as_string(),  "table");
+}
+
+TEST(BindAll, ToStringHandlesAllTypes) {
+    ScriptEngine engine;
+    Registry registry;
+    bind_all(engine, registry);
+
+    EXPECT_EQ(engine.call_function("tostring",
+        {ScriptValue::nil()}).as_string(), "nil");
+    EXPECT_EQ(engine.call_function("tostring",
+        {ScriptValue(true)}).as_string(), "true");
+    EXPECT_EQ(engine.call_function("tostring",
+        {ScriptValue(false)}).as_string(), "false");
+    EXPECT_EQ(engine.call_function("tostring",
+        {ScriptValue(42)}).as_string(), "42");
+    EXPECT_EQ(engine.call_function("tostring",
+        {ScriptValue("text")}).as_string(), "text");
+}
+
+TEST(BindAll, ToNumberRoundTripsIntegers) {
+    ScriptEngine engine;
+    Registry registry;
+    bind_all(engine, registry);
+
+    auto r = engine.call_function("tonumber", {ScriptValue("42")});
+    EXPECT_TRUE(r.is_int());
+    EXPECT_EQ(r.as_int(), 42);
+
+    // Negative integers
+    r = engine.call_function("tonumber", {ScriptValue("-7")});
+    EXPECT_EQ(r.as_int(), -7);
+}
+
+TEST(BindAll, ToNumberRoundTripsFloats) {
+    ScriptEngine engine;
+    Registry registry;
+    bind_all(engine, registry);
+
+    auto r = engine.call_function("tonumber", {ScriptValue("3.14")});
+    EXPECT_TRUE(r.is_float());
+    EXPECT_NEAR(r.as_float(), 3.14f, 1e-5f);
+}
+
+TEST(BindAll, ToNumberHonoursBase) {
+    ScriptEngine engine;
+    Registry registry;
+    bind_all(engine, registry);
+
+    auto r = engine.call_function("tonumber",
+        {ScriptValue("ff"), ScriptValue(16)});
+    EXPECT_EQ(r.as_int(), 255);
+
+    r = engine.call_function("tonumber",
+        {ScriptValue("1010"), ScriptValue(2)});
+    EXPECT_EQ(r.as_int(), 10);
+}
+
+TEST(BindAll, ToNumberReturnsNilOnGarbage) {
+    ScriptEngine engine;
+    Registry registry;
+    bind_all(engine, registry);
+
+    auto r = engine.call_function("tonumber", {ScriptValue("not a number")});
+    EXPECT_TRUE(r.is_nil());
+
+    r = engine.call_function("tonumber", {ScriptValue("3.14abc")});
+    EXPECT_TRUE(r.is_nil());
+
+    r = engine.call_function("tonumber", {ScriptValue::nil()});
+    EXPECT_TRUE(r.is_nil());
+}
+
+TEST(BindAll, AssertReturnsArgWhenTruthy) {
+    ScriptEngine engine;
+    Registry registry;
+    bind_all(engine, registry);
+
+    auto r = engine.call_function("assert", {ScriptValue(42)});
+    EXPECT_EQ(r.as_int(), 42);
+}
+
+TEST(BindAll, AssertThrowsWhenFalsy) {
+    // The runtime catches the throw and reports it as a script error
+    // (see ScriptEngine::call_function).  Result value is nil and the
+    // engine's error log gains the message.
+    ScriptEngine engine;
+    Registry registry;
+    bind_all(engine, registry);
+    engine.clear_errors();
+
+    auto r = engine.call_function("assert",
+        {ScriptValue(false), ScriptValue("custom msg")});
+    EXPECT_TRUE(r.is_nil());
+    ASSERT_GE(engine.errors().size(), 1u);
+    EXPECT_NE(engine.errors().back().message.find("custom msg"),
+              std::string::npos);
+}
+
+TEST(BindAll, SelectCountReturnsArgN) {
+    ScriptEngine engine;
+    Registry registry;
+    bind_all(engine, registry);
+
+    auto r = engine.call_function("select",
+        {ScriptValue("#"), ScriptValue(1), ScriptValue(2), ScriptValue(3)});
+    EXPECT_EQ(r.as_int(), 3);
+}
+
+TEST(BindAll, SelectIndexReturnsArgAtPosition) {
+    ScriptEngine engine;
+    Registry registry;
+    bind_all(engine, registry);
+
+    auto r = engine.call_function("select",
+        {ScriptValue(2), ScriptValue("a"), ScriptValue("b"), ScriptValue("c")});
+    EXPECT_EQ(r.as_string(), "b");
+}
+
+TEST(BindAll, RegistersFullStdlib) {
+    // Spot-check that bind_all wires the basic library AND the math/
+    // string/table/os modules.  If any of these is missing the editor's
+    // Lua Console reports "Function not found" the moment a user types
+    // a routine line.
+    ScriptEngine engine;
+    Registry registry;
+    bind_all(engine, registry);
+
+    const char* basic_globals[] = {
+        "print", "tostring", "tonumber", "type", "assert", "error",
+        "select", "ipairs", "pairs", "rawequal", "rawget", "rawset", "unpack",
+    };
+    for (const char* name : basic_globals) {
+        EXPECT_NE(engine.find_function("", name), nullptr)
+            << "missing basic global: " << name;
+    }
+    EXPECT_NE(engine.find_function("math",   "abs"),     nullptr);
+    EXPECT_NE(engine.find_function("string", "len"),     nullptr);
+    EXPECT_NE(engine.find_function("table",  "insert"),  nullptr);
+    EXPECT_NE(engine.find_function("table",  "unpack"),  nullptr);
+    EXPECT_NE(engine.find_function("os",     "clock"),   nullptr);
 }

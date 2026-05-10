@@ -85,8 +85,12 @@ public:
     ScriptValue call(const std::vector<ScriptValue>& args = {}) const;
 
     /// Table field access.
+    /// `set_field` is logically const: it mutates the shared underlying
+    /// table, not the ScriptValue handle itself.  Mirrors Lua semantics
+    /// where `local t = ...; t.x = 1` mutates the same table through
+    /// any handle that holds it.
     ScriptValue get_field(const std::string& key) const;
-    void set_field(const std::string& key, ScriptValue val);
+    void set_field(const std::string& key, ScriptValue val) const;
 
     /// Equality.
     bool operator==(const ScriptValue& other) const;

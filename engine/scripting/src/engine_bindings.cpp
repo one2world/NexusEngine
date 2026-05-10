@@ -1,4 +1,5 @@
 #include "nexus/scripting/engine_bindings.h"
+#include "nexus/scripting/lua_stdlib.h"
 #include "nexus/scene/registry.h"
 #include "nexus/scene/components.h"
 #include "nexus/platform/input.h"
@@ -10,50 +11,11 @@
 namespace nexus::scripting {
 
 // ── Shared utility bindings ─────────────────────────────────────────────────
-
-static void bind_utility_functions(ScriptEngine& engine) {
-    // Utility: print
-    //
-    // Routes through ScriptEngine::print_sink() when one is set so the
-    // editor's ConsolePanel can display Lua-side print() output without
-    // having to scrape engine logs.  Falls back to NX_INFO when no sink
-    // is registered (sandbox / headless scripts keep the legacy
-    // behaviour).  See ScriptEngine::set_print_sink().
-    engine.register_function("", "print",
-        [&engine](const std::vector<ScriptValue>& args) -> ScriptValue {
-            std::string msg;
-            for (size_t i = 0; i < args.size(); ++i) {
-                if (i > 0) msg += " ";
-                msg += args[i].to_string();
-            }
-            if (engine.has_print_sink()) {
-                engine.print_sink()(msg);
-            } else {
-                NX_INFO("[Script] {}", msg);
-            }
-            return ScriptValue::nil();
-        }, 0, 255, "Print values to the console");
-
-    // Utility: type(value) -> string
-    engine.register_function("", "type",
-        [](const std::vector<ScriptValue>& args) -> ScriptValue {
-            if (args.empty()) return ScriptValue("nil");
-            switch (args[0].type()) {
-                case ScriptValue::Type::Nil:      return ScriptValue("nil");
-                case ScriptValue::Type::Bool:     return ScriptValue("bool");
-                case ScriptValue::Type::Int:      return ScriptValue("int");
-                case ScriptValue::Type::Float:    return ScriptValue("float");
-                case ScriptValue::Type::String:   return ScriptValue("string");
-                case ScriptValue::Type::Vec2:     return ScriptValue("vec2");
-                case ScriptValue::Type::Vec3:     return ScriptValue("vec3");
-                case ScriptValue::Type::Vec4:     return ScriptValue("vec4");
-                case ScriptValue::Type::Entity:   return ScriptValue("entity");
-                case ScriptValue::Type::Function: return ScriptValue("function");
-                case ScriptValue::Type::Table:    return ScriptValue("table");
-            }
-            return ScriptValue("unknown");
-        }, 1, 1, "Get the type name of a value");
-}
+//
+// `bind_all` now delegates to register_lua_stdlib for all standard Lua
+// globals (print/tostring/tonumber/type/assert/error/select/ipairs/
+// pairs/raw* + math/string/table/os).  Engine-specific bindings below
+// only own the ECS / Math (Vec helpers) / Input / Audio / Physics surfaces.
 
 // ── Entity / ECS Bindings ───────────────────────────────────────────────────
 
@@ -720,12 +682,12 @@ void bind_physics_api(ScriptEngine& engine, physics::PhysicsSystem& physics) {
 // ── Bind All ────────────────────────────────────────────────────────────────
 
 void bind_all(ScriptEngine& engine, Registry& registry) {
+    register_lua_stdlib(engine);
     bind_entity_api(engine, registry);
     bind_math_api(engine);
     bind_input_api(engine);
     bind_audio_api(engine);
     bind_physics_api(engine);
-    bind_utility_functions(engine);
 }
 
 // ── Bind All (live subsystems) ───────────────────────────────────────────────
@@ -734,12 +696,12 @@ void bind_all(ScriptEngine& engine, Registry& registry,
               Input& input,
               audio::AudioEngine& audio,
               physics::PhysicsSystem& physics) {
+    register_lua_stdlib(engine);
     bind_entity_api(engine, registry);
     bind_math_api(engine);
     bind_input_api(engine, input);
     bind_audio_api(engine, audio);
     bind_physics_api(engine, physics);
-    bind_utility_functions(engine);
 }
 
 } // namespace nexus::scripting

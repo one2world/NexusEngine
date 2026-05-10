@@ -187,13 +187,24 @@ void BinarySceneSerializer::serialize_entity(const Registry& reg, Entity e,
             d.write_u8(c.is_orthographic ? 1 : 0);
             d.write_f32(c.fov); d.write_f32(c.ortho_size);
             d.write_f32(c.near_clip); d.write_f32(c.far_clip);
+            // v2: persist camera orientation so a snapshot/restore
+            // round-trip preserves the view direction.  Earlier files
+            // omit this and the reader falls back to the struct default.
+            d.write_f32(c.orientation.w);
+            d.write_f32(c.orientation.x);
+            d.write_f32(c.orientation.y);
+            d.write_f32(c.orientation.z);
         });
     }
 
     if (reg.has_component<DirectionalLightComponent>(e)) {
         auto& c = reg.get_component<DirectionalLightComponent>(e);
         write_component(CT_DirectionalLight, [&](WriteBuffer& d) {
-            d.write_vec3(c.color); d.write_f32(c.intensity);
+            // v2: include direction so the sun's aim survives Stop /
+            // file load.
+            d.write_vec3(c.direction);
+            d.write_vec3(c.color);
+            d.write_f32(c.intensity);
         });
     }
 
@@ -305,7 +316,8 @@ void BinarySceneSerializer::serialize_entity(const Registry& reg, Entity e,
 // ── Deserialize entity ─────────────────────────────────────────────────────
 
 Entity BinarySceneSerializer::deserialize_entity(Registry& reg, ReadCursor& cursor,
-                                                  std::unordered_map<u32, Entity>& id_map) const {
+                                                  std::unordered_map<u32, Entity>& id_map,
+                                                  u32 version) const {
     if (!cursor.can_read(6)) return INVALID_ENTITY; // u16 + u32
 
     u16 comp_count = cursor.read_u16();
@@ -371,11 +383,27 @@ Entity BinarySceneSerializer::deserialize_entity(Registry& reg, ReadCursor& curs
             c.ortho_size = cursor.read_f32();
             c.near_clip = cursor.read_f32();
             c.far_clip = cursor.read_f32();
+            // v2 fields: orientation quaternion (wxyz).  Files written
+            // by the v2 writer always include these; older files (v1)
+            // are still read because the reader is gated on file
+            // version (see FORMAT_VERSION check above).
+            if (version >= 2) {
+                float qw = cursor.read_f32();
+                float qx = cursor.read_f32();
+                float qy = cursor.read_f32();
+                float qz = cursor.read_f32();
+                c.orientation = Quat(qw, qx, qy, qz);
+            }
             reg.add_component<CameraComponent>(e, c);
             break;
         }
         case CT_DirectionalLight: {
             DirectionalLightComponent c;
+            // v2: leading direction vec3.  v1 files omit it; the
+            // struct default fills in.
+            if (version >= 2) {
+                c.direction = cursor.read_vec3();
+            }
             c.color = cursor.read_vec3();
             c.intensity = cursor.read_f32();
             reg.add_component<DirectionalLightComponent>(e, c);
@@ -541,7 +569,7 @@ bool BinarySceneSerializer::from_binary(const u8* data, u32 size) {
 
     std::unordered_map<u32, Entity> id_map;
     for (u32 i = 0; i < entity_count; ++i) {
-        Entity e = deserialize_entity(reg, cursor, id_map);
+        Entity e = deserialize_entity(reg, cursor, id_map, version);
         if (e == INVALID_ENTITY) {
             NX_ERROR("BinarySerializer: failed to deserialize entity {}", i);
             return false;

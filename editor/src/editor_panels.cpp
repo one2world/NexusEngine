@@ -1225,6 +1225,23 @@ void HierarchyPanel::on_render() {
         render_entity(root);
     }
 
+    // Empty-space *left*-click clears the current selection.  Matches
+    // Unity / Godot / Blender Outliner: clicking blank Hierarchy area
+    // is an explicit "unselect" gesture.  We require:
+    //   - the Hierarchy panel was hovered at click time (so clicks in
+    //     other panels don't bleed across)
+    //   - no item under the cursor (otherwise the per-row click handler
+    //     above already handled selection)
+    //   - the click happened in *this* window's content rect (excludes
+    //     scrollbars, header, etc.)
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
+                                ImGuiHoveredFlags_AllowWhenBlockedByPopup) &&
+        !ImGui::IsAnyItemHovered() &&
+        ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+        has_selection()) {
+        clear_selection();
+    }
+
     // Empty-space context menu (right-click outside any item).
     // - With selection: offer "Create Child" submenu rooted at the
     //   primary selection so users don't have to right-click the

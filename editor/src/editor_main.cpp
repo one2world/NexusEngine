@@ -498,9 +498,13 @@ static int run(int /*argc*/, char* /*argv*/[]) {
             c[ImGuiCol_Button]                = ImVec4(0.235f, 0.247f, 0.275f, 1.0f);
             c[ImGuiCol_ButtonHovered]         = ImVec4(0.30f, 0.32f, 0.36f, 1.0f);
             c[ImGuiCol_ButtonActive]          = ImVec4(0.36f, 0.39f, 0.44f, 1.0f);
-            c[ImGuiCol_Header]                = ImVec4(0.235f, 0.247f, 0.275f, 1.0f);
-            c[ImGuiCol_HeaderHovered]         = ImVec4(0.30f, 0.40f, 0.55f, 1.0f);
-            c[ImGuiCol_HeaderActive]          = ImVec4(0.36f, 0.50f, 0.70f, 1.0f);
+            // Selection (Hierarchy / list rows / TreeNode) — Unity-style
+            // accent blue so the selected entity reads at a glance against
+            // the dark panel background.  The previous values matched
+            // Button colors and disappeared into the chrome.
+            c[ImGuiCol_Header]                = ImVec4(0.20f, 0.42f, 0.68f, 1.00f);
+            c[ImGuiCol_HeaderHovered]         = ImVec4(0.26f, 0.52f, 0.80f, 1.00f);
+            c[ImGuiCol_HeaderActive]          = ImVec4(0.32f, 0.62f, 0.92f, 1.00f);
             c[ImGuiCol_Separator]             = ImVec4(0.10f, 0.11f, 0.12f, 1.0f);
             c[ImGuiCol_SeparatorHovered]      = ImVec4(0.30f, 0.40f, 0.55f, 1.0f);
             c[ImGuiCol_SeparatorActive]       = ImVec4(0.36f, 0.50f, 0.70f, 1.0f);

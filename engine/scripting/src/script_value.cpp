@@ -29,7 +29,7 @@ ScriptValue ScriptValue::get_field(const std::string& key) const {
     return it != tbl.end() ? it->second : nil();
 }
 
-void ScriptValue::set_field(const std::string& key, ScriptValue val) {
+void ScriptValue::set_field(const std::string& key, ScriptValue val) const {
     if (type_ != Type::Table) return;
     (*std::get<TableType>(data_))[key] = std::move(val);
 }

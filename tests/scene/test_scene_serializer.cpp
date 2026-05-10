@@ -113,6 +113,117 @@ TEST(SceneSerializer, PreservesLightComponents) {
     EXPECT_FLOAT_EQ(light.radius, 15.0f);
 }
 
+TEST(SceneSerializer, PreservesDirectionalLightDirection) {
+    // Regression: snapshot/restore was dropping direction so the sun
+    // reverted to the struct default after pressing Stop.  Verify the
+    // direction round-trips bit-for-bit.
+    Scene scene;
+    Entity e = scene.create_entity_3d("Sun");
+    DirectionalLightComponent dl;
+    dl.direction = Vec3(-0.7f, -0.6f, -0.4f);
+    dl.color     = Vec3(1.0f, 0.9f, 0.8f);
+    dl.intensity = 1.5f;
+    scene.registry().add_component<DirectionalLightComponent>(e, dl);
+
+    SceneSerializer s1(scene);
+    const std::string json = s1.to_json();
+
+    Scene scene2;
+    SceneSerializer s2(scene2);
+    ASSERT_TRUE(s2.from_json(json));
+
+    auto entities = scene2.registry().view<DirectionalLightComponent>();
+    ASSERT_EQ(entities.size(), 1u);
+    auto& restored = scene2.registry().get_component<DirectionalLightComponent>(
+        entities[0]);
+    EXPECT_FLOAT_EQ(restored.direction.x, -0.7f);
+    EXPECT_FLOAT_EQ(restored.direction.y, -0.6f);
+    EXPECT_FLOAT_EQ(restored.direction.z, -0.4f);
+    EXPECT_FLOAT_EQ(restored.intensity,    1.5f);
+}
+
+TEST(SceneSerializer, PreservesCameraOrientation) {
+    // Regression: snapshot/restore was dropping CameraComponent.orientation,
+    // so after pressing Stop the Game viewport's primary camera reverted
+    // to identity quaternion (looking down +X) — producing a black GameView
+    // because the camera was pointed away from the scene.
+    Scene scene;
+    Entity cam = scene.create_entity_3d("Main Camera");
+    CameraComponent cc;
+    cc.is_primary      = true;
+    cc.is_orthographic = false;
+    cc.fov             = 60.0f;
+    cc.near_clip       = 0.1f;
+    cc.far_clip        = 200.0f;
+    cc.orientation     = glm::angleAxis(0.5f, Vec3(0.0f, 1.0f, 0.0f)) *
+                          glm::angleAxis(-0.3f, Vec3(1.0f, 0.0f, 0.0f));
+    scene.registry().add_component<CameraComponent>(cam, cc);
+
+    SceneSerializer s1(scene);
+    const std::string json = s1.to_json();
+
+    Scene scene2;
+    SceneSerializer s2(scene2);
+    ASSERT_TRUE(s2.from_json(json));
+
+    auto entities = scene2.registry().view<CameraComponent>();
+    ASSERT_EQ(entities.size(), 1u);
+    auto& restored = scene2.registry().get_component<CameraComponent>(
+        entities[0]);
+    EXPECT_TRUE(restored.is_primary);
+    EXPECT_NEAR(restored.orientation.w, cc.orientation.w, 1e-5f);
+    EXPECT_NEAR(restored.orientation.x, cc.orientation.x, 1e-5f);
+    EXPECT_NEAR(restored.orientation.y, cc.orientation.y, 1e-5f);
+    EXPECT_NEAR(restored.orientation.z, cc.orientation.z, 1e-5f);
+}
+
+TEST(SceneSerializer, AcceptsOlderJsonMissingNewFields) {
+    // Backward-compat: a v1/v2 file (no orientation/direction keys) must
+    // still load.  We construct one by hand to avoid coupling the test
+    // to the serializer's current format string.
+    constexpr const char* legacy = R"({
+        "version": 2,
+        "entities": [{
+            "id": 1,
+            "name": "OldCamera",
+            "transform3d": {
+                "position": [0, 0, 0],
+                "rotation": [1, 0, 0, 0],
+                "scale": [1, 1, 1]
+            },
+            "camera": {
+                "is_primary": true,
+                "is_orthographic": false,
+                "fov": 50.0,
+                "ortho_size": 10.0,
+                "near_clip": 0.1,
+                "far_clip": 1000.0
+            },
+            "directional_light": {
+                "color": [1, 1, 1],
+                "intensity": 1.0
+            }
+        }]
+    })";
+
+    Scene scene;
+    SceneSerializer s(scene);
+    ASSERT_TRUE(s.from_json(legacy));
+
+    auto cams = scene.registry().view<CameraComponent>();
+    ASSERT_EQ(cams.size(), 1u);
+    auto& cc = scene.registry().get_component<CameraComponent>(cams[0]);
+    // Missing field falls back to struct default (identity quaternion).
+    EXPECT_FLOAT_EQ(cc.orientation.w, 1.0f);
+    EXPECT_FLOAT_EQ(cc.orientation.x, 0.0f);
+
+    auto lights = scene.registry().view<DirectionalLightComponent>();
+    ASSERT_EQ(lights.size(), 1u);
+    auto& dl = scene.registry().get_component<DirectionalLightComponent>(lights[0]);
+    // Missing field falls back to struct default (-0.2, -1, -0.3).
+    EXPECT_FLOAT_EQ(dl.direction.y, -1.0f);
+}
+
 TEST(SceneSerializer, DuplicateEntityCreatesIndependentCopy) {
     Scene scene;
     Entity src = scene.create_entity_3d("Box");

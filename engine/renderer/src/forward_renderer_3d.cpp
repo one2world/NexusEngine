@@ -69,21 +69,44 @@ uniform float u_SpotLight_Range[MAX_SPOT_LIGHTS];
 uniform float u_SpotLight_InnerCos[MAX_SPOT_LIGHTS];
 uniform float u_SpotLight_OuterCos[MAX_SPOT_LIGHTS];
 
+// Hemispheric ambient — cheap GI approximation that softens the
+// vanilla-Lambert terminator.  Surfaces facing up pick up a tinted
+// sky colour, surfaces facing down pick up a warm ground bounce.
+// `t = normal.y * 0.5 + 0.5` maps [-1,1] → [0,1].  The blended
+// colour replaces the previous flat `0.1 * lightColor` ambient
+// which gave back-faces a near-black appearance and produced a
+// hard dark/light border on smooth surfaces (visible on the
+// sandbox's blue sphere).  Magnitude (~0.30) was tuned so the
+// dark hemisphere reads as "ambient-lit" rather than "shadowed".
+uniform vec3 u_AmbientSky;     // RGB tint applied where normal.y > 0
+uniform vec3 u_AmbientGround;  // RGB tint applied where normal.y < 0
+
+vec3 hemispheric_ambient(vec3 normal) {
+    float t = normal.y * 0.5 + 0.5;
+    return mix(u_AmbientGround, u_AmbientSky, t);
+}
+
 vec3 calcDirectionalLight(vec3 normal, vec3 viewDir) {
     vec3 lightDir = normalize(-u_DirLight_Direction);
 
-    // Diffuse
+    // Diffuse — vanilla Lambert.  The hemispheric ambient term is
+    // applied once in main(); the directional light only contributes
+    // the lit hemisphere here.
     float diff = max(dot(normal, lightDir), 0.0);
 
-    // Specular (Blinn-Phong)
+    // Specular (Blinn-Phong).  Specular is gated on diff so it never
+    // shows on the unlit hemisphere — without the gate the half-vector
+    // can produce a wrap-around highlight that looks like a glitch on
+    // smooth surfaces.
     vec3 halfwayDir = normalize(lightDir + viewDir);
-    float spec = pow(max(dot(normal, halfwayDir), 0.0), 32.0);
+    float spec = (diff > 0.0)
+        ? pow(max(dot(normal, halfwayDir), 0.0), 32.0)
+        : 0.0;
 
-    vec3 ambient  = 0.1 * u_DirLight_Color;
     vec3 diffuse  = diff * u_DirLight_Color;
     vec3 specular = spec * 0.5 * u_DirLight_Color;
 
-    return (ambient + diffuse + specular) * u_DirLight_Intensity;
+    return (diffuse + specular) * u_DirLight_Intensity;
 }
 
 vec3 calcPointLight(int i, vec3 normal, vec3 fragPos, vec3 viewDir) {
@@ -139,7 +162,12 @@ void main() {
     vec3 normal = normalize(v_Normal);
     vec3 viewDir = normalize(u_CameraPos - v_FragPos);
 
-    vec3 result = calcDirectionalLight(normal, viewDir);
+    // Hemispheric ambient first — guarantees every fragment has a
+    // floor brightness, avoiding the near-black back-hemisphere
+    // produced by a flat 0.1 ambient.
+    vec3 result = hemispheric_ambient(normal);
+
+    result += calcDirectionalLight(normal, viewDir);
 
     for (int i = 0; i < u_NumPointLights; ++i) {
         result += calcPointLight(i, normal, v_FragPos, viewDir);
@@ -261,6 +289,13 @@ void ForwardRenderer3D::begin_frame(const Camera3D& camera) {
     rhi_->bind_shader(shader_);
     rhi_->set_uniform_mat4(shader_, "u_ViewProjection", view_projection_);
     rhi_->set_uniform_vec3(shader_, "u_CameraPos", camera_position_);
+
+    // Hemispheric ambient defaults — picked to look like an overcast
+    // sky without overwhelming the directional light.  Hosts that want
+    // a different mood (sunrise warmth, night-time blue) override
+    // these via set_ambient_sky / set_ambient_ground.
+    rhi_->set_uniform_vec3(shader_, "u_AmbientSky",    ambient_sky_);
+    rhi_->set_uniform_vec3(shader_, "u_AmbientGround", ambient_ground_);
 }
 
 void ForwardRenderer3D::end_frame() {

@@ -107,6 +107,17 @@ public:
     void add_point_light(const PointLight& light);
     void add_spot_light(const SpotLight& light);
 
+    /// Hemispheric ambient — sky-tinted on top, ground-tinted underneath,
+    /// blended by surface normal.y.  Replaces a flat "ambient = 0.1 *
+    /// lightColor" baseline that produced near-black back-hemispheres
+    /// and a hard light/dark border on smooth surfaces.  Hosts can
+    /// override the defaults to match a sunset / overcast / night-time
+    /// mood.  Applied once per fragment in the shader's main().
+    void set_ambient_sky(Vec3 color)    { ambient_sky_    = color; }
+    void set_ambient_ground(Vec3 color) { ambient_ground_ = color; }
+    Vec3 ambient_sky()    const { return ambient_sky_;    }
+    Vec3 ambient_ground() const { return ambient_ground_; }
+
     void upload_mesh(Mesh& mesh);
     void destroy_mesh(Mesh& mesh);
 
@@ -140,6 +151,13 @@ private:
     DirectionalLight dir_light_;
     std::vector<PointLight> point_lights_;
     std::vector<SpotLight>  spot_lights_;
+
+    // Hemispheric ambient defaults — overcast-sky preset.  Magnitudes
+    // chosen so the back-hemisphere reads as dim-but-illuminated rather
+    // than near-black.  Sandbox / editor / future scene formats may
+    // override per-frame.
+    Vec3 ambient_sky_   {0.32f, 0.36f, 0.42f};
+    Vec3 ambient_ground_{0.18f, 0.16f, 0.14f};
 
     Mat4 view_projection_{1.0f};
     Vec3 camera_position_{0.0f};

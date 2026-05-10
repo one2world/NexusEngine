@@ -138,7 +138,9 @@ public:
     using ErrorHandler = std::function<void(const ScriptError&)>;
 
     void set_error_handler(ErrorHandler handler) { error_handler_ = std::move(handler); }
+    const ErrorHandler& error_handler_for_backend() const { return error_handler_; }
     const std::vector<ScriptError>& errors() const { return errors_; }
+    std::vector<ScriptError>& mutable_errors() { return errors_; }
     void clear_errors() { errors_.clear(); }
 
     // ── print() routing ────────────────────────────────────────────────

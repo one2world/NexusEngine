@@ -489,12 +489,24 @@ void register_os_library(ScriptEngine& engine) {
 
 // ── Basic Library ───────────────────────────────────────────────────────────
 //
-// Globals every Lua program assumes — `print`, `tostring`, `tonumber`,
+// PUC-Rio Lua 5.4's luaL_openlibs (called by LuaBackend::initialize) already
+// registers the full basic library — `print`, `tostring`, `tonumber`,
 // `type`, `assert`, `error`, `select`, `ipairs`, `pairs`, `rawequal`,
-// `rawget`, `rawset`, `unpack`.  Registered as plain (no module) names so
-// callers write `tostring(x)` instead of `lua.tostring(x)`.
+// `rawget`, `rawset`, `unpack` (as `table.unpack`), and the coroutine /
+// io / package surfaces too.  This function is preserved for API parity
+// with previous code paths but is now a no-op: redefining these globals
+// through the C++ shim would shadow the canonical Lua implementations
+// and lose features like multi-return, varargs, and metamethod dispatch.
+//
+// `print` is overridden inside LuaBackend::initialize so it routes through
+// ScriptEngine::print_sink() — that's the only basic-library divergence
+// from upstream.
 
 void register_basic_library(ScriptEngine& engine) {
+    (void)engine;
+    // Intentionally empty: real Lua provides the complete basic library
+    // via luaL_openlibs.  See header docstring for rationale.
+    return;
     // print — joins arguments with single spaces, routes to print sink
     // when one is bound (editor wires it to ConsolePanel) and otherwise
     // falls back to the engine logger.  Holds an engine ref by reference

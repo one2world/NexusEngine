@@ -80,8 +80,17 @@ void ScriptEngine::register_function(const std::string& module,
     std::string key = module.empty() ? name : (module + "." + name);
     function_lookup_[key] = &functions_.back();
 
-    // Also register in globals as a ScriptValue function
+    // Mirror into the C++-side globals so direct call_function paths and
+    // the legacy ScriptContext lookup keep working without a live
+    // lua_State (e.g. headless tests that never call lua_backend).
     globals_.set(key, ScriptValue(functions_.back().func));
+
+    // If the Lua backend is already up, install the function into the
+    // running lua_State right now so scripts compiled after this call
+    // see it.  Pre-init registrations get installed by initialize().
+    if (lua_backend_ && lua_backend_->is_initialized()) {
+        lua_backend_->install_native(functions_.back());
+    }
 }
 
 void ScriptEngine::set_global(const std::string& name, ScriptValue value) {
@@ -94,33 +103,42 @@ ScriptValue ScriptEngine::get_global(const std::string& name) const {
 
 ScriptValue ScriptEngine::call_function(const std::string& qualified_name,
                                           const std::vector<ScriptValue>& args) {
+    // C++-native path first — fastest, also keeps headless tests working
+    // without a live lua_State.
     auto it = function_lookup_.find(qualified_name);
-    if (it == function_lookup_.end()) {
-        report_error("Function not found: " + qualified_name);
-        return ScriptValue::nil();
+    if (it != function_lookup_.end()) {
+        auto* nf = it->second;
+        u32 arg_count = static_cast<u32>(args.size());
+        if (arg_count < nf->min_args) {
+            report_error(qualified_name + ": expected at least " +
+                          std::to_string(nf->min_args) + " args, got " +
+                          std::to_string(arg_count));
+            return ScriptValue::nil();
+        }
+        if (arg_count > nf->max_args) {
+            report_error(qualified_name + ": expected at most " +
+                          std::to_string(nf->max_args) + " args, got " +
+                          std::to_string(arg_count));
+            return ScriptValue::nil();
+        }
+        try {
+            return nf->func(args);
+        } catch (const std::exception& e) {
+            report_error(qualified_name + ": " + e.what());
+            return ScriptValue::nil();
+        }
     }
 
-    auto* nf = it->second;
-    u32 arg_count = static_cast<u32>(args.size());
-    if (arg_count < nf->min_args) {
-        report_error(qualified_name + ": expected at least " +
-                      std::to_string(nf->min_args) + " args, got " +
-                      std::to_string(arg_count));
-        return ScriptValue::nil();
-    }
-    if (arg_count > nf->max_args) {
-        report_error(qualified_name + ": expected at most " +
-                      std::to_string(nf->max_args) + " args, got " +
-                      std::to_string(arg_count));
-        return ScriptValue::nil();
+    // Fall through to the Lua VM when initialised — Lua's basic / math /
+    // string / table / os libraries are reachable this way without each
+    // C++ caller having to know whether the function lives natively in
+    // Lua or as a C++ trampoline.
+    if (lua_backend_ && lua_backend_->is_initialized()) {
+        return lua_backend_->call(qualified_name, args);
     }
 
-    try {
-        return nf->func(args);
-    } catch (const std::exception& e) {
-        report_error(qualified_name + ": " + e.what());
-        return ScriptValue::nil();
-    }
+    report_error("Function not found: " + qualified_name);
+    return ScriptValue::nil();
 }
 
 const NativeFunction* ScriptEngine::find_function(const std::string& module,

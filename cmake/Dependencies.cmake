@@ -72,6 +72,23 @@ FetchContent_Declare(
     GIT_TAG        master
 )
 
+# Lua 5.4 — embedded scripting language.  Pulled from the official PUC-Rio
+# tarball mirror on GitHub.  Built as a STATIC C library (lua-c, no
+# stand-alone interpreter) so the engine links one ~250 KB blob and gets
+# the full Lua reference semantics + stdlib (basic + math + string + table +
+# os + coroutine + io) for free.
+#
+# We pin to 5.4.7 (latest stable as of Q2 2026) and build manually because
+# upstream ships only Makefiles, not CMake.  All 25 .c files compile clean
+# under -std=c11 with -DLUA_USE_POSIX on macOS / Linux (POSIX features:
+# tmpfile / popen used by the os and io libraries).
+FetchContent_Declare(
+    lua
+    GIT_REPOSITORY https://github.com/lua/lua.git
+    GIT_TAG        v5.4.7
+    GIT_SHALLOW    TRUE
+)
+
 # Google Test — Unit testing.  Version kept in sync with Homebrew so ABI matches
 # when Homebrew's gtest header is transitively picked up via Vulkan SDK include
 # paths (e.g. /opt/homebrew/include).
@@ -86,6 +103,38 @@ endif()
 
 # Make available
 FetchContent_MakeAvailable(spdlog glm glfw json stb imgui miniaudio)
+
+# Lua: vendor source has no CMake — populate and build manually as a static
+# library.  We exclude `lua.c` and `luac.c` (the stand-alone interpreter and
+# bytecode compiler entry points); only the library .c files get compiled
+# into libnexus-lua.
+FetchContent_GetProperties(lua)
+if(NOT lua_POPULATED)
+    FetchContent_Populate(lua)
+endif()
+if(lua_POPULATED)
+    file(GLOB _lua_sources "${lua_SOURCE_DIR}/*.c")
+    list(REMOVE_ITEM _lua_sources
+        "${lua_SOURCE_DIR}/lua.c"        # stand-alone interpreter — excluded
+        "${lua_SOURCE_DIR}/luac.c"       # bytecode compiler tool — excluded
+        "${lua_SOURCE_DIR}/onelua.c")    # amalgam alternative — excluded
+    add_library(lua STATIC ${_lua_sources})
+    target_include_directories(lua PUBLIC "${lua_SOURCE_DIR}")
+    # Lua's luaconf.h auto-defines LUA_USE_POSIX when LUA_USE_MACOSX or
+    # LUA_USE_LINUX is set, so we only set the platform-specific flag here.
+    if(APPLE)
+        target_compile_definitions(lua PUBLIC LUA_USE_MACOSX)
+    elseif(UNIX)
+        target_compile_definitions(lua PUBLIC LUA_USE_LINUX)
+    endif()
+    # Lua needs C99 minimum; suppress third-party warnings.
+    set_target_properties(lua PROPERTIES C_STANDARD 99)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(lua PRIVATE -w)
+    elseif(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+        target_compile_options(lua PRIVATE /w)
+    endif()
+endif()
 
 # imguizmo: bypass add_subdirectory so upstream's own CMakeLists (which
 # lacks an imgui include path) doesn't run.  We build the single .cpp

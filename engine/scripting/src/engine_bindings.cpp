@@ -1,5 +1,6 @@
 #include "nexus/scripting/engine_bindings.h"
 #include "nexus/scripting/lua_stdlib.h"
+#include "nexus/scripting/lua_backend.h"
 #include "nexus/scene/registry.h"
 #include "nexus/scene/components.h"
 #include "nexus/platform/input.h"
@@ -682,6 +683,11 @@ void bind_physics_api(ScriptEngine& engine, physics::PhysicsSystem& physics) {
 // ── Bind All ────────────────────────────────────────────────────────────────
 
 void bind_all(ScriptEngine& engine, Registry& registry) {
+    // Boot the Lua backend up-front so the standard library
+    // (print/tostring/tonumber/type/math/string/table/os/coroutine/...)
+    // is immediately callable.  Engine-side bindings registered after
+    // initialise() are pushed into the running lua_State on the fly.
+    engine.lua_backend().initialize();
     register_lua_stdlib(engine);
     bind_entity_api(engine, registry);
     bind_math_api(engine);
@@ -696,6 +702,7 @@ void bind_all(ScriptEngine& engine, Registry& registry,
               Input& input,
               audio::AudioEngine& audio,
               physics::PhysicsSystem& physics) {
+    engine.lua_backend().initialize();
     register_lua_stdlib(engine);
     bind_entity_api(engine, registry);
     bind_math_api(engine);

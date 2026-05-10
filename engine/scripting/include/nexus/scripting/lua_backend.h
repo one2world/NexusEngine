@@ -3,19 +3,28 @@
 #include "nexus/scripting/script_value.h"
 #include <string>
 #include <vector>
-#include <unordered_map>
+
+// Forward-declare the Lua state opaquely so this header doesn't pull lua.h
+// into every consumer.  Lua's lua_State is a forward-declarable struct.
+struct lua_State;
 
 namespace nexus::scripting {
 
 class ScriptEngine;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LuaBackend — bridges ScriptEngine's registered functions to a Lua-like
-// scripting evaluation layer.
+// LuaBackend — wraps a real PUC-Rio Lua 5.4 lua_State.
 //
-// When sol2/Lua is available this class will host the actual lua_State.
-// For now it provides a lightweight evaluator that parses Lua-style syntax
-// and routes all calls through the ScriptEngine function registry.
+// The previous implementation hand-rolled a partial Lua-like interpreter
+// and broke at the first non-trivial expression (`i + j`, conditionals,
+// closures, …).  This version embeds the canonical Lua 5.4 reference
+// implementation: every Lua expression / statement / control-flow
+// construct / coroutine / metatable / closure is supported because the
+// VM does the work.  The native-function bridge lets ScriptEngine's
+// register_function() wire C++ lambdas into Lua via the standard C API
+// (lua_pushcclosure + light-userdata trampoline).
+//
+// Public API kept stable so editor / sandbox / tests don't change.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class LuaBackend {
@@ -23,103 +32,74 @@ public:
     explicit LuaBackend(ScriptEngine& engine);
     ~LuaBackend();
 
-    /// Initialize the backend and prepare execution state.
+    LuaBackend(const LuaBackend&)            = delete;
+    LuaBackend& operator=(const LuaBackend&) = delete;
+
+    /// Open a fresh lua_State, install the standard libraries
+    /// (basic + math + string + table + os + io + coroutine + utf8 + package),
+    /// and route Lua's `print` through ScriptEngine::print_sink when bound.
+    /// Returns false if Lua state allocation fails (out-of-memory).
     bool initialize();
 
-    /// Shutdown and release resources.
+    /// Close the lua_State and release all script-side memory.
     void shutdown();
 
-    /// Execute a script string. Returns true on success.
+    /// Execute a Lua chunk.  Errors are captured into last_error() and
+    /// also forwarded through ScriptEngine::report_error so ScriptEngine
+    /// users see them in errors().
     bool execute(const std::string& script);
 
-    /// Execute a script file. Returns true on success.
+    /// Execute a script file.  Wraps luaL_dofile so file:line error
+    /// reporting points at the actual on-disk source.
     bool execute_file(const std::string& filepath);
 
-    /// Call a named function with arguments.
+    /// Look up a global by name and call it with the supplied arguments.
+    /// Returns ScriptValue::nil() when the global isn't a callable or
+    /// when the call raises an error (last_error() is set in that case).
     ScriptValue call(const std::string& func_name,
                      const std::vector<ScriptValue>& args = {});
 
-    /// Check if initialized.
-    [[nodiscard]] bool is_initialized() const { return initialized_; }
-
-    /// Get last error message.
+    [[nodiscard]] bool is_initialized() const { return L_ != nullptr; }
     [[nodiscard]] const std::string& last_error() const { return last_error_; }
 
-    /// Register a global variable accessible from scripts.
+    /// Set / get a Lua global.  Vec / Entity values are marshalled into
+    /// canonical Lua tables (see script_value_lua.cpp).
     void set_global(const std::string& name, const ScriptValue& value);
-
-    /// Get a global variable.
     [[nodiscard]] ScriptValue get_global(const std::string& name) const;
 
-    /// Evaluate a Lua-style expression and return the result.  Public
-    /// entry point for the editor's Watch panel (M35) — keeps the
-    /// expression-evaluator outside of `execute()` so callers don't
-    /// have to scrape `last_error()` / read a synthetic global.
-    /// On parse failure returns ScriptValue::nil() and sets last_error_.
-    ScriptValue evaluate(const std::string& expr) {
-        return evaluate_expression(expr);
-    }
+    /// Evaluate a single Lua expression and return its value.  Used by
+    /// the editor's Watch panel and by inline `:exec` flows that take an
+    /// expression instead of a chunk.  Wraps the input in `return (...)`
+    /// so the parser sees a complete chunk, then loads + pcalls it.
+    /// Returns ScriptValue::nil() on parse / runtime error (with
+    /// last_error_ populated).
+    ScriptValue evaluate(const std::string& expr);
+
+    /// Install a NativeFunction registered through ScriptEngine into
+    /// the running lua_State.  Called by ScriptEngine::register_function
+    /// after pre-init setup (initialize() replays every existing entry,
+    /// post-init register_function() calls invoke this directly).
+    void install_native(const NativeFunction& nf);
+
+    /// Direct access to the underlying lua_State for advanced callers
+    /// (engine_bindings registers C functions, ScriptEngine pushes
+    /// native lambdas into the global table).  Returns nullptr when
+    /// not initialised.
+    [[nodiscard]] lua_State* state() const { return L_; }
+    [[nodiscard]] ScriptEngine& engine() const { return engine_; }
 
 private:
-    // Parsed representation of a function call expression.
-    struct ParsedCall {
-        std::string module;
-        std::string function;
-        std::vector<ScriptValue> args;
-    };
+    /// Pop the topmost value off the Lua stack and return it as a
+    /// ScriptValue.  No-op (returns nil) when the stack is empty.
+    ScriptValue pop_value();
 
-    /// Execute a single line of script, handling assignment, control flow, etc.
-    bool execute_line(const std::string& line, u32 line_number,
-                      const std::string& source_name);
-
-    /// Evaluate an expression and return its value.
-    ScriptValue evaluate_expression(const std::string& expr);
-
-    /// Parse a function call expression such as "Module.func(a, b)".
-    ParsedCall parse_function_call(const std::string& expr);
-
-    /// Parse a single literal value token (number, string, bool, nil, variable).
-    ScriptValue parse_value(const std::string& token);
-
-    /// Split a comma-separated argument list, respecting parentheses and strings.
-    std::vector<std::string> tokenize_args(const std::string& args_str);
-
-    /// Strip leading and trailing whitespace.
-    static std::string trim(const std::string& s);
-
-    /// Check if a string looks like a function call (contains balanced parens).
-    static bool is_function_call(const std::string& expr);
-
-    /// Handle string concatenation with the ".." operator.
-    ScriptValue evaluate_concatenation(const std::string& expr);
-
-    /// Parse a table constructor: {key=val, ...} or {val1, val2, ...}.
-    ScriptValue parse_table_constructor(const std::string& expr);
-
-    /// Collect lines for a multi-line block (while/for/function ... end).
-    std::vector<std::string> collect_block(std::istringstream& stream,
-                                            u32& line_number);
-
-    /// Execute a while loop body.
-    bool execute_while(const std::string& condition,
-                       const std::vector<std::string>& body,
-                       u32 line_number, const std::string& source);
-
-    /// Execute a numeric for loop body.
-    bool execute_for(const std::string& var, i32 start, i32 stop, i32 step,
-                     const std::vector<std::string>& body,
-                     u32 line_number, const std::string& source);
-
-    /// Report an error with context.
-    void set_error(const std::string& message, const std::string& source,
-                   u32 line);
+    /// Capture the topmost Lua value as the active error message.
+    /// `context` is prepended to the message ("execute"/"call"/...).
+    void capture_error(const char* context);
 
     ScriptEngine& engine_;
-    bool initialized_{false};
-    std::string last_error_;
-
-    // Local/global variables for script scope.
-    std::unordered_map<std::string, ScriptValue> globals_;
+    lua_State*    L_{nullptr};
+    std::string   last_error_;
 };
 
 } // namespace nexus::scripting

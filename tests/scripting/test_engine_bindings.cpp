@@ -319,14 +319,37 @@ TEST(BindAll, RegistersAllModules) {
     Registry registry;
     bind_all(engine, registry);
 
-    // Check that functions from all modules exist
+    // Engine-specific bindings exist as C++ NativeFunction entries.
     EXPECT_NE(engine.find_function("Entity", "create"), nullptr);
     EXPECT_NE(engine.find_function("Math", "sin"), nullptr);
     EXPECT_NE(engine.find_function("Input", "is_key_down"), nullptr);
     EXPECT_NE(engine.find_function("Audio", "play"), nullptr);
     EXPECT_NE(engine.find_function("Physics", "raycast"), nullptr);
-    EXPECT_NE(engine.find_function("", "print"), nullptr);
-    EXPECT_NE(engine.find_function("", "type"), nullptr);
+    // print / type / tostring / tonumber / etc. live in the Lua VM
+    // (luaL_openlibs registers them) and are invoke-callable via
+    // call_function (which falls through to Lua when the C++ map
+    // doesn't have the name).  We probe each by checking that the
+    // call doesn't raise a "not found" error in engine.errors().
+    auto resolves = [&](const std::string& name,
+                         const std::vector<ScriptValue>& args = {ScriptValue(1)}) {
+        engine.clear_errors();
+        engine.call_function(name, args);
+        for (const auto& e : engine.errors()) {
+            if (e.message.find("not found") != std::string::npos &&
+                e.message.find(name)        != std::string::npos) {
+                return false;
+            }
+        }
+        return true;
+    };
+    EXPECT_TRUE(resolves("print"));
+    EXPECT_TRUE(resolves("type"));
+    EXPECT_TRUE(resolves("tostring"));
+    EXPECT_TRUE(resolves("tonumber",  {ScriptValue("1")}));
+    EXPECT_TRUE(resolves("assert"));
+    EXPECT_TRUE(resolves("select",    {ScriptValue("#"), ScriptValue(1)}));
+    EXPECT_TRUE(resolves("ipairs",    {ScriptValue::table()}));
+    EXPECT_TRUE(resolves("pairs",     {ScriptValue::table()}));
 }
 
 TEST(BindAll, PrintFunction) {
@@ -341,6 +364,10 @@ TEST(BindAll, PrintFunction) {
 // ── M32: print() routing through ScriptEngine::set_print_sink ─────────────
 
 TEST(BindAll, PrintSinkReceivesJoinedMessage) {
+    // Real Lua's `print` joins its arguments with TABs (per Lua 5.4 spec
+    // §6.1: "It tries to convert its arguments to strings ... arguments
+    // are separated by tabs").  Editor wires print_sink to ConsolePanel
+    // which renders the tab-separated message verbatim.
     ScriptEngine engine;
     Registry registry;
     bind_all(engine, registry);
@@ -353,7 +380,7 @@ TEST(BindAll, PrintSinkReceivesJoinedMessage) {
     engine.call_function("print",
         {ScriptValue("hello"), ScriptValue(42), ScriptValue(true)});
 
-    EXPECT_EQ(captured, "hello 42 true");
+    EXPECT_EQ(captured, "hello\t42\ttrue");
 }
 
 TEST(BindAll, PrintSinkInvokedOncePerCall) {
@@ -384,7 +411,7 @@ TEST(BindAll, PrintSinkAccumulatesEachCall) {
 
     ASSERT_EQ(log.size(), 2u);
     EXPECT_EQ(log[0], "first");
-    EXPECT_EQ(log[1], "second line");
+    EXPECT_EQ(log[1], "second\tline");  // Lua's print uses TAB separator
 }
 
 TEST(BindAll, PrintSinkUnsetFallsBackSilently) {
@@ -431,7 +458,9 @@ TEST(BindAll, PrintSinkClearedByEmptyAssignment) {
     EXPECT_EQ(count, 1);  // sink no longer called
 }
 
-TEST(BindAll, PrintSinkSeparatesArgsWithSingleSpace) {
+TEST(BindAll, PrintSinkSeparatesArgsWithTab) {
+    // Lua 5.4 `print` joins with TAB; previously we hand-rolled with a
+    // space which diverged from the spec.
     ScriptEngine engine;
     Registry registry;
     bind_all(engine, registry);
@@ -442,27 +471,27 @@ TEST(BindAll, PrintSinkSeparatesArgsWithSingleSpace) {
     engine.call_function("print",
         {ScriptValue(1), ScriptValue(2), ScriptValue(3)});
 
-    EXPECT_EQ(captured, "1 2 3");
+    EXPECT_EQ(captured, "1\t2\t3");
 }
 
 TEST(BindAll, TypeFunctionMatchesLuaSpec) {
-    // `type()` returns canonical Lua type names: int and float collapse
-    // to "number"; Vec/Entity/Function are exposed as "userdata" /
-    // "function" so user scripts can be written against the standard
-    // Lua reference.  Engine-specific subtype information lives on
-    // dedicated helpers (Math.is_vec3, Entity.alive, ...).
+    // `type()` returns canonical Lua type names.  Vec / Entity values
+    // are marshalled into Lua tables (see lua_backend.cpp) so type()
+    // sees them as "table" — engine-side detection of vec/entity uses
+    // the field-shape conventions in Math.is_vec3 / Entity.alive
+    // rather than Lua's runtime type tag.
     ScriptEngine engine;
     Registry registry;
     bind_all(engine, registry);
 
-    EXPECT_EQ(engine.call_function("type", {ScriptValue(42)}).as_string(),       "number");
-    EXPECT_EQ(engine.call_function("type", {ScriptValue("hi")}).as_string(),     "string");
-    EXPECT_EQ(engine.call_function("type", {ScriptValue(true)}).as_string(),     "boolean");
-    EXPECT_EQ(engine.call_function("type", {ScriptValue(1.0f)}).as_string(),     "number");
-    EXPECT_EQ(engine.call_function("type", {ScriptValue::nil()}).as_string(),    "nil");
-    EXPECT_EQ(engine.call_function("type", {ScriptValue(Vec3(0))}).as_string(),  "userdata");
-    EXPECT_EQ(engine.call_function("type", {ScriptValue::entity(1)}).as_string(),"userdata");
-    EXPECT_EQ(engine.call_function("type", {ScriptValue::table()}).as_string(),  "table");
+    EXPECT_EQ(engine.call_function("type", {ScriptValue(42)}).as_string(),        "number");
+    EXPECT_EQ(engine.call_function("type", {ScriptValue("hi")}).as_string(),      "string");
+    EXPECT_EQ(engine.call_function("type", {ScriptValue(true)}).as_string(),      "boolean");
+    EXPECT_EQ(engine.call_function("type", {ScriptValue(1.0f)}).as_string(),      "number");
+    EXPECT_EQ(engine.call_function("type", {ScriptValue::nil()}).as_string(),     "nil");
+    EXPECT_EQ(engine.call_function("type", {ScriptValue(Vec3(0))}).as_string(),   "table");
+    EXPECT_EQ(engine.call_function("type", {ScriptValue::entity(1)}).as_string(), "table");
+    EXPECT_EQ(engine.call_function("type", {ScriptValue::table()}).as_string(),   "table");
 }
 
 TEST(BindAll, ToStringHandlesAllTypes) {
@@ -582,25 +611,51 @@ TEST(BindAll, SelectIndexReturnsArgAtPosition) {
 }
 
 TEST(BindAll, RegistersFullStdlib) {
-    // Spot-check that bind_all wires the basic library AND the math/
-    // string/table/os modules.  If any of these is missing the editor's
-    // Lua Console reports "Function not found" the moment a user types
-    // a routine line.
+    // After integration with PUC-Rio Lua 5.4, the basic library and the
+    // math/string/table/os modules all live in the running lua_State —
+    // they're invoke-callable through call_function (which falls
+    // through to the Lua VM when the C++ map doesn't have the name).
+    // We probe each by attempting an actual call: a "Function not
+    // found" failure produces nil + an error in engine.errors().
     ScriptEngine engine;
     Registry registry;
     bind_all(engine, registry);
+    engine.clear_errors();
 
-    const char* basic_globals[] = {
-        "print", "tostring", "tonumber", "type", "assert", "error",
-        "select", "ipairs", "pairs", "rawequal", "rawget", "rawset", "unpack",
+    auto callable = [&](const std::string& name,
+                        const std::vector<ScriptValue>& args = {}) {
+        auto r = engine.call_function(name, args);
+        // The point isn't the value — it's that the call resolved.
+        // Treat presence of a "not found" error as failure.
+        for (const auto& e : engine.errors()) {
+            if (e.message.find("not found") != std::string::npos &&
+                e.message.find(name) != std::string::npos) {
+                return false;
+            }
+        }
+        engine.clear_errors();
+        (void)r;
+        return true;
     };
-    for (const char* name : basic_globals) {
-        EXPECT_NE(engine.find_function("", name), nullptr)
-            << "missing basic global: " << name;
-    }
+
+    EXPECT_TRUE(callable("type",     {ScriptValue(1)}));
+    EXPECT_TRUE(callable("tostring", {ScriptValue(1)}));
+    EXPECT_TRUE(callable("tonumber", {ScriptValue("1")}));
+    EXPECT_TRUE(callable("assert",   {ScriptValue(1)}));
+    EXPECT_TRUE(callable("select",   {ScriptValue("#")}));
+    // ipairs / pairs / rawequal / rawget / rawset / unpack take a table.
+    EXPECT_TRUE(callable("ipairs",   {ScriptValue::table()}));
+    EXPECT_TRUE(callable("pairs",    {ScriptValue::table()}));
+    EXPECT_TRUE(callable("rawequal", {ScriptValue(1), ScriptValue(1)}));
+
+    // Module-level entries — `math` / `string` / `table` / `os`
+    // wrappers are still in the C++ NativeFunction registry so headless
+    // tests (no lua_State) can probe them via find_function.  table.unpack
+    // is Lua-native only; not registered as a C++ wrapper.
     EXPECT_NE(engine.find_function("math",   "abs"),     nullptr);
     EXPECT_NE(engine.find_function("string", "len"),     nullptr);
     EXPECT_NE(engine.find_function("table",  "insert"),  nullptr);
-    EXPECT_NE(engine.find_function("table",  "unpack"),  nullptr);
+    // table.unpack is a Lua 5.2+ native; verify it's invoke-callable.
+    EXPECT_TRUE(callable("table.unpack", {ScriptValue::table()}));
     EXPECT_NE(engine.find_function("os",     "clock"),   nullptr);
 }

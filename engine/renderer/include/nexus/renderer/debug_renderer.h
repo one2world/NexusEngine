@@ -32,7 +32,7 @@ public:
     void draw_box(Vec3 center, Vec3 extents, Vec4 color);
     void draw_aabb(const AABB& aabb, Vec4 color);
     void draw_sphere(Vec3 center, float radius, Vec4 color, u32 segments = 16);
-    void draw_grid(float size, float step, Vec4 color);
+    void draw_grid(float size, float step, Vec4 color, float y = 0.0f);
     void draw_axis(Vec3 origin, float length);
     void draw_frustum(const Mat4& view_projection, Vec4 color);
     void draw_ray(Vec3 origin, Vec3 direction, float length, Vec4 color);

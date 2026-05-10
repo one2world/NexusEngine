@@ -158,16 +158,16 @@ void DebugRenderer::draw_sphere(Vec3 center, float radius, Vec4 color, u32 segme
     }
 }
 
-void DebugRenderer::draw_grid(float size, float step, Vec4 color) {
+void DebugRenderer::draw_grid(float size, float step, Vec4 color, float y) {
     float half = size * 0.5f;
     int count = static_cast<int>(size / step);
 
     for (int i = 0; i <= count; ++i) {
         float pos = -half + static_cast<float>(i) * step;
         // Lines along Z
-        add_line({pos, 0.0f, -half}, {pos, 0.0f, half}, color);
+        add_line({pos, y, -half}, {pos, y, half}, color);
         // Lines along X
-        add_line({-half, 0.0f, pos}, {half, 0.0f, pos}, color);
+        add_line({-half, y, pos}, {half, y, pos}, color);
     }
 }
 

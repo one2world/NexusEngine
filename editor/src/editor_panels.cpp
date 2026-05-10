@@ -347,7 +347,13 @@ void ViewportPanel::render_scene_to_fbo() {
 
         debug_renderer_->begin(cam);
         if (show_grid_) {
-            debug_renderer_->draw_grid(20.0f, 1.0f, Vec4(0.35f, 0.35f, 0.40f, 1.0f));
+            // Lift grid 1 mm above y=0 so its lines don't z-fight with
+            // the default ground plane during camera motion (the bias
+            // is below normal scene precision but well above the
+            // depth-buffer LSB at typical camera distances).
+            debug_renderer_->draw_grid(20.0f, 1.0f,
+                                        Vec4(0.35f, 0.35f, 0.40f, 1.0f),
+                                        0.001f);
         }
         if (show_axes_) {
             debug_renderer_->draw_axis(Vec3(0.0f), 1.0f);
@@ -1217,6 +1223,42 @@ void HierarchyPanel::on_render() {
 
     for (Entity root : roots) {
         render_entity(root);
+    }
+
+    // Empty-space context menu (right-click outside any item).
+    // - With selection: offer "Create Child" submenu rooted at the
+    //   primary selection so users don't have to right-click the
+    //   exact row they just clicked.
+    // - Without selection: do not pop a menu — there's no implicit
+    //   parent to attach a "Create Child" to, and a top-level
+    //   "+ Create" toolbar already covers parent-less spawning.
+    if (has_selection() &&
+        ImGui::BeginPopupContextWindow(
+            "##HierarchyEmptySpaceCtx",
+            ImGuiPopupFlags_MouseButtonRight |
+            ImGuiPopupFlags_NoOpenOverItems)) {
+        const Entity parent = static_cast<Entity>(selected_entity());
+        if (registry.alive(parent) &&
+            ImGui::BeginMenu("Create Child")) {
+            const char* kinds[] = {
+                "Empty", "Cube", "Sphere", "Plane",
+                "Camera", "Directional Light", "Point Light", "Spot Light",
+                "Sprite",
+            };
+            for (const char* k : kinds) {
+                if (ImGui::MenuItem(k)) {
+                    Entity child = spawn_primitive(
+                        *scene_, k,
+                        primitive_cube_id_, primitive_plane_id_,
+                        primitive_sphere_id_, parent);
+                    if (child != INVALID_ENTITY) {
+                        set_selected_entity(static_cast<u32>(child));
+                    }
+                }
+            }
+            ImGui::EndMenu();
+        }
+        ImGui::EndPopup();
     }
 
     ui::end_window();

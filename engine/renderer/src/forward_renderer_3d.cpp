@@ -575,18 +575,25 @@ Mesh create_sphere_mesh(float radius, u32 rings, u32 sectors) {
         }
     }
 
+    // Triangle winding: outward-facing under glFrontFace(GL_CCW) +
+    // CullMode::Back.  cur(theta_s, phi_r), cur+1(theta_s+1, phi_r),
+    // next(theta_s, phi_r+1).  The cross-product (cur+1 − cur) ×
+    // (next − cur) at the equator points outward (+x for theta=0),
+    // which is exactly the convention we need.  Earlier order
+    // (cur, next, cur+1) had the wrong winding and the GPU culled
+    // the front-facing surface, exposing the opposite hemisphere.
     for (u32 r = 0; r < rings; ++r) {
         for (u32 s = 0; s < sectors; ++s) {
             u32 cur = r * (sectors + 1) + s;
             u32 next = cur + sectors + 1;
 
             mesh.indices.push_back(cur);
-            mesh.indices.push_back(next);
             mesh.indices.push_back(cur + 1);
+            mesh.indices.push_back(next);
 
             mesh.indices.push_back(cur + 1);
-            mesh.indices.push_back(next);
             mesh.indices.push_back(next + 1);
+            mesh.indices.push_back(next);
         }
     }
 

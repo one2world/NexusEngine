@@ -23,6 +23,7 @@
 #include "nexus/editor/editor_tools.h"
 #include "nexus/scripting/script_engine.h"
 #include "nexus/scripting/lua_backend.h"
+#include "nexus/scripting/engine_bindings.h"
 #include "nexus/editor/asset_thumbnail_cache.h"
 #include "nexus/editor/component_registry.h"
 #include "nexus/editor/asset_drop_importer.h"
@@ -659,6 +660,11 @@ static int run(int /*argc*/, char* /*argv*/[]) {
         nexus::scripting::ScriptEngine script_engine;
         nexus::scripting::LuaBackend& lua_backend = script_engine.lua_backend();
         lua_backend.initialize();
+        // Register the standard binding catalog (print/type/Math/Entity)
+        // so the Lua Console panel and any ScriptComponent code can call
+        // them without each call site re-registering.  Without this the
+        // Lua Console reports "Function not found: print".
+        nexus::scripting::bind_all(script_engine, scene.registry());
 
         EditorState editor_state;
         register_default_panels(editor_state);
@@ -2139,9 +2145,12 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                         const bool playing = editor_state.is_playing();
                         const bool paused  = editor_state.is_paused();
                         if (playing || paused) {
+                            // Active state: button reads "Stop" (Unity
+                            // convention) — the same key/click that
+                            // entered play exits it.
                             ImGui::PushStyleColor(ImGuiCol_Button,
                                 ImVec4(0.30f, 0.55f, 0.85f, 1.0f));
-                            if (ImGui::Button("Play")) leave_play();
+                            if (ImGui::Button("Stop")) leave_play();
                             ImGui::PopStyleColor();
                         } else {
                             if (ImGui::Button("Play")) enter_play();
@@ -2314,10 +2323,9 @@ static int run(int /*argc*/, char* /*argv*/[]) {
                 window.swap_buffers();
             }
 
-            // Periodic status
-            if (timer.frame_count() % 300 == 0 && timer.frame_count() > 0) {
-                NX_TRACE("Editor FPS: {:.1f}", timer.fps());
-            }
+            // FPS is exposed live via the status bar + RuntimeStats panel
+            // (M28); periodic NX_TRACE here just spams the Console at the
+            // default trace log level.
             editor_profiler.end_frame();
         }
 

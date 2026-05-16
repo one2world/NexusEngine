@@ -390,6 +390,13 @@ void ForwardRenderer3D::shutdown() {
 // silent driver behaviour.
 void ForwardRenderer3D::push_shadow_uniforms() {
     if (!rhi_ || shader_ == rhi::INVALID_HANDLE) return;
+    // `glUniform*` writes to the currently-bound program — the RHI's
+    // shader handle only resolves the uniform *location*.  Anything
+    // that pushed uniforms before us (the ShadowSystem's depth pass
+    // bound depth_shader_) would have left the wrong program active.
+    // Re-bind the main shader before every batch of uniform writes
+    // so the values actually land on it.
+    rhi_->bind_shader(shader_);
 
     constexpr u32 kMaxCascades = CascadedShadowMap::MAX_CASCADES;
     const char* sampler_names[kMaxCascades] = {
@@ -517,6 +524,10 @@ void ForwardRenderer3D::end_frame() {
 
 void ForwardRenderer3D::set_directional_light(const DirectionalLight& light) {
     dir_light_ = light;
+    // glUniform* writes to the active program — re-bind main shader so
+    // these values land here, not on whatever the previous pass left
+    // active (e.g. the shadow depth shader from ShadowSystem).
+    rhi_->bind_shader(shader_);
     rhi_->set_uniform_vec3 (shader_, "u_DirLight_Direction", light.direction);
     rhi_->set_uniform_vec3 (shader_, "u_DirLight_Color",     light.color);
     rhi_->set_uniform_float(shader_, "u_DirLight_Intensity", light.intensity);
@@ -529,6 +540,8 @@ void ForwardRenderer3D::set_directional_light(const DirectionalLight& light) {
 
 void ForwardRenderer3D::add_point_light(const PointLight& light) {
     if (point_lights_.size() >= MAX_POINT_LIGHTS) return;
+    // Same shader-binding contract as set_directional_light.
+    rhi_->bind_shader(shader_);
     u32 idx = static_cast<u32>(point_lights_.size());
     point_lights_.push_back(light);
 
@@ -550,6 +563,8 @@ void ForwardRenderer3D::add_point_light(const PointLight& light) {
 
 void ForwardRenderer3D::add_spot_light(const SpotLight& light) {
     if (spot_lights_.size() >= MAX_SPOT_LIGHTS) return;
+    // Same shader-binding contract as set_directional_light.
+    rhi_->bind_shader(shader_);
     u32 idx = static_cast<u32>(spot_lights_.size());
     spot_lights_.push_back(light);
 

@@ -127,6 +127,7 @@ using GLvoid     = void;
 
 // Enable caps
 #define GL_DEPTH_TEST            0x0B71
+#define GL_MULTISAMPLE           0x809D
 #define GL_SCISSOR_TEST          0x0C11
 #define GL_BLEND                 0x0BE2
 #define GL_CULL_FACE             0x0B44

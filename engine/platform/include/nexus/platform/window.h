@@ -15,6 +15,12 @@ struct WindowConfig {
     bool vsync = true;
     bool resizable = true;
     bool fullscreen = false;
+    // Multi-sample anti-aliasing samples for the default framebuffer.
+    // 0 = disabled.  4 is the modern realtime default — kills the
+    // hard staircase on geometry silhouettes without breaking
+    // performance budgets.  Higher values (8, 16) are diminishing
+    // returns on edges but cost proportional fill/bandwidth.
+    int msaa_samples = 4;
 };
 
 class Window {

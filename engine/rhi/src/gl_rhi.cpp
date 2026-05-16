@@ -127,6 +127,13 @@ bool OpenGLRHI::init() {
     shaders_.push_back({});
     pipelines_.push_back({});
     framebuffers_.push_back({});
+
+    // Enable MSAA at the GL state level.  The default framebuffer's
+    // sample count is negotiated by GLFW (glfwWindowHint(GLFW_SAMPLES))
+    // at window creation; this flag tells the GL pipeline to *use*
+    // those samples for coverage.  Off-screen FBOs decide independently
+    // — multisampled FBOs honour this flag, single-sample FBOs don't.
+    gl::Enable(GL_MULTISAMPLE);
     return true;
 }
 

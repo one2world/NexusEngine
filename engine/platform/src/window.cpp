@@ -35,6 +35,12 @@ Window::Window(const WindowConfig& config)
 #endif
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_RESIZABLE, config.resizable ? GLFW_TRUE : GLFW_FALSE);
+    // MSAA on the default framebuffer.  Has to be requested before
+    // glfwCreateWindow because GLFW pre-allocates the multisampled
+    // backbuffer at window creation; 0 disables, 4 is the modern
+    // realtime default.  Per-FBO MSAA for offscreen passes is a
+    // separate RHI feature handled by the renderer.
+    glfwWindowHint(GLFW_SAMPLES, config.msaa_samples);
 
     GLFWmonitor* monitor = config.fullscreen ? glfwGetPrimaryMonitor() : nullptr;
     window_ = glfwCreateWindow(width_, height_, config.title.c_str(), monitor, nullptr);

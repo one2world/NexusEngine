@@ -198,6 +198,12 @@ public:
     /// from the freshly-rendered shadow maps.
     void bind_shadow_data() { push_shadow_uniforms(); }
 
+    /// Direct access to the bound RHI — needed by ShadowSystem to
+    /// restore framebuffer + viewport state after its depth passes.
+    /// Kept narrow on purpose: ShadowSystem is the only intended
+    /// consumer.
+    rhi::RHI* rhi() const { return rhi_; }
+
     /// Render the shadow depth pass. Call after begin_frame(), before draw_mesh() calls.
     /// Provide a callback that submits geometry for each cascade.
     using ShadowGeometryCallback = std::function<void(u32 cascade)>;

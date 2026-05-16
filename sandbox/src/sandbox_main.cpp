@@ -381,12 +381,17 @@ int main() {
             renderer_3d.begin(camera_3d);
 
             // Shadow depth pass — runs BEFORE the colour-pass draws.
-            // The system reads the directional light + caster meshes
-            // from the registry, renders each cascade's depth FBO,
-            // then re-binds the shadow textures and cascade matrices
-            // to the main shader so subsequent draw_mesh calls sample
-            // from them.
-            shadow_system.render(renderer_3d, reg);
+            // ShadowSystem renders each cascade's depth FBO then
+            // restores the main-pass viewport + framebuffer so the
+            // colour-pass draw_mesh calls land on the host's intended
+            // target (without restoration the GL viewport would be
+            // stuck at the shadow resolution and entities would pop
+            // in/out of frame as the camera orbits).
+            nexus::ShadowSystem::MainPassTarget target;
+            target.viewport_w = window.width();
+            target.viewport_h = window.height();
+            target.fbo        = nexus::rhi::INVALID_HANDLE;  // default FB
+            shadow_system.render(renderer_3d, reg, target);
 
             // Lights — pulled from ECS so any future script that
             // mutates them is honoured.  Pushed *after* the shadow

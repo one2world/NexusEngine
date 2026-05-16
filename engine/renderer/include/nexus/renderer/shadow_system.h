@@ -56,6 +56,22 @@ public:
     using MeshResolver = std::function<const Mesh*(u32 mesh_id)>;
     void set_mesh_resolver(MeshResolver r) { resolver_ = std::move(r); }
 
+    /// Per-frame target state the system must restore after its
+    /// depth passes complete.  Shadow framebuffers run at the CSM
+    /// resolution and switch the GL viewport / framebuffer; without
+    /// this restoration the colour pass would inherit the shadow
+    /// pass's viewport (e.g. 2048×2048) and clip the screen at the
+    /// host's actual render-target dimensions, producing pop-in /
+    /// pop-out as the camera moves.
+    struct MainPassTarget {
+        i32 viewport_w {0};
+        i32 viewport_h {0};
+        // Framebuffer to which the colour pass should write.  Use
+        // rhi::INVALID_HANDLE for the default framebuffer (window
+        // back buffer in sandbox; editor passes its panel FBO here).
+        rhi::FramebufferHandle fbo {rhi::INVALID_HANDLE};
+    };
+
     /// Render every active shadow caster's depth pass and push the
     /// resulting cascade data to the renderer for the upcoming colour
     /// pass.  Idempotent if no shadow-casting light is present —
@@ -65,7 +81,13 @@ public:
     /// Must be called between forward_renderer.begin_frame() and the
     /// first colour-pass draw_mesh, while the camera matrices in the
     /// renderer are valid (CSM split bounds depend on them).
-    void render(ForwardRenderer3D& renderer, Registry& registry);
+    ///
+    /// Restores `target.fbo` + `target.viewport_w x viewport_h` to the
+    /// GL state on exit so the colour pass that follows renders to
+    /// the host's intended target.  Passing a zero-sized viewport is
+    /// valid (acts as "no-op restore") and useful for headless tests.
+    void render(ForwardRenderer3D& renderer, Registry& registry,
+                const MainPassTarget& target);
 
 private:
     /// Walk the registry once to find the active shadow-casting

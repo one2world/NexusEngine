@@ -226,19 +226,23 @@ void ViewportPanel::render_scene_to_fbo() {
             renderer_3d_->begin_frame(cam);
 
             // Shadow depth pass — must run between begin_frame and
-            // the colour-pass draws.  ShadowSystem reads the
-            // shadow-casting directional light + caster meshes from
-            // the registry, renders each cascade's depth FBO, then
-            // re-binds the shadow textures so the upcoming draw_mesh
-            // calls sample from fresh depth.  No-op when no
-            // shadow_map_ is enabled on the renderer (host opt-in).
+            // the colour-pass draws.  ShadowSystem renders each
+            // cascade's depth FBO, then restores the panel's
+            // viewport + framebuffer so the colour pass writes to
+            // the editor's target FBO at its actual dimensions.
+            // Without this restore the shadow pass's 2048² viewport
+            // would clip the editor panel's rendered image.
             ShadowSystem shadow_system;
             shadow_system.set_mesh_resolver(
                 [this](u32 id) -> const Mesh* {
                     auto it = mesh_registry_.find(id);
                     return it != mesh_registry_.end() ? it->second : nullptr;
                 });
-            shadow_system.render(*renderer_3d_, registry);
+            ShadowSystem::MainPassTarget target;
+            target.viewport_w = static_cast<i32>(fbo_w_);
+            target.viewport_h = static_cast<i32>(fbo_h_);
+            target.fbo        = fbo_;
+            shadow_system.render(*renderer_3d_, registry, target);
 
             registry.each<DirectionalLightComponent>(
                 [&](u32, DirectionalLightComponent& dl) {

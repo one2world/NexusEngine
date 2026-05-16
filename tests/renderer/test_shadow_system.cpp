@@ -21,7 +21,7 @@ TEST(ShadowSystem, MeshResolverDefaultsToNullptr) {
     ForwardRenderer3D renderer;
     ShadowSystem ss;
     // No mesh resolver bound; no enable_shadows; no directional light.
-    ss.render(renderer, scene.registry());  // no crash
+    ss.render(renderer, scene.registry(), {});  // no crash
     SUCCEED();
 }
 
@@ -38,7 +38,7 @@ TEST(ShadowSystem, NoOpWhenNoDirectionalCaster) {
     ShadowSystem ss;
     ss.set_mesh_resolver([](u32) -> const Mesh* { return nullptr; });
     ForwardRenderer3D renderer;
-    ss.render(renderer, reg);
+    ss.render(renderer, reg, {});
     // shadow_map() on an uninitialised renderer is null; no asserts
     // beyond "doesn't crash and does nothing observable".
     EXPECT_EQ(renderer.shadow_map(), nullptr);
@@ -64,7 +64,7 @@ TEST(ShadowSystem, FirstShadowCastingDirectionalLightWins) {
     ShadowSystem ss;
     ss.set_mesh_resolver([](u32) -> const Mesh* { return nullptr; });
     ForwardRenderer3D renderer;
-    ss.render(renderer, reg);  // no crash; CSM not initialised so no-op
+    ss.render(renderer, reg, {});  // no crash; CSM not initialised so no-op
     SUCCEED();
 }
 
@@ -105,7 +105,7 @@ TEST(ShadowSystem, CasterFlagFiltersMeshesInDepthPass) {
     // since renderer.shadow_map() returns null without enable_shadows,
     // the system early-exits before touching the resolver.
     ForwardRenderer3D renderer;
-    ss.render(renderer, reg);
+    ss.render(renderer, reg, {});
     EXPECT_EQ(caster_lookups,  0);  // early-out before resolver runs
     EXPECT_EQ(skipped_lookups, 0);
 }

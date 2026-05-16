@@ -5,6 +5,7 @@ add_executable(nexus-test-renderer
     test_surface_material.cpp
     test_advanced_rendering.cpp
     test_new_systems.cpp
+    test_shadow_system.cpp
 )
 
 target_link_libraries(nexus-test-renderer
@@ -12,6 +13,7 @@ target_link_libraries(nexus-test-renderer
         Nexus::Core
         Nexus::RHI
         Nexus::Renderer
+        Nexus::Scene
         gtest
         gtest_main
 )

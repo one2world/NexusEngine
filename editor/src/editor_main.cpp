@@ -552,6 +552,21 @@ static int run(int /*argc*/, char* /*argv*/[]) {
         // ── Create renderers ───────────────────────────────────────────
         ForwardRenderer3D renderer_3d;
         renderer_3d.init(rhi.get());
+
+        // Cascaded shadow mapping — same preset the sandbox uses.
+        // 3 cascades at 2048² is the modern default for sun-driven
+        // shadows; bias / normal_bias tuned to mask self-shadowing
+        // acne without producing visible peter-panning.  Editor hosts
+        // can re-enable with a different config via the Inspector
+        // once a Lighting panel exists; for now this is on-by-default.
+        CascadedShadowMap::Config csm_cfg;
+        csm_cfg.resolution           = 2048;
+        csm_cfg.num_cascades         = 3;
+        csm_cfg.cascade_split_lambda = 0.85f;
+        csm_cfg.shadow_distance      = 60.0f;
+        csm_cfg.bias                 = 0.0015f;
+        csm_cfg.normal_bias          = 0.05f;
+        renderer_3d.enable_shadows(csm_cfg);
         BatchRenderer2D renderer_2d;
         renderer_2d.init(rhi.get());
         DebugRenderer debug_renderer;

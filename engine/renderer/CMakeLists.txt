@@ -5,6 +5,7 @@ add_library(nexus-renderer STATIC
     src/debug_renderer.cpp
     src/pbr_renderer.cpp
     src/shadow_map.cpp
+    src/shadow_system.cpp
     src/post_process.cpp
     src/deferred_renderer.cpp
     src/terrain.cpp
@@ -29,7 +30,7 @@ target_include_directories(nexus-renderer
 )
 
 target_link_libraries(nexus-renderer
-    PUBLIC Nexus::Core Nexus::RHI Nexus::Animation
+    PUBLIC Nexus::Core Nexus::RHI Nexus::Animation Nexus::Scene
 )
 
 nexus_set_compiler_flags(nexus-renderer)

@@ -202,16 +202,24 @@ void BinarySceneSerializer::serialize_entity(const Registry& reg, Entity e,
         write_component(CT_DirectionalLight, [&](WriteBuffer& d) {
             // v2: include direction so the sun's aim survives Stop /
             // file load.
+            // v3: trailing cast_shadows flag — required by ShadowSystem
+            //     to know whether to include this light in the depth
+            //     pass.  Reader gates on file version.
             d.write_vec3(c.direction);
             d.write_vec3(c.color);
             d.write_f32(c.intensity);
+            d.write_u8(c.cast_shadows ? 1 : 0);
         });
     }
 
     if (reg.has_component<PointLightComponent>(e)) {
         auto& c = reg.get_component<PointLightComponent>(e);
         write_component(CT_PointLight, [&](WriteBuffer& d) {
-            d.write_vec3(c.color); d.write_f32(c.intensity); d.write_f32(c.radius);
+            d.write_vec3(c.color);
+            d.write_f32(c.intensity);
+            d.write_f32(c.radius);
+            // v3 trailing cast_shadows.
+            d.write_u8(c.cast_shadows ? 1 : 0);
         });
     }
 
@@ -406,6 +414,10 @@ Entity BinarySceneSerializer::deserialize_entity(Registry& reg, ReadCursor& curs
             }
             c.color = cursor.read_vec3();
             c.intensity = cursor.read_f32();
+            // v3: trailing cast_shadows byte.
+            if (version >= 3) {
+                c.cast_shadows = cursor.read_u8() != 0;
+            }
             reg.add_component<DirectionalLightComponent>(e, c);
             break;
         }
@@ -414,6 +426,10 @@ Entity BinarySceneSerializer::deserialize_entity(Registry& reg, ReadCursor& curs
             c.color = cursor.read_vec3();
             c.intensity = cursor.read_f32();
             c.radius = cursor.read_f32();
+            // v3: trailing cast_shadows byte.
+            if (version >= 3) {
+                c.cast_shadows = cursor.read_u8() != 0;
+            }
             reg.add_component<PointLightComponent>(e, c);
             break;
         }

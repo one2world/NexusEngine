@@ -12,6 +12,7 @@
 #include "nexus/scene/registry.h"
 #include "nexus/scene/hierarchy.h"
 #include "nexus/renderer/forward_renderer_3d.h"
+#include "nexus/renderer/shadow_system.h"
 #include "nexus/renderer/batch_renderer_2d.h"
 #include "nexus/renderer/debug_renderer.h"
 #include "nexus/renderer/camera.h"
@@ -223,12 +224,29 @@ void ViewportPanel::render_scene_to_fbo() {
             last_proj_ = cam.get_projection_matrix();
             last_cam_ready_ = true;
             renderer_3d_->begin_frame(cam);
+
+            // Shadow depth pass — must run between begin_frame and
+            // the colour-pass draws.  ShadowSystem reads the
+            // shadow-casting directional light + caster meshes from
+            // the registry, renders each cascade's depth FBO, then
+            // re-binds the shadow textures so the upcoming draw_mesh
+            // calls sample from fresh depth.  No-op when no
+            // shadow_map_ is enabled on the renderer (host opt-in).
+            ShadowSystem shadow_system;
+            shadow_system.set_mesh_resolver(
+                [this](u32 id) -> const Mesh* {
+                    auto it = mesh_registry_.find(id);
+                    return it != mesh_registry_.end() ? it->second : nullptr;
+                });
+            shadow_system.render(*renderer_3d_, registry);
+
             registry.each<DirectionalLightComponent>(
                 [&](u32, DirectionalLightComponent& dl) {
                     DirectionalLight light;
-                    light.direction = dl.direction;
-                    light.color = dl.color;
-                    light.intensity = dl.intensity;
+                    light.direction    = dl.direction;
+                    light.color        = dl.color;
+                    light.intensity    = dl.intensity;
+                    light.cast_shadows = dl.cast_shadows;
                     renderer_3d_->set_directional_light(light);
                 });
             registry.each<PointLightComponent, Transform3DComponent>(
@@ -246,7 +264,8 @@ void ViewportPanel::render_scene_to_fbo() {
                     auto it = mesh_registry_.find(mr.mesh_id);
                     if (it == mesh_registry_.end() || !it->second) return;
                     renderer_3d_->draw_mesh(*it->second, tc.world_matrix,
-                                              mr.material_id, mr.tint);
+                                              mr.material_id, mr.receive_shadows,
+                                              mr.tint);
                     ++stats.mesh_draw_calls;
                     ++stats.draw_calls;
                     const auto& m = *it->second;

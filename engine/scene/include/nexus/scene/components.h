@@ -132,6 +132,12 @@ struct DirectionalLightComponent {
     Vec3  direction{-0.2f, -1.0f, -0.3f};
     Vec3  color{1.0f, 1.0f, 1.0f};
     float intensity = 1.0f;
+    // Shadow toggle.  When true the renderer's ShadowSystem includes
+    // this light in its CSM depth pass and the main forward shader
+    // multiplies its contribution by the shadow factor.  Off-by-default
+    // would be the wrong UX (sun = wants shadows); on-by-default mirrors
+    // Unity / Unreal.
+    bool  cast_shadows = true;
 };
 
 // ---------------------------------------------------------------------------
@@ -141,6 +147,10 @@ struct PointLightComponent {
     Vec3  color{1.0f, 1.0f, 1.0f};
     float intensity = 1.0f;
     float radius    = 10.0f;
+    // Shadow toggle.  Off by default because point-light cubemap
+    // shadows are 6× the cost of directional CSM and many small
+    // accent lights don't visually need them.  Set true on hero lights.
+    bool  cast_shadows = false;
 };
 
 // ---------------------------------------------------------------------------
@@ -355,6 +365,10 @@ struct SpotLightComponent {
     float range{20.0f};
     float inner_angle{12.5f};    // degrees (full-bright cone)
     float outer_angle{17.5f};    // degrees (fade-out cone)
+    // Shadow toggle.  Off by default: spot-light shadows need their
+    // own per-light depth FBO and most accent spots don't visually
+    // require them.  Enable on key dramatic spots (flashlights, etc).
+    bool  cast_shadows{false};
 };
 
 // ---------------------------------------------------------------------------

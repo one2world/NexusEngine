@@ -37,6 +37,7 @@
 #include "nexus/rhi/gl_functions.h"
 #include "nexus/renderer/batch_renderer_2d.h"
 #include "nexus/renderer/forward_renderer_3d.h"
+#include "nexus/renderer/shadow_system.h"
 #include "nexus/scene/scene.h"
 #include "nexus/scene/registry.h"
 #include "nexus/scene/components.h"
@@ -104,6 +105,19 @@ int main() {
 
     nexus::ForwardRenderer3D renderer_3d;
     renderer_3d.init(rhi.get());
+
+    // Cascaded shadow mapping — 3 cascades at 2048² is the modern default
+    // for sun-driven shadows.  Splits favour log distribution so near-
+    // camera detail dominates; bias / normal_bias tuned to kill acne on
+    // the ground plane without producing visible peter-panning.
+    nexus::CascadedShadowMap::Config csm_cfg;
+    csm_cfg.resolution           = 2048;
+    csm_cfg.num_cascades         = 3;
+    csm_cfg.cascade_split_lambda = 0.85f;
+    csm_cfg.shadow_distance      = 60.0f;
+    csm_cfg.bias                 = 0.0015f;
+    csm_cfg.normal_bias          = 0.05f;
+    renderer_3d.enable_shadows(csm_cfg);
 
     // Primitive meshes uploaded once; we keep handles to them by id so
     // MeshRendererComponent.mesh_id can route entities to their geometry.
@@ -295,6 +309,16 @@ int main() {
     script_system.initialize_scripts(reg);
 
     // ── Cameras ─────────────────────────────────────────────────────────
+    // ShadowSystem orchestrates the depth pass — collects caster
+    // meshes from the registry, drives CSM for the active directional
+    // light, then re-binds the depth maps + cascade matrices to the
+    // main forward shader.  The mesh resolver maps mesh_id → Mesh*.
+    nexus::ShadowSystem shadow_system;
+    shadow_system.set_mesh_resolver([&mesh_table](nexus::u32 id) {
+        auto it = mesh_table.find(id);
+        return it != mesh_table.end() ? it->second : nullptr;
+    });
+
     nexus::Camera2D camera_2d;
     camera_2d.set_projection(static_cast<float>(config.width),
                               static_cast<float>(config.height));
@@ -356,14 +380,24 @@ int main() {
 
             renderer_3d.begin(camera_3d);
 
+            // Shadow depth pass — runs BEFORE the colour-pass draws.
+            // The system reads the directional light + caster meshes
+            // from the registry, renders each cascade's depth FBO,
+            // then re-binds the shadow textures and cascade matrices
+            // to the main shader so subsequent draw_mesh calls sample
+            // from them.
+            shadow_system.render(renderer_3d, reg);
+
             // Lights — pulled from ECS so any future script that
-            // mutates them is honoured.
+            // mutates them is honoured.  Pushed *after* the shadow
+            // pass so cast_shadows flags reach the shader uniforms.
             reg.each<nexus::DirectionalLightComponent>(
                 [&](nexus::Entity, nexus::DirectionalLightComponent& dl) {
                     nexus::DirectionalLight light;
-                    light.direction = dl.direction;
-                    light.color     = dl.color;
-                    light.intensity = dl.intensity;
+                    light.direction    = dl.direction;
+                    light.color        = dl.color;
+                    light.intensity    = dl.intensity;
+                    light.cast_shadows = dl.cast_shadows;
                     renderer_3d.set_directional_light(light);
                 });
             reg.each<nexus::PointLightComponent, nexus::Transform3DComponent>(
@@ -385,7 +419,8 @@ int main() {
                     auto it = mesh_table.find(mr.mesh_id);
                     if (it == mesh_table.end() || it->second == nullptr) return;
                     renderer_3d.draw_mesh(*it->second, tc.world_matrix,
-                                            mr.material_id, mr.tint);
+                                            mr.material_id, mr.receive_shadows,
+                                            mr.tint);
                 });
 
             renderer_3d.end();

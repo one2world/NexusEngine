@@ -56,7 +56,9 @@ public:
     /// v1: original component schema.
     /// v2: CameraComponent gains orientation (qw,qx,qy,qz);
     ///     DirectionalLightComponent gains leading direction vec3.
-    static constexpr u32 FORMAT_VERSION = 2;
+    /// v3: DirectionalLightComponent + PointLightComponent gain
+    ///     trailing cast_shadows byte (ShadowSystem requirement).
+    static constexpr u32 FORMAT_VERSION = 3;
 
     /// Magic bytes.
     static constexpr u32 MAGIC = 0x0053584E; // "NXS\0" little-endian

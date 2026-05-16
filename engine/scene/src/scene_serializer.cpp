@@ -159,18 +159,20 @@ static json serialize_entity(const Registry& reg, Entity e) {
     if (reg.has_component<DirectionalLightComponent>(e)) {
         auto& l = reg.get_component<DirectionalLightComponent>(e);
         entity_json["directional_light"] = {
-            {"direction", vec3_to_json(l.direction)},
-            {"color",     vec3_to_json(l.color)},
-            {"intensity", l.intensity}
+            {"direction",    vec3_to_json(l.direction)},
+            {"color",        vec3_to_json(l.color)},
+            {"intensity",    l.intensity},
+            {"cast_shadows", l.cast_shadows}
         };
     }
 
     if (reg.has_component<PointLightComponent>(e)) {
         auto& l = reg.get_component<PointLightComponent>(e);
         entity_json["point_light"] = {
-            {"color", vec3_to_json(l.color)},
-            {"intensity", l.intensity},
-            {"radius", l.radius}
+            {"color",        vec3_to_json(l.color)},
+            {"intensity",    l.intensity},
+            {"radius",       l.radius},
+            {"cast_shadows", l.cast_shadows}
         };
     }
 
@@ -428,6 +430,11 @@ static Entity deserialize_entity(Registry& reg, const json& j,
         if (l.contains("direction")) {
             comp.direction = json_to_vec3(l["direction"]);
         }
+        // Optional: pre-v3 streams omit cast_shadows; struct default
+        // (true) keeps the sun lit + shadow-casting on legacy load.
+        if (l.contains("cast_shadows")) {
+            comp.cast_shadows = l["cast_shadows"].get<bool>();
+        }
         reg.add_component<DirectionalLightComponent>(e, comp);
     }
 
@@ -437,6 +444,12 @@ static Entity deserialize_entity(Registry& reg, const json& j,
         comp.color = json_to_vec3(l["color"]);
         comp.intensity = l["intensity"].get<float>();
         comp.radius = l["radius"].get<float>();
+        // Optional cast_shadows; legacy streams keep struct default
+        // (false) so old scenes don't suddenly light up cubemap GPU
+        // work for accent point lights they never asked to shadow.
+        if (l.contains("cast_shadows")) {
+            comp.cast_shadows = l["cast_shadows"].get<bool>();
+        }
         reg.add_component<PointLightComponent>(e, comp);
     }
 
@@ -580,7 +593,9 @@ static Entity deserialize_entity(Registry& reg, const json& j,
 // v3: CameraComponent.orientation + DirectionalLightComponent.direction
 //     now serialized.  Loader still accepts v1/v2 files (missing fields
 //     fall back to component defaults).
-static constexpr int SCENE_FORMAT_VERSION = 3;
+// v4: DirectionalLight + PointLight gain `cast_shadows`.  Older files
+//     keep the struct defaults (sun shadows on, points off).
+static constexpr int SCENE_FORMAT_VERSION = 4;
 
 std::string SceneSerializer::to_json() const {
     json root;

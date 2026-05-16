@@ -3,8 +3,10 @@
 // ============================================================================
 
 #include <nexus/renderer/forward_renderer_3d.h>
+#include <nexus/renderer/shadow_map.h>
 #include <nexus/core/log.h>
 #include <cmath>
+#include <string>
 
 namespace nexus {
 
@@ -16,28 +18,36 @@ layout (location = 0) in vec3 a_Position;
 layout (location = 1) in vec3 a_Normal;
 layout (location = 2) in vec2 a_TexCoord;
 
-out vec3 v_FragPos;
-out vec3 v_Normal;
-out vec2 v_TexCoord;
+out vec3  v_FragPos;
+out vec3  v_Normal;
+out vec2  v_TexCoord;
+// View-space linear depth (positive = away from camera).  Used by the
+// fragment shader to pick the correct CSM cascade — selection is
+// driven by camera depth, not light-space depth, so the cascades
+// switch independent of the directional light direction.
+out float v_ViewDepth;
 
 uniform mat4 u_ViewProjection;
+uniform mat4 u_View;
 uniform mat4 u_Model;
 uniform mat4 u_NormalMatrix;
 
 void main() {
     vec4 worldPos = u_Model * vec4(a_Position, 1.0);
-    v_FragPos = worldPos.xyz;
-    v_Normal = mat3(u_NormalMatrix) * a_Normal;
-    v_TexCoord = a_TexCoord;
-    gl_Position = u_ViewProjection * worldPos;
+    v_FragPos    = worldPos.xyz;
+    v_Normal     = mat3(u_NormalMatrix) * a_Normal;
+    v_TexCoord   = a_TexCoord;
+    v_ViewDepth  = -(u_View * worldPos).z;   // negate: GL view space is -z forward
+    gl_Position  = u_ViewProjection * worldPos;
 }
 )";
 
-static const char* FORWARD_FRAGMENT_SHADER = R"(
+static const char* FORWARD_FRAGMENT_PROLOG = R"(
 #version 330 core
-in vec3 v_FragPos;
-in vec3 v_Normal;
-in vec2 v_TexCoord;
+in vec3  v_FragPos;
+in vec3  v_Normal;
+in vec2  v_TexCoord;
+in float v_ViewDepth;
 
 out vec4 FragColor;
 
@@ -46,9 +56,44 @@ uniform sampler2D u_Texture;
 uniform vec3 u_CameraPos;
 
 // Directional light
-uniform vec3 u_DirLight_Direction;
-uniform vec3 u_DirLight_Color;
+uniform vec3  u_DirLight_Direction;
+uniform vec3  u_DirLight_Color;
 uniform float u_DirLight_Intensity;
+uniform bool  u_DirLight_CastShadows;        // master toggle for CSM sampling
+
+// ── Cascaded shadow map uniforms ──────────────────────────────────
+//
+// 4 cascades max — matches CascadedShadowMap::MAX_CASCADES.  Each
+// cascade has its own depth texture (separate sampler2D rather than
+// a samplerArray, since the RHI doesn't expose 2D array textures yet)
+// and its own light-space view-projection matrix.  `u_NumCascades`
+// is the number actually populated this frame.
+//
+// `u_SplitDepth[i]` is the *view-space* depth where cascade i ends —
+// the fragment shader picks cascade i if v_ViewDepth < SplitDepth[i].
+//
+// Bias values come from CascadedShadowMap::Config so a host can tune
+// them per-scene without recompiling the shader.
+const int MAX_CASCADES = 4;
+uniform sampler2D u_ShadowMap0;
+uniform sampler2D u_ShadowMap1;
+uniform sampler2D u_ShadowMap2;
+uniform sampler2D u_ShadowMap3;
+uniform mat4      u_LightVP[MAX_CASCADES];
+uniform float     u_SplitDepth[MAX_CASCADES];
+uniform int       u_NumCascades;
+uniform float     u_ShadowBias;
+uniform float     u_NormalBias;
+uniform float     u_ShadowMapTexel;          // 1.0 / shadow resolution
+uniform bool      u_ReceiveShadows;          // per-mesh toggle
+)";
+
+// PCF / Poisson-disk sampling helpers — pasted between PROLOG and BODY
+// at init time.  Defined once in shadow_map.cpp so deferred + future
+// shaders share the implementation without copy-paste.
+// (See shadow_shaders::SHADOW_SAMPLING_GLSL for the source.)
+
+static const char* FORWARD_FRAGMENT_BODY = R"(
 
 // Point lights
 #define MAX_POINT_LIGHTS 8
@@ -121,10 +166,73 @@ vec3 lit_brdf(vec3 normal, vec3 lightDir, vec3 viewDir, vec3 lightColor) {
     return diffuse + specular;
 }
 
+// ── CSM cascade selection + shadow factor ────────────────────────────
+//
+// Cascade is chosen from the fragment's view-space depth.  Depth > the
+// last cascade's far split returns the last cascade so distant
+// fragments still get *some* shadow rather than a hard cutoff.
+int select_cascade(float view_depth) {
+    for (int i = 0; i < u_NumCascades - 1; ++i) {
+        if (view_depth < u_SplitDepth[i]) return i;
+    }
+    return u_NumCascades - 1;
+}
+
+float sample_cascade_pcf(int cascade, vec3 projCoords, float bias) {
+    // GLSL 330 forbids dynamic indexing of a sampler array, so dispatch
+    // by cascade.  4 cascades = 4 branches; the GPU coalesces predictably.
+    if (cascade == 0) return sampleShadowPCF(u_ShadowMap0, projCoords, bias, u_ShadowMapTexel);
+    if (cascade == 1) return sampleShadowPCF(u_ShadowMap1, projCoords, bias, u_ShadowMapTexel);
+    if (cascade == 2) return sampleShadowPCF(u_ShadowMap2, projCoords, bias, u_ShadowMapTexel);
+    return                    sampleShadowPCF(u_ShadowMap3, projCoords, bias, u_ShadowMapTexel);
+}
+
+// Compute shadow attenuation for the directional light.  Returns 1.0
+// (fully lit) when:
+//   - the fragment opts out via u_ReceiveShadows = false
+//   - the directional light has cast_shadows = false
+//   - the fragment's view depth is beyond the last cascade's coverage
+//   - the fragment's projected light-space position is outside the map
+// Otherwise returns the PCF factor in [0, 1] where 0 = fully shadowed.
+float directional_shadow_factor(vec3 normal, vec3 lightDir) {
+    if (!u_ReceiveShadows || !u_DirLight_CastShadows) return 1.0;
+    if (u_NumCascades <= 0) return 1.0;
+
+    int cascade = select_cascade(v_ViewDepth);
+
+    // Normal-offset bias: push the receiver fragment slightly along its
+    // normal before sampling, so geometry surfaces don't self-shadow at
+    // grazing angles.  Scaled by the cascade's texel size in world
+    // units (approximated by light-space frustum size / resolution).
+    vec3 biased_world = v_FragPos + normal * u_NormalBias;
+
+    vec4 light_clip = u_LightVP[cascade] * vec4(biased_world, 1.0);
+    vec3 proj = light_clip.xyz / light_clip.w;
+    proj = proj * 0.5 + 0.5;  // [-1, 1] → [0, 1]
+
+    // Outside the cascade's coverage → fall through to no-shadow.  The
+    // last cascade should always cover; intermediate ones may not when
+    // the camera frustum nips the edge of the cascade's bounds.
+    if (proj.x < 0.0 || proj.x > 1.0 ||
+        proj.y < 0.0 || proj.y > 1.0 ||
+        proj.z < 0.0 || proj.z > 1.0) {
+        return 1.0;
+    }
+
+    // Slope-scale bias: more bias on grazing surfaces where Lambertian
+    // depth varies fastest.  Clamped to a floor so flat surfaces still
+    // receive a tiny constant bias for floating-point safety.
+    float ndotl = max(dot(normal, lightDir), 0.0);
+    float bias  = max(u_ShadowBias * (1.0 - ndotl), u_ShadowBias * 0.1);
+
+    return sample_cascade_pcf(cascade, proj, bias);
+}
+
 vec3 calcDirectionalLight(vec3 normal, vec3 viewDir) {
     vec3 lightDir = normalize(-u_DirLight_Direction);
-    return lit_brdf(normal, lightDir, viewDir, u_DirLight_Color)
-         * u_DirLight_Intensity;
+    vec3 lit      = lit_brdf(normal, lightDir, viewDir, u_DirLight_Color);
+    float shadow  = directional_shadow_factor(normal, lightDir);
+    return lit * shadow * u_DirLight_Intensity;
 }
 
 vec3 calcPointLight(int i, vec3 normal, vec3 fragPos, vec3 viewDir) {
@@ -192,7 +300,17 @@ void main() {
 void ForwardRenderer3D::init(rhi::RHI* rhi) {
     rhi_ = rhi;
 
-    shader_ = rhi_->create_shader(FORWARD_VERTEX_SHADER, FORWARD_FRAGMENT_SHADER);
+    // Assemble the fragment shader: prolog (declarations + uniforms),
+    // shadow sampling helpers (shared with deferred / point-light
+    // shadow paths via shadow_shaders::SHADOW_SAMPLING_GLSL), then the
+    // body (light models + main()).  Concatenation lets us keep the
+    // shadow helpers in a single source of truth without copy-paste.
+    const std::string fragment_source =
+        std::string(FORWARD_FRAGMENT_PROLOG) +
+        shadow_shaders::SHADOW_SAMPLING_GLSL +
+        FORWARD_FRAGMENT_BODY;
+
+    shader_ = rhi_->create_shader(FORWARD_VERTEX_SHADER, fragment_source.c_str());
     if (shader_ == rhi::INVALID_HANDLE) {
         NX_ERROR("ForwardRenderer3D: Failed to compile shaders");
         return;
@@ -209,6 +327,22 @@ void ForwardRenderer3D::init(rhi::RHI* rhi) {
     white_desc.generate_mipmaps = false;
     white_desc.data = &white_pixel;
     white_texture_ = rhi_->create_texture(white_desc);
+
+    // 1×1 depth=1.0 texture used to fill cascade sampler slots that
+    // aren't backed by a real shadow map this frame.  Sampling it
+    // returns 1.0 (max depth), which the PCF code interprets as
+    // "fragment is closer than any blocker" → fully lit.  This keeps
+    // the shader path uniform whether shadows are on or off.
+    f32 white_depth_pixel = 1.0f;
+    rhi::TextureDesc dd;
+    dd.width = 1;
+    dd.height = 1;
+    dd.format = rhi::TextureFormat::Depth32F;
+    dd.min_filter = rhi::TextureFilter::Nearest;
+    dd.mag_filter = rhi::TextureFilter::Nearest;
+    dd.generate_mipmaps = false;
+    dd.data = &white_depth_pixel;
+    white_depth_texture_ = rhi_->create_texture(dd);
 
     NX_INFO("ForwardRenderer3D initialized");
 }
@@ -237,10 +371,75 @@ void ForwardRenderer3D::shutdown() {
     if (!rhi_) return;
     if (shader_ != rhi::INVALID_HANDLE) rhi_->destroy_shader(shader_);
     if (white_texture_ != rhi::INVALID_HANDLE) rhi_->destroy_texture(white_texture_);
-    shader_ = rhi::INVALID_HANDLE;
-    white_texture_ = rhi::INVALID_HANDLE;
+    if (white_depth_texture_ != rhi::INVALID_HANDLE) {
+        rhi_->destroy_texture(white_depth_texture_);
+    }
+    shader_              = rhi::INVALID_HANDLE;
+    white_texture_       = rhi::INVALID_HANDLE;
+    white_depth_texture_ = rhi::INVALID_HANDLE;
     rhi_ = nullptr;
     in_frame_ = false;
+}
+
+// Bind shadow textures to fixed sampler slots and push cascade matrices /
+// split depths / bias / texel size to the main shader.  Slots 1..4 are
+// reserved for cascades; slot 0 is the diffuse texture (set per-draw).
+// When shadow_map_ is null or has fewer cascades than MAX_CASCADES we
+// fill the unused slots with white_depth_texture_ so the GPU never
+// reads from an unbound sampler — that's UB and hides bugs behind
+// silent driver behaviour.
+void ForwardRenderer3D::push_shadow_uniforms() {
+    if (!rhi_ || shader_ == rhi::INVALID_HANDLE) return;
+
+    constexpr u32 kMaxCascades = CascadedShadowMap::MAX_CASCADES;
+    const char* sampler_names[kMaxCascades] = {
+        "u_ShadowMap0", "u_ShadowMap1", "u_ShadowMap2", "u_ShadowMap3"
+    };
+
+    if (shadow_map_) {
+        const auto& cfg     = shadow_map_->config();
+        const u32   ncasc   = shadow_map_->num_cascades();
+        const auto& cascades = shadow_map_->cascades();
+
+        // Per-cascade samplers + matrices + split depths.
+        for (u32 i = 0; i < kMaxCascades; ++i) {
+            rhi::TextureHandle tex = (i < ncasc)
+                ? shadow_map_->depth_texture(i)
+                : white_depth_texture_;
+            const i32 unit = static_cast<i32>(i + 1);  // slot 0 = diffuse
+            rhi_->bind_texture(tex, static_cast<u32>(unit));
+            rhi_->set_uniform_int(shader_, sampler_names[i], unit);
+
+            const std::string vp_name    =
+                "u_LightVP["    + std::to_string(i) + "]";
+            const std::string split_name =
+                "u_SplitDepth[" + std::to_string(i) + "]";
+            if (i < ncasc) {
+                rhi_->set_uniform_mat4 (shader_, vp_name,    cascades[i].light_view_projection);
+                rhi_->set_uniform_float(shader_, split_name, cascades[i].split_depth);
+            } else {
+                rhi_->set_uniform_mat4 (shader_, vp_name,    Mat4(1.0f));
+                rhi_->set_uniform_float(shader_, split_name, std::numeric_limits<float>::max());
+            }
+        }
+        rhi_->set_uniform_int  (shader_, "u_NumCascades",    static_cast<i32>(ncasc));
+        rhi_->set_uniform_float(shader_, "u_ShadowBias",     cfg.bias);
+        rhi_->set_uniform_float(shader_, "u_NormalBias",     cfg.normal_bias);
+        rhi_->set_uniform_float(shader_, "u_ShadowMapTexel", 1.0f / static_cast<float>(cfg.resolution));
+    } else {
+        // No shadow map: bind the white-depth fallback to every cascade
+        // slot and clamp NumCascades=0.  The shader's
+        // directional_shadow_factor returns 1.0 for NumCascades<=0.
+        for (u32 i = 0; i < kMaxCascades; ++i) {
+            const i32 unit = static_cast<i32>(i + 1);
+            rhi_->bind_texture(white_depth_texture_, static_cast<u32>(unit));
+            rhi_->set_uniform_int(shader_, sampler_names[i], unit);
+        }
+        rhi_->set_uniform_int  (shader_, "u_NumCascades",    0);
+        rhi_->set_uniform_float(shader_, "u_ShadowBias",     0.0f);
+        rhi_->set_uniform_float(shader_, "u_NormalBias",     0.0f);
+        rhi_->set_uniform_float(shader_, "u_ShadowMapTexel", 1.0f);
+    }
 }
 
 // ── Frustum culling ─────────────────────────────────────────────────────────
@@ -283,6 +482,7 @@ void ForwardRenderer3D::begin_frame(const Camera3D& camera) {
 
     current_camera_ = camera;
     view_projection_ = camera.get_view_projection();
+    view_matrix_     = camera.get_view_matrix();
     camera_position_ = camera.position;
     point_lights_.clear();
     spot_lights_.clear();
@@ -293,7 +493,8 @@ void ForwardRenderer3D::begin_frame(const Camera3D& camera) {
     rhi_->set_depth_test(true);
     rhi_->bind_shader(shader_);
     rhi_->set_uniform_mat4(shader_, "u_ViewProjection", view_projection_);
-    rhi_->set_uniform_vec3(shader_, "u_CameraPos", camera_position_);
+    rhi_->set_uniform_mat4(shader_, "u_View",           view_matrix_);
+    rhi_->set_uniform_vec3(shader_, "u_CameraPos",      camera_position_);
 
     // Hemispheric ambient defaults — picked to look like an overcast
     // sky without overwhelming the directional light.  Hosts that want
@@ -301,6 +502,13 @@ void ForwardRenderer3D::begin_frame(const Camera3D& camera) {
     // these via set_ambient_sky / set_ambient_ground.
     rhi_->set_uniform_vec3(shader_, "u_AmbientSky",    ambient_sky_);
     rhi_->set_uniform_vec3(shader_, "u_AmbientGround", ambient_ground_);
+
+    // Default shadow uniforms — the directional light's cast_shadows
+    // flag is pushed by set_directional_light().  When no shadow_map_
+    // is initialised these stay at "off" so set_directional_light
+    // can short-circuit the sampling path entirely.
+    rhi_->set_uniform_int(shader_, "u_NumCascades", 0);
+    push_shadow_uniforms();  // binds whatever the renderer currently has
 }
 
 void ForwardRenderer3D::end_frame() {
@@ -309,9 +517,14 @@ void ForwardRenderer3D::end_frame() {
 
 void ForwardRenderer3D::set_directional_light(const DirectionalLight& light) {
     dir_light_ = light;
-    rhi_->set_uniform_vec3(shader_, "u_DirLight_Direction", light.direction);
-    rhi_->set_uniform_vec3(shader_, "u_DirLight_Color", light.color);
+    rhi_->set_uniform_vec3 (shader_, "u_DirLight_Direction", light.direction);
+    rhi_->set_uniform_vec3 (shader_, "u_DirLight_Color",     light.color);
     rhi_->set_uniform_float(shader_, "u_DirLight_Intensity", light.intensity);
+    // Master shadow toggle for the directional light.  Even with shadows
+    // enabled at the renderer level, a host can flip this off per-light
+    // to sample no shadow map and skip the shadow factor multiply.
+    rhi_->set_uniform_int  (shader_, "u_DirLight_CastShadows",
+                              light.cast_shadows ? 1 : 0);
 }
 
 void ForwardRenderer3D::add_point_light(const PointLight& light) {
@@ -447,8 +660,8 @@ u32 ForwardRenderer3D::material_count() const {
 }
 
 void ForwardRenderer3D::draw_mesh(const Mesh& mesh, const Mat4& transform,
-                                  u32 material_id, Vec4 tint,
-                                  rhi::TextureHandle texture) {
+                                  u32 material_id, bool receive_shadows,
+                                  Vec4 tint, rhi::TextureHandle texture) {
     if (!in_frame_) return;
 
     // Frustum culling — derive the world-space bounding sphere from the
@@ -492,6 +705,13 @@ void ForwardRenderer3D::draw_mesh(const Mesh& mesh, const Mat4& transform,
     // diffuse wrap / ambient response — none of those values come from
     // the renderer or the shader source any more.
     push_material_uniforms(rhi_, shader_, get_material(material_id));
+
+    // Per-mesh shadow-receive toggle propagated from the
+    // MeshRendererComponent.  Off ⇒ fragment shader skips the cascade
+    // sample and treats the surface as fully lit, useful for fully
+    // emissive geometry (sky domes, particle billboards) that
+    // shouldn't darken under another object's shadow.
+    rhi_->set_uniform_int(shader_, "u_ReceiveShadows", receive_shadows ? 1 : 0);
 
     // Per-instance tint multiplied on top of the material's albedo
     // (legacy MeshRendererComponent.tint usage, kept for cheap

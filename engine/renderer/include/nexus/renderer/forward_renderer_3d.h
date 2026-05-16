@@ -58,6 +58,10 @@ struct DirectionalLight {
     Vec3  direction{-0.2f, -1.0f, -0.3f};
     Vec3  color{1.0f, 1.0f, 1.0f};
     float intensity{1.0f};
+    // Mirrors DirectionalLightComponent.cast_shadows.  When true the
+    // ShadowSystem includes this light in its CSM depth pass and the
+    // forward shader multiplies its contribution by the shadow factor.
+    bool  cast_shadows{true};
 };
 
 struct PointLight {
@@ -151,22 +155,22 @@ public:
 
     /// Material-aware draw entry point.  `material_id` selects an entry
     /// uploaded via upload_material; 0 falls back to default_material_.
-    /// `tint` is multiplied per-fragment over the material's albedo
-    /// (legacy MeshRendererComponent.tint behaviour, kept for cheap
-    /// instance variation).  Material's albedo provides the base
-    /// surface colour, lighting parameters (specular weight, shininess,
-    /// wrap, ambient response, emissive) come from the material.
+    /// `receive_shadows` is the per-mesh toggle that propagates from
+    /// MeshRendererComponent — when false the fragment shader skips
+    /// the cascade lookup and treats the surface as fully lit.
+    /// `tint` is multiplied per-fragment over the material's albedo.
     void draw_mesh(const Mesh& mesh, const Mat4& transform,
-                   u32 material_id, Vec4 tint = Vec4{1.0f},
+                   u32 material_id, bool receive_shadows = true,
+                   Vec4 tint = Vec4{1.0f},
                    rhi::TextureHandle texture = rhi::INVALID_HANDLE);
 
-    /// Legacy overload — material_id defaults to 0 (default material).
-    /// Kept so existing call sites compile while we migrate them to
-    /// pass MeshRendererComponent.material_id.
+    /// Legacy overload — material_id defaults to 0 (default material),
+    /// receive_shadows defaults to true.  Kept so existing call sites
+    /// compile while we migrate them to pass material_id explicitly.
     void draw_mesh(const Mesh& mesh, const Mat4& transform,
                    Vec4 tint = Vec4{1.0f},
                    rhi::TextureHandle texture = rhi::INVALID_HANDLE) {
-        draw_mesh(mesh, transform, 0u, tint, texture);
+        draw_mesh(mesh, transform, 0u, /*receive_shadows*/ true, tint, texture);
     }
 
     /// Simple frustum culling check against a bounding sphere.
@@ -183,15 +187,36 @@ public:
     CascadedShadowMap* shadow_map() { return shadow_map_.get(); }
     const CascadedShadowMap* shadow_map() const { return shadow_map_.get(); }
 
+    /// Camera snapshot captured at begin_frame.  ShadowSystem reads
+    /// this to derive cascade splits without making hosts re-plumb
+    /// the camera through every call site.
+    const Camera3D& current_camera() const { return current_camera_; }
+
+    /// Re-bind shadow textures + push cascade matrices / split depths
+    /// to the main shader.  Called by ShadowSystem after the depth
+    /// pass so the subsequent colour-pass draw_mesh calls sample
+    /// from the freshly-rendered shadow maps.
+    void bind_shadow_data() { push_shadow_uniforms(); }
+
     /// Render the shadow depth pass. Call after begin_frame(), before draw_mesh() calls.
     /// Provide a callback that submits geometry for each cascade.
     using ShadowGeometryCallback = std::function<void(u32 cascade)>;
     void render_shadow_pass(Vec3 light_direction, ShadowGeometryCallback submit_geometry);
 
 private:
+    /// Bind shadow textures + push cascade matrices / split depths /
+    /// bias / texel size into the main shader.  Called once per frame
+    /// from begin_frame() so the very first draw_mesh sees consistent
+    /// values; called again whenever shadow_map_ is rebuilt.
+    void push_shadow_uniforms();
+
     rhi::RHI*         rhi_{nullptr};
     rhi::ShaderHandle shader_{rhi::INVALID_HANDLE};
     rhi::TextureHandle white_texture_{rhi::INVALID_HANDLE};
+    // 1×1 fully-white depth texture used to bind to unused cascade
+    // sampler slots so the GPU never reads from an unbound sampler
+    // (which is undefined behaviour and produces driver warnings).
+    rhi::TextureHandle white_depth_texture_{rhi::INVALID_HANDLE};
 
     DirectionalLight dir_light_;
     std::vector<PointLight> point_lights_;
@@ -211,6 +236,7 @@ private:
     SurfaceMaterial                          default_material_{};
 
     Mat4 view_projection_{1.0f};
+    Mat4 view_matrix_    {1.0f};   // pushed as u_View for cascade selection
     Vec3 camera_position_{0.0f};
     bool in_frame_{false};
 

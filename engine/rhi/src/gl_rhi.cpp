@@ -389,15 +389,60 @@ FramebufferHandle OpenGLRHI::create_framebuffer(const FramebufferDesc& desc) {
         fb.color_textures.push_back(color_tex);
     }
 
-    // Depth attachment
+    // Depth attachment.  Two paths:
+    //   1. depth_sampleable=false → renderbuffer (write-only, fast).
+    //      Format GL_DEPTH24_STENCIL8 — covers the common "FBO with
+    //      depth test but no readback" case used by the editor panels.
+    //   2. depth_sampleable=true  → texture (sampleable).  Format
+    //      GL_DEPTH_COMPONENT32F to match the shadow map pipeline's
+    //      expectations.  Filter is NEAREST (PCF in the sampling
+    //      helpers does its own multi-tap so hardware filtering would
+    //      compound the blur) and wrap is CLAMP_TO_EDGE (fragments
+    //      outside cascade coverage already early-out in shader).
+    //      We also register the texture in textures_ so the rest of
+    //      the engine can address it through a TextureHandle.
     if (desc.has_depth) {
-        gl::GenRenderbuffers(1, &fb.depth_renderbuffer);
-        gl::BindRenderbuffer(GL_RENDERBUFFER, fb.depth_renderbuffer);
-        gl::RenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8,
-                                static_cast<GLsizei>(desc.width),
-                                static_cast<GLsizei>(desc.height));
-        gl::FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
-                                    GL_RENDERBUFFER, fb.depth_renderbuffer);
+        if (desc.depth_sampleable) {
+            gl::GenTextures(1, &fb.depth_texture);
+            gl::BindTexture(GL_TEXTURE_2D, fb.depth_texture);
+            gl::TexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F,
+                           static_cast<GLsizei>(desc.width),
+                           static_cast<GLsizei>(desc.height),
+                           0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+            gl::TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            gl::TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            gl::TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            gl::TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            gl::FramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                      GL_TEXTURE_2D, fb.depth_texture, 0);
+            // Register the texture under a TextureHandle so callers can
+            // bind it like any other texture (e.g. the forward shader
+            // binding shadow maps to its sampler2D slots).
+            GLTexture tex_entry;
+            tex_entry.id     = fb.depth_texture;
+            tex_entry.width  = desc.width;
+            tex_entry.height = desc.height;
+            fb.depth_texture_handle =
+                static_cast<TextureHandle>(textures_.size());
+            textures_.push_back(tex_entry);
+        } else {
+            gl::GenRenderbuffers(1, &fb.depth_renderbuffer);
+            gl::BindRenderbuffer(GL_RENDERBUFFER, fb.depth_renderbuffer);
+            gl::RenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8,
+                                    static_cast<GLsizei>(desc.width),
+                                    static_cast<GLsizei>(desc.height));
+            gl::FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                                        GL_RENDERBUFFER, fb.depth_renderbuffer);
+        }
+    }
+
+    // For depth-only framebuffers (no colour attachments) GL requires
+    // explicitly disabling draw + read on the colour buffers; otherwise
+    // CheckFramebufferStatus returns INCOMPLETE_DRAW_BUFFER.  Shadow
+    // maps hit this path.
+    if (desc.color_attachments.empty()) {
+        gl::DrawBuffer(GL_NONE);
+        gl::ReadBuffer(GL_NONE);
     }
 
     if (gl::CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
@@ -417,6 +462,13 @@ u64 OpenGLRHI::framebuffer_color_native(FramebufferHandle handle,
     const auto& fb = framebuffers_[handle];
     if (attachment_index >= fb.color_textures.size()) return 0;
     return static_cast<u64>(fb.color_textures[attachment_index]);
+}
+
+TextureHandle OpenGLRHI::framebuffer_depth_texture(FramebufferHandle handle) {
+    if (handle == INVALID_HANDLE || handle >= framebuffers_.size()) {
+        return INVALID_HANDLE;
+    }
+    return framebuffers_[handle].depth_texture_handle;
 }
 
 void OpenGLRHI::destroy_framebuffer(FramebufferHandle handle) {

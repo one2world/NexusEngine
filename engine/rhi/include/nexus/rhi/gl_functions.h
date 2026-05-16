@@ -152,6 +152,9 @@ using GLvoid     = void;
 #define GL_GEQUAL                0x0206
 #define GL_ALWAYS                0x0207
 
+// Draw / read buffer sentinel for depth-only FBOs.
+#define GL_NONE                  0x0000
+
 // Cull face
 #define GL_FRONT                 0x0404
 #define GL_BACK                  0x0405
@@ -273,6 +276,8 @@ extern void (*BindFramebuffer)(GLenum target, GLuint framebuffer);
 extern void (*FramebufferTexture2D)(GLenum target, GLenum attachment, GLenum textarget,
                                     GLuint texture, GLint level);
 extern GLenum (*CheckFramebufferStatus)(GLenum target);
+extern void (*DrawBuffer)(GLenum buf);
+extern void (*ReadBuffer)(GLenum src);
 
 // Renderbuffer functions
 extern void (*GenRenderbuffers)(GLsizei n, GLuint* renderbuffers);

@@ -111,6 +111,13 @@ struct FramebufferDesc {
     u32 height = 0;
     std::vector<TextureFormat> color_attachments;
     bool has_depth = true;
+    // When false, depth is stored in a renderbuffer (write-only, fast,
+    // cannot be sampled by shaders).  When true, depth is stored in a
+    // texture that can be bound as a sampler2D in a later pass — required
+    // for shadow mapping, deferred lighting depth, and any pass that
+    // wants to read back depth.  Format is Depth32F for the texture
+    // path (matches shadow_map.cpp's expectations).
+    bool depth_sampleable = false;
 };
 
 } // namespace nexus::rhi

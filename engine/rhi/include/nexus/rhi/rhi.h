@@ -53,6 +53,16 @@ public:
         return 0;
     }
 
+    /// Return a TextureHandle that aliases the framebuffer's depth
+    /// attachment, or INVALID_HANDLE when the framebuffer was created
+    /// without `depth_sampleable = true`.  Shadow maps + any pass that
+    /// wants to sample the depth buffer in a later draw use this to
+    /// bind the depth as a regular sampler2D.
+    virtual TextureHandle framebuffer_depth_texture(FramebufferHandle handle) {
+        (void)handle;
+        return INVALID_HANDLE;
+    }
+
     // ── Render commands ───────────────────────────────────────────────
     virtual void begin_frame() = 0;
     virtual void end_frame()   = 0;

@@ -190,21 +190,22 @@ void CascadedShadowMap::init(rhi::RHI* rhi, const Config& config) {
     splits_.resize(config_.num_cascades + 1);
 
     for (u32 i = 0; i < config_.num_cascades; ++i) {
-        rhi::TextureDesc tex_desc;
-        tex_desc.width = config_.resolution;
-        tex_desc.height = config_.resolution;
-        tex_desc.format = rhi::TextureFormat::Depth32F;
-        tex_desc.min_filter = rhi::TextureFilter::Nearest;
-        tex_desc.mag_filter = rhi::TextureFilter::Nearest;
-        tex_desc.wrap_s = rhi::TextureWrap::ClampToEdge;
-        tex_desc.wrap_t = rhi::TextureWrap::ClampToEdge;
-        depth_textures_[i] = rhi_->create_texture(tex_desc);
-
+        // Single source of truth: ask the RHI for a depth-sampleable
+        // framebuffer.  The RHI creates the FBO + depth texture in one
+        // step and attaches them; we just read back the texture handle
+        // to bind it in the main pass.  The old code created a
+        // standalone depth texture AND a depth-renderbuffer FBO that
+        // never connected — depth was written to the renderbuffer and
+        // sampled from the unrelated texture (always zero), which is
+        // why no shadows ever appeared.
         rhi::FramebufferDesc fb_desc;
-        fb_desc.width = config_.resolution;
-        fb_desc.height = config_.resolution;
-        fb_desc.has_depth = true;
-        framebuffers_[i] = rhi_->create_framebuffer(fb_desc);
+        fb_desc.width             = config_.resolution;
+        fb_desc.height            = config_.resolution;
+        fb_desc.has_depth         = true;
+        fb_desc.depth_sampleable  = true;   // texture, not renderbuffer
+        // No colour attachments — shadow pass writes only depth.
+        framebuffers_[i]    = rhi_->create_framebuffer(fb_desc);
+        depth_textures_[i]  = rhi_->framebuffer_depth_texture(framebuffers_[i]);
     }
 
     // Create depth-only shader and pipeline
@@ -232,8 +233,12 @@ void CascadedShadowMap::init(rhi::RHI* rhi, const Config& config) {
 void CascadedShadowMap::shutdown() {
     if (!rhi_) return;
     for (u32 i = 0; i < config_.num_cascades; ++i) {
+        // The depth texture is owned by the framebuffer (created and
+        // destroyed together by the RHI when depth_sampleable was set).
+        // We hold a TextureHandle alias only — do NOT destroy_texture
+        // here or we'd double-free.
         rhi_->destroy_framebuffer(framebuffers_[i]);
-        rhi_->destroy_texture(depth_textures_[i]);
+        depth_textures_[i] = rhi::INVALID_HANDLE;
     }
     if (depth_pipeline_ != rhi::INVALID_HANDLE) rhi_->destroy_pipeline(depth_pipeline_);
     if (depth_shader_ != rhi::INVALID_HANDLE) rhi_->destroy_shader(depth_shader_);

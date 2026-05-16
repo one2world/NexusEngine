@@ -33,6 +33,7 @@ public:
     void              destroy_framebuffer(FramebufferHandle handle) override;
     u64               framebuffer_color_native(FramebufferHandle handle,
                                                u32 attachment_index) override;
+    TextureHandle     framebuffer_depth_texture(FramebufferHandle handle) override;
 
     // Render commands
     void begin_frame() override;
@@ -125,7 +126,17 @@ private:
     struct GLFramebuffer {
         GLuint fbo{0};
         std::vector<GLuint> color_textures;
+        // Exactly one of these is non-zero when the framebuffer has a
+        // depth attachment.  Renderbuffer is the fast path (write-only,
+        // can't be sampled); texture is required when a later pass
+        // needs to sample the depth (shadows, deferred lighting).
         GLuint depth_renderbuffer{0};
+        GLuint depth_texture     {0};
+        // Handle into the OpenGL texture pool so framebuffer_depth_texture()
+        // can return a regular TextureHandle that the rest of the engine
+        // (bind_texture, set_uniform_int sampler binding) treats like any
+        // other texture.  INVALID_HANDLE when depth isn't sampleable.
+        TextureHandle depth_texture_handle{INVALID_HANDLE};
         u32 width{0};
         u32 height{0};
     };

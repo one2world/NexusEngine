@@ -69,6 +69,10 @@ void   (*DeleteFramebuffers)(GLsizei, const GLuint*)                            
 void   (*BindFramebuffer)(GLenum, GLuint)                                              = nullptr;
 void   (*FramebufferTexture2D)(GLenum, GLenum, GLenum, GLuint, GLint)                 = nullptr;
 GLenum (*CheckFramebufferStatus)(GLenum)                                               = nullptr;
+// Depth-only framebuffer support — required by RGB drivers that fail
+// completeness when colour buffers aren't explicitly disabled.
+void   (*DrawBuffer)(GLenum)                                                           = nullptr;
+void   (*ReadBuffer)(GLenum)                                                           = nullptr;
 
 // Renderbuffers
 void (*GenRenderbuffers)(GLsizei, GLuint*)                                             = nullptr;
@@ -203,6 +207,8 @@ bool load(GLLoadProc proc) {
     LOAD(BindFramebuffer,        glBindFramebuffer);
     LOAD(FramebufferTexture2D,   glFramebufferTexture2D);
     LOAD(CheckFramebufferStatus, glCheckFramebufferStatus);
+    LOAD(DrawBuffer,             glDrawBuffer);
+    LOAD(ReadBuffer,             glReadBuffer);
 
     // Renderbuffers
     LOAD(GenRenderbuffers,        glGenRenderbuffers);

@@ -376,16 +376,63 @@ FramebufferHandle WebGLRHI::create_framebuffer(const FramebufferDesc& desc) {
     }
 
     if (desc.has_depth) {
-        GLuint depth_rb;
-        glGenRenderbuffers(1, &depth_rb);
-        glBindRenderbuffer(GL_RENDERBUFFER, depth_rb);
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8,
-                              desc.width, desc.height);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
-                                  GL_RENDERBUFFER, depth_rb);
+        if (desc.depth_sampleable) {
+            // WebGL2 supports DEPTH_COMPONENT32F as a renderable
+            // texture format.  Mirrors the OpenGL backend's path.
+            GLuint depth_tex;
+            glGenTextures(1, &depth_tex);
+            glBindTexture(GL_TEXTURE_2D, depth_tex);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F,
+                         desc.width, desc.height, 0,
+                         GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                    GL_TEXTURE_2D, depth_tex, 0);
+            fb.depth_texture_gl = depth_tex;
+
+            // Register the texture under a WGLTexture / TextureHandle
+            // so the rest of the engine can bind it like any other
+            // texture (same contract as OpenGL / Metal).
+            WGLTexture tex_entry;
+            tex_entry.alive  = true;
+            tex_entry.width  = desc.width;
+            tex_entry.height = desc.height;
+            tex_entry.format = TextureFormat::Depth32F;
+            tex_entry.gl_id  = depth_tex;
+            fb.depth_texture_handle =
+                static_cast<TextureHandle>(textures_.size());
+            textures_.push_back(std::move(tex_entry));
+        } else {
+            GLuint depth_rb;
+            glGenRenderbuffers(1, &depth_rb);
+            glBindRenderbuffer(GL_RENDERBUFFER, depth_rb);
+            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8,
+                                  desc.width, desc.height);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER,
+                                       GL_DEPTH_STENCIL_ATTACHMENT,
+                                       GL_RENDERBUFFER, depth_rb);
+        }
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+#else
+    // CPU-simulated path: still honour the contract.  A
+    // depth_sampleable framebuffer hands back a TextureHandle that
+    // resolves to a live (gl_id = 0) WGLTexture entry — same as the
+    // simulation backend does for normal textures.
+    if (desc.has_depth && desc.depth_sampleable) {
+        WGLTexture tex_entry;
+        tex_entry.alive  = true;
+        tex_entry.width  = desc.width;
+        tex_entry.height = desc.height;
+        tex_entry.format = TextureFormat::Depth32F;
+        fb.depth_texture_handle =
+            static_cast<TextureHandle>(textures_.size());
+        textures_.push_back(std::move(tex_entry));
+    }
 #endif
 
     auto handle = static_cast<FramebufferHandle>(framebuffers_.size());
@@ -393,13 +440,36 @@ FramebufferHandle WebGLRHI::create_framebuffer(const FramebufferDesc& desc) {
     return handle;
 }
 
+TextureHandle WebGLRHI::framebuffer_depth_texture(FramebufferHandle handle) {
+    if (handle == 0 || handle >= framebuffers_.size() ||
+        !framebuffers_[handle].alive) {
+        return INVALID_HANDLE;
+    }
+    return framebuffers_[handle].depth_texture_handle;
+}
+
 void WebGLRHI::destroy_framebuffer(FramebufferHandle handle) {
     if (handle == 0 || handle >= framebuffers_.size() || !framebuffers_[handle].alive) return;
+    auto& fb = framebuffers_[handle];
 #if WEBGL_REAL
-    if (framebuffers_[handle].fbo) glDeleteFramebuffers(1, &framebuffers_[handle].fbo);
+    if (fb.fbo) glDeleteFramebuffers(1, &fb.fbo);
+    if (fb.depth_texture_gl) {
+        glDeleteTextures(1, &fb.depth_texture_gl);
+    }
 #endif
-    framebuffers_[handle].alive = false;
-    framebuffers_[handle].fbo = 0;
+    // Mirror the texture-alias teardown done by GL / Metal backends:
+    // tear down the WGLTexture entry so live_texture_count stays
+    // accurate and a stale bind_texture(handle) call hits an inert
+    // slot instead of a use-after-free.
+    if (fb.depth_texture_handle != INVALID_HANDLE &&
+        fb.depth_texture_handle < textures_.size()) {
+        textures_[fb.depth_texture_handle].alive = false;
+        textures_[fb.depth_texture_handle].gl_id = 0;
+        fb.depth_texture_handle = INVALID_HANDLE;
+    }
+    fb.alive = false;
+    fb.fbo = 0;
+    fb.depth_texture_gl = 0;
 }
 
 // ── Frame ───────────────────────────────────────────────────────────────────

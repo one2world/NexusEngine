@@ -52,6 +52,7 @@ public:
 
     FramebufferHandle create_framebuffer(const FramebufferDesc& desc) override;
     void              destroy_framebuffer(FramebufferHandle handle) override;
+    TextureHandle     framebuffer_depth_texture(FramebufferHandle handle) override;
 
     // Render commands
     void begin_frame() override;
@@ -96,6 +97,18 @@ public:
     // Draw calls
     void draw(u32 vertex_count, u32 first_vertex) override;
     void draw_indexed(u32 index_count, u32 first_index) override;
+
+    // ── ImGui backend ───────────────────────────────────────────────────────
+    // Under Emscripten this wraps ImGui_ImplOpenGL3 + ImGui_ImplGlfw against
+    // the WebGL2 context.  In the desktop dev-stub build (used purely for
+    // unit tests) imgui_init() is a no-op that returns true and the other
+    // methods are no-ops — the editor never instantiates this backend on
+    // desktop, so no real ImGui frame ever flows through here.
+    [[nodiscard]] bool imgui_init(void* native_window) override;
+    void               imgui_shutdown() override;
+    void               imgui_new_frame() override;
+    void               imgui_render_draw_data() override;
+    [[nodiscard]] bool textures_are_bottom_up() const override { return true; }
 
     // ── WebGL-specific ──────────────────────────────────────────────────────
 
@@ -150,6 +163,11 @@ private:
         u32 width{0};
         u32 height{0};
         bool has_depth{false};
+        // Depth attached as a sampleable texture (WebGL2 has
+        // WEBGL_depth_texture / depth-renderable WEBGL2 contexts).
+        // INVALID_HANDLE when depth_sampleable=false at creation.
+        u32 depth_texture_gl{0};
+        TextureHandle depth_texture_handle{INVALID_HANDLE};
     };
 
     std::vector<WGLBuffer>      buffers_;
@@ -161,6 +179,11 @@ private:
     bool initialized_{false};
     bool in_frame_{false};
     u32  draw_call_count_{0};
+
+    // ImGui binding lifecycle (only meaningful under Emscripten — desktop
+    // dev-stub never installs the bindings).
+    bool imgui_platform_installed_{false};
+    bool imgui_renderer_installed_{false};
 
     // WebGL capability flags
     bool ext_float_textures_{false};

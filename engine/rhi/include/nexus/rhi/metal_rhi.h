@@ -66,6 +66,7 @@ public:
 
     FramebufferHandle create_framebuffer(const FramebufferDesc& desc) override;
     void              destroy_framebuffer(FramebufferHandle handle) override;
+    TextureHandle     framebuffer_depth_texture(FramebufferHandle handle) override;
 
     void begin_frame() override;
     void end_frame() override;
@@ -106,6 +107,13 @@ public:
 
     void draw(u32 vertex_count, u32 first_vertex) override;
     void draw_indexed(u32 index_count, u32 first_index) override;
+
+    // ── ImGui backend (ImGui_ImplGlfw_InitForOther + ImGui_ImplMetal) ───────
+    [[nodiscard]] bool imgui_init(void* native_window) override;
+    void               imgui_shutdown() override;
+    void               imgui_new_frame() override;
+    void               imgui_render_draw_data() override;
+    [[nodiscard]] bool textures_are_bottom_up() const override { return false; }
 
     // ── Metal-specific queries ──────────────────────────────────────────────
 
@@ -215,6 +223,13 @@ private:
         // Owned attachment textures (allocated in create_framebuffer).
         std::vector<void*> color_textures;  // id<MTLTexture>
         void* depth_texture{nullptr};       // id<MTLTexture>
+        // Handle into textures_ so framebuffer_depth_texture() can
+        // return a regular TextureHandle that aliases the same
+        // MTLTexture.  INVALID_HANDLE when depth wasn't requested
+        // as sampleable (depth-only renderbuffer-like usage — Metal
+        // doesn't actually use renderbuffers; this flag lets us
+        // mirror the RHI contract precisely).
+        TextureHandle depth_texture_handle{INVALID_HANDLE};
     };
 
     std::vector<BufferRecord>      buffers_;
@@ -222,6 +237,11 @@ private:
     std::vector<ShaderRecord>      shaders_;
     std::vector<PipelineRecord>    pipelines_;
     std::vector<FramebufferRecord> framebuffers_;
+
+    // ImGui binding lifecycle — both halves are installed by imgui_init() and
+    // torn down in reverse order by imgui_shutdown().
+    bool imgui_platform_installed_{false};
+    bool imgui_renderer_installed_{false};
 };
 
 } // namespace nexus::rhi

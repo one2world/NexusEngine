@@ -730,6 +730,26 @@ FramebufferHandle VulkanRHI::create_framebuffer(const FramebufferDesc& desc) {
     rec.height        = desc.height;
     rec.color_formats = desc.color_attachments;
     rec.has_depth     = desc.has_depth;
+
+    // RHI contract: depth_sampleable=true must yield a valid
+    // TextureHandle from framebuffer_depth_texture().  This backend
+    // is CPU-simulated (no real GPU resources), but the contract
+    // still has to hold so frontend code that binds shadow maps,
+    // deferred depth, etc. doesn't have to branch on backend.
+    if (desc.has_depth && desc.depth_sampleable) {
+        TextureRec tr;
+        tr.alive  = true;
+        tr.width  = desc.width;
+        tr.height = desc.height;
+        tr.format = TextureFormat::Depth32F;
+        // image / view / memory left at VK_NULL_HANDLE — this backend
+        // never executes real GPU work; the entry exists purely for
+        // handle-validity bookkeeping (live_texture_count, etc).
+        rec.depth_texture_handle =
+            static_cast<TextureHandle>(textures_.size());
+        textures_.push_back(std::move(tr));
+    }
+
     auto handle = static_cast<FramebufferHandle>(framebuffers_.size());
     framebuffers_.push_back(std::move(rec));
     return handle;
@@ -737,8 +757,23 @@ FramebufferHandle VulkanRHI::create_framebuffer(const FramebufferDesc& desc) {
 
 void VulkanRHI::destroy_framebuffer(FramebufferHandle handle) {
     if (handle == INVALID_HANDLE || handle >= static_cast<u32>(framebuffers_.size())) return;
-    framebuffers_[handle].alive = false;
-    framebuffers_[handle].color_formats.clear();
+    auto& rec = framebuffers_[handle];
+    // Tear down the aliased depth-texture handle so subsequent
+    // live_texture_count() reflects reality.
+    if (rec.depth_texture_handle != INVALID_HANDLE &&
+        rec.depth_texture_handle < static_cast<u32>(textures_.size())) {
+        textures_[rec.depth_texture_handle].alive = false;
+        rec.depth_texture_handle = INVALID_HANDLE;
+    }
+    rec.alive = false;
+    rec.color_formats.clear();
+}
+
+TextureHandle VulkanRHI::framebuffer_depth_texture(FramebufferHandle handle) {
+    if (handle == INVALID_HANDLE || handle >= static_cast<u32>(framebuffers_.size())) {
+        return INVALID_HANDLE;
+    }
+    return framebuffers_[handle].depth_texture_handle;
 }
 
 // ── Frame ────────────────────────────────────────────────────────────────────

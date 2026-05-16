@@ -614,15 +614,44 @@ FramebufferHandle MetalRHI::create_framebuffer(const FramebufferDesc& desc) {
         }
 
         if (desc.has_depth && has_dims) {
+            // Sampleable depth needs a colour-renderable + shader-readable
+            // texture (Depth32Float — pure depth, no stencil, matches the
+            // RHI's TextureFormat::Depth32F).  Non-sampleable depth uses
+            // the combined Depth32Float_Stencil8 attachment that the
+            // previous Metal code path always created (stencil is
+            // available to the pipeline state but not exposed to shaders).
+            MTLPixelFormat depth_fmt = desc.depth_sampleable
+                ? MTLPixelFormatDepth32Float
+                : MTLPixelFormatDepth32Float_Stencil8;
             MTLTextureDescriptor* dd =
-                [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float_Stencil8
+                [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:depth_fmt
                                                                    width:desc.width
                                                                   height:desc.height
                                                                mipmapped:NO];
-            dd.usage       = MTLTextureUsageRenderTarget;
+            dd.usage = desc.depth_sampleable
+                ? (MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead)
+                :  MTLTextureUsageRenderTarget;
             dd.storageMode = MTLStorageModePrivate;
             id<MTLTexture> dep = [dev newTextureWithDescriptor:dd];
             r.depth_texture = dep ? retain_as_void(dep) : nullptr;
+
+            // When sampleable, mirror the MTLTexture into the textures_
+            // pool so framebuffer_depth_texture() returns a regular
+            // TextureHandle the rest of the engine can bind via the
+            // standard sampler API.  The TextureRecord retains the
+            // same ARC-bridged pointer (no second retain — the FB
+            // owns the lifecycle; the record just aliases for lookup).
+            if (desc.depth_sampleable && dep) {
+                TextureRecord tr;
+                tr.alive       = true;
+                tr.width       = desc.width;
+                tr.height      = desc.height;
+                tr.format      = TextureFormat::Depth32F;
+                tr.mtl_texture = r.depth_texture;  // alias, FB owns
+                r.depth_texture_handle =
+                    static_cast<TextureHandle>(textures_.size());
+                textures_.push_back(std::move(tr));
+            }
         }
 
         auto handle = static_cast<FramebufferHandle>(framebuffers_.size());
@@ -637,9 +666,27 @@ void MetalRHI::destroy_framebuffer(FramebufferHandle handle) {
     if (!r.alive) return;
     for (auto*& t : r.color_textures) release_as_void(t);
     r.color_textures.clear();
+    // Mark the aliased TextureRecord dead before releasing the MTLTexture
+    // so a subsequent bind_texture() doesn't follow a dangling pointer.
+    // The textures_ slot stays in place (handles are stable) but its
+    // contents go inert.
+    if (r.depth_texture_handle != INVALID_HANDLE &&
+        r.depth_texture_handle < textures_.size()) {
+        auto& tr = textures_[r.depth_texture_handle];
+        tr.alive       = false;
+        tr.mtl_texture = nullptr;
+        r.depth_texture_handle = INVALID_HANDLE;
+    }
     release_as_void(r.depth_texture);
     r.color_formats.clear();
     r.alive = false;
+}
+
+TextureHandle MetalRHI::framebuffer_depth_texture(FramebufferHandle handle) {
+    if (handle == INVALID_HANDLE || handle >= framebuffers_.size()) {
+        return INVALID_HANDLE;
+    }
+    return framebuffers_[handle].depth_texture_handle;
 }
 
 // ── Frame ───────────────────────────────────────────────────────────────────

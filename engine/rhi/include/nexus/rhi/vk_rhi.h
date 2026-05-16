@@ -60,6 +60,7 @@ public:
 
     FramebufferHandle create_framebuffer(const FramebufferDesc& desc) override;
     void              destroy_framebuffer(FramebufferHandle handle) override;
+    TextureHandle     framebuffer_depth_texture(FramebufferHandle handle) override;
 
     // Render commands
     void begin_frame() override;
@@ -104,6 +105,13 @@ public:
     // Draw calls
     void draw(u32 vertex_count, u32 first_vertex) override;
     void draw_indexed(u32 index_count, u32 first_index) override;
+
+    // ── ImGui backend (ImGui_ImplGlfw_InitForVulkan + ImGui_ImplVulkan) ─────
+    [[nodiscard]] bool imgui_init(void* native_window) override;
+    void               imgui_shutdown() override;
+    void               imgui_new_frame() override;
+    void               imgui_render_draw_data() override;
+    [[nodiscard]] bool textures_are_bottom_up() const override { return false; }
 
     // ── Introspection ───────────────────────────────────────────────────────
 
@@ -186,6 +194,13 @@ private:
         u32                        height{0};
         std::vector<TextureFormat> color_formats;
         bool                       has_depth{false};
+        // RHI contract: when desc.depth_sampleable was true, a
+        // TextureHandle aliases the depth attachment so callers can
+        // bind it as a regular sampler.  The simulation backend has
+        // no real GPU memory but still registers the alias so the
+        // public API contract is preserved (frontend code paths
+        // shouldn't branch on backend identity).
+        TextureHandle              depth_texture_handle{INVALID_HANDLE};
     };
 
     // Helpers (all no-ops when device_ is null)

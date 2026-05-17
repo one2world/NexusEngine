@@ -32,10 +32,11 @@ if(NEXUS_ENABLE_METAL AND NEXUS_HAVE_METAL)
 endif()
 
 # ── WebGL 2.0 backend ────────────────────────────────────────────────────────
-# Real GLES3/WebGL2 driver path under Emscripten.  The desktop build compiles
-# the same TU as a test-only stub that is excluded from shipping targets by the
-# NEXUS_RHI_WEBGL_DEVSTUB flag.  A release artifact must not set that flag.
-if(EMSCRIPTEN OR NEXUS_ENABLE_WEBGL)
+# Real GLES3 / WebGL2 driver path.  Only compiled when the toolchain is
+# actually Emscripten — there is no "desktop dev-stub" any more.  Desktop
+# builds get the OpenGL backend; the editor / sandbox never silently bind
+# to a half-implemented WebGL backend.
+if(EMSCRIPTEN)
     list(APPEND NEXUS_RHI_SOURCES
         src/webgl_rhi.cpp
         src/imgui_backend_webgl.cpp
@@ -90,12 +91,8 @@ if(NEXUS_ENABLE_OPENGL)
     target_compile_definitions(nexus-rhi PUBLIC NEXUS_ENABLE_OPENGL=1)
 endif()
 
-if(NEXUS_ENABLE_WEBGL)
+if(NEXUS_ENABLE_WEBGL AND EMSCRIPTEN)
     target_compile_definitions(nexus-rhi PUBLIC NEXUS_ENABLE_WEBGL=1)
-    # When enabled on desktop it is a dev-only stub; release artifacts omit this target.
-    if(NOT EMSCRIPTEN)
-        target_compile_definitions(nexus-rhi PRIVATE NEXUS_RHI_WEBGL_DEVSTUB=1)
-    endif()
 endif()
 
 if(NEXUS_ENABLE_METAL AND NEXUS_HAVE_METAL)

@@ -11,13 +11,17 @@
 #include <algorithm>
 #include <cstring>
 
-#ifdef __EMSCRIPTEN__
+// This TU is the GLES3 / WebGL2 driver and only compiles under Emscripten.
+// There is no desktop dev-stub: builds for non-Web targets get the OpenGL
+// backend.  The CMakeLists already gates this file behind `if(EMSCRIPTEN)`,
+// so reaching this guard means a stray inclusion or a misconfigured build.
+#ifndef __EMSCRIPTEN__
+#  error "webgl_rhi.cpp must only be compiled under Emscripten — desktop builds use the OpenGL backend.  Update engine/rhi/CMakeLists.txt or your toolchain."
+#endif
+
 #include <GLES3/gl3.h>
 #include <emscripten/html5.h>
-#define WEBGL_REAL 1
-#else
-#define WEBGL_REAL 0
-#endif
+#define WEBGL_REAL 1  // kept for historical conditional blocks; always 1.
 
 namespace nexus::rhi {
 
@@ -418,21 +422,6 @@ FramebufferHandle WebGLRHI::create_framebuffer(const FramebufferDesc& desc) {
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-#else
-    // CPU-simulated path: still honour the contract.  A
-    // depth_sampleable framebuffer hands back a TextureHandle that
-    // resolves to a live (gl_id = 0) WGLTexture entry — same as the
-    // simulation backend does for normal textures.
-    if (desc.has_depth && desc.depth_sampleable) {
-        WGLTexture tex_entry;
-        tex_entry.alive  = true;
-        tex_entry.width  = desc.width;
-        tex_entry.height = desc.height;
-        tex_entry.format = TextureFormat::Depth32F;
-        fb.depth_texture_handle =
-            static_cast<TextureHandle>(textures_.size());
-        textures_.push_back(std::move(tex_entry));
-    }
 #endif
 
     auto handle = static_cast<FramebufferHandle>(framebuffers_.size());
